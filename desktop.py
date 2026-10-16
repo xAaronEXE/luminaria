@@ -7,8 +7,11 @@ def main():
     parser=argparse.ArgumentParser(description='Luminaria local AI desktop. Agent tools are enabled by default; the saved permission mode controls execution.')
     parser.add_argument('--agent',action='store_true',default=True,help='Enable agent tools (already enabled by default)')
     parser.add_argument('--server',action='store_true',help='Run the local backend without the desktop window')
-    parser.add_argument('--version',action='version',version='Luminaria 0.2.2')
+    parser.add_argument('--safe-graphics',action='store_true',help='Disable WebGL and use the static voice interface for this launch')
+    parser.add_argument('--version',action='version',version='Luminaria 0.2.3')
     options=parser.parse_args()
+    if options.safe_graphics:
+        os.environ['WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS']=(os.environ.get('WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS','')+' --disable-webgl').strip()
     from backend.config import DATA,ROOT
     logging.basicConfig(filename=DATA/'desktop.log',level=logging.INFO,format='%(asctime)s %(levelname)s %(message)s')
     # Webview/uvicorn may write diagnostics even from a windowed executable.

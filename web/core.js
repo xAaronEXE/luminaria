@@ -4,8 +4,11 @@
  const status=document.createElement('div');status.className='entity-caption';status.setAttribute('aria-hidden','true');status.innerHTML='<span>Voice conversation</span><strong>Listening</strong><small>Your voice stays on this PC</small>';document.body.append(status);
  const button=document.createElement('button');button.id='ambient-motion';button.className='text-button';document.querySelector('.sidebar-bottom').prepend(button);
  const gl=canvas.getContext('webgl',{alpha:true,antialias:true,powerPreference:'low-power'}),reduce=matchMedia('(prefers-reduced-motion: reduce)');
- if(!gl){canvas.remove();button.remove();document.body.classList.add('entity-fallback');window.addEventListener('studio-voice-state',e=>status.querySelector('strong').textContent=e.detail);return}
- let voice=0,targetVoice=0,t=0,last=0,dirty=true,paused=false,px=0,py=0,region=-1,pulse=0,phase='idle';
+ let failed=false;
+ const publish=detail=>{window.luminariaRenderStats=detail;window.dispatchEvent(new CustomEvent('studio-render-stats',{detail}))};
+ function fallback(reason){if(failed)return;failed=true;canvas.remove();button.remove();document.body.classList.add('entity-fallback');publish({mode:'fallback',reason,fps:0,paused:true,reducedMotion:reduce.matches});const layout=()=>{const main=document.querySelector('.main').getBoundingClientRect(),top=document.querySelector('.topbar').getBoundingClientRect().bottom,bottom=document.querySelector('.composer-area').getBoundingClientRect().top;status.style.left=(main.x+main.width/2)+'px';status.style.top=(top+Math.max(120,bottom-top)*.5)+'px';status.style.maxWidth=Math.max(240,main.width-48)+'px'};new ResizeObserver(layout).observe(document.querySelector('.main'));new ResizeObserver(layout).observe(document.querySelector('.composer-area'));window.addEventListener('resize',layout);layout();window.addEventListener('studio-voice-state',e=>status.querySelector('strong').textContent=e.detail)}
+ if(!gl){fallback('3D graphics are unavailable. Voice and chat remain available.');return}
+ let voice=0,targetVoice=0,t=0,last=0,dirty=true,paused=reduce.matches,px=0,py=0,region=-1,pulse=0,phase='idle';
  let microphone={rms:0,bass:0,mid:0,high:0},output={rms:0,bass:0,mid:0,high:0};
  const envelope={rms:0,bass:0,mid:0,high:0};
  function shader(type,code){const s=gl.createShader(type);gl.shaderSource(s,code);gl.compileShader(s);if(!gl.getShaderParameter(s,gl.COMPILE_STATUS))throw Error(gl.getShaderInfoLog(s));return s}
@@ -56,9 +59,10 @@
  const dots=buffer(nodes.flat()),lines=buffer(links),attrs=['brain','torus','cluster'].map(n=>gl.getAttribLocation(program,n));attrs.forEach(a=>gl.enableVertexAttribArray(a));
  const uniforms=Object.fromEntries(['time','morph','aspect','amplitude','bass','mid','high','reduced','pointer','tint','points','region','pulse','dock','center','entityScale'].map(n=>[n,gl.getUniformLocation(program,n)]));
  gl.enable(gl.BLEND);gl.blendFuncSeparate(gl.SRC_ALPHA,gl.ONE_MINUS_SRC_ALPHA,gl.ONE,gl.ONE_MINUS_SRC_ALPHA);
- const label=()=>{button.textContent=paused?'Resume background motion':'Pause background motion';button.setAttribute('aria-pressed',String(paused))};
+ const label=()=>{button.textContent=reduce.matches?'System reduced motion':paused?'Resume background motion':'Pause background motion';button.disabled=reduce.matches;button.title=reduce.matches?'Your system preference disables spatial animation.':'';button.setAttribute('aria-pressed',String(paused))};
+ const motionChanged=()=>{dirty=true;label();if(!failed)publish({...window.luminariaRenderStats,mode:'webgl',fps:paused?0:window.luminariaRenderStats?.fps||0,paused,reducedMotion:reduce.matches,width:canvas.width,height:canvas.height})};
  button.onclick=safe(async()=>{await savePrefs({motion:!studioPrefs.motion})});
- window.addEventListener('studio-preferences',e=>{paused=reduce.matches||!e.detail.motion;dirty=true;label()});
+ window.addEventListener('studio-preferences',e=>{paused=reduce.matches||!e.detail.motion;motionChanged()});
  window.addEventListener('studio-audio',e=>{const d=e.detail;if(d&&typeof d==='object'){if(d.source==='output')output=d;else microphone=d}else{microphone={rms:Number(d)||0,bass:0,mid:0,high:0};output={rms:0,bass:0,mid:0,high:0}}dirty=true});
  window.addEventListener('studio-voice-state',e=>{phase=e.detail;targetVoice=Number(document.body.dataset.voice==='conversation'&&!document.body.classList.contains('voice-review'));status.querySelector('strong').textContent=phase;dirty=true});
  window.addEventListener('studio-state',()=>{const r=state.run,action=(state.actions||[]).at(-1);region=-1;pulse=0;if(r&&!r.finished){phase=r.phase||'Working';region=/think|reason/i.test(phase)?0:/compact/i.test(phase)?1:3;pulse=.7;if(action&&['running','ready','pending'].includes(action.status)){region=/memory|history|remember/.test(action.name)?1:2;pulse=1}}dirty=true});
@@ -67,10 +71,10 @@
  let stage;
  function layoutStage(){const main=document.querySelector('.main').getBoundingClientRect(),top=document.querySelector('.topbar').getBoundingClientRect().bottom,bottom=document.querySelector('.composer-area').getBoundingClientRect().top;stage={x:main.x,width:main.width,top,height:Math.max(120,bottom-top)};status.style.left=(stage.x+stage.width/2)+'px';status.style.top=(stage.top+stage.height*.76)+'px';status.style.maxWidth=Math.max(240,stage.width-48)+'px';document.body.classList.toggle('voice-compact',stage.height<300);dirty=true}
  new ResizeObserver(layoutStage).observe(document.querySelector('.main'));new ResizeObserver(layoutStage).observe(document.querySelector('.composer-area'));layoutStage();
- window.addEventListener('resize',layoutStage);reduce.addEventListener('change',()=>{paused=reduce.matches||!studioPrefs.motion;dirty=true;label()});
- canvas.addEventListener('webglcontextlost',e=>{e.preventDefault();canvas.hidden=true;document.body.classList.add('entity-fallback')});
+ window.addEventListener('resize',layoutStage);reduce.addEventListener('change',()=>{paused=reduce.matches||!studioPrefs.motion;motionChanged()});
+ canvas.addEventListener('webglcontextlost',e=>{e.preventDefault();fallback('3D graphics stopped. Restart Luminaria to retry; voice and chat remain available.')});
  let sampleStart=performance.now(),sampleFrames=0;
- function frame(now){requestAnimationFrame(frame);targetVoice=Number(document.body.dataset.voice==='conversation'&&!document.body.classList.contains('voice-review'));if(document.hidden){sampleStart=now;sampleFrames=0;return}const interval=targetVoice?1000/60:1000/30;if(now-last<interval||paused&&!dirty&&Math.abs(voice-targetVoice)<.001)return;const dt=Math.min((now-last)/1000,.05);last=now-(now-last)%interval;dirty=false;if(!paused)t+=dt;voice=paused?targetVoice:voice+(targetVoice-voice)*(1-Math.exp(-dt*6));pulse*=Math.exp(-dt*.25);
+ function frame(now){if(failed)return;requestAnimationFrame(frame);targetVoice=Number(document.body.dataset.voice==='conversation'&&!document.body.classList.contains('voice-review'));if(document.hidden){sampleStart=now;sampleFrames=0;return}const interval=targetVoice?1000/60:1000/30;if(now-last<interval||paused&&!dirty&&Math.abs(voice-targetVoice)<.001)return;const dt=Math.min((now-last)/1000,.05);last=now-(now-last)%interval;dirty=false;if(!paused)t+=dt;voice=paused?targetVoice:voice+(targetVoice-voice)*(1-Math.exp(-dt*6));pulse*=Math.exp(-dt*.25);
  const ratio=Math.min(devicePixelRatio||1,1.5),w=Math.min(2560,Math.round(innerWidth*ratio)),h=Math.round(w*innerHeight/innerWidth);if(canvas.width!==w||canvas.height!==h){canvas.width=w;canvas.height=h;gl.viewport(0,0,w,h)}
  const styles=getComputedStyle(document.documentElement),color=styles.getPropertyValue('--glow').trim()||'#D4CEB8',rgb=color.slice(1).match(/../g).map(x=>parseInt(x,16)/255);gl.clearColor(0,0,0,0);gl.clear(gl.COLOR_BUFFER_BIT);gl.uniform3f(uniforms.tint,...rgb);
  const audio=envelope;for(const k of ['rms','bass','mid','high']){const target=Math.min(1,Math.max(microphone[k]||0,output[k]||0));envelope[k]=paused?target:envelope[k]+(target-envelope[k])*(1-Math.exp(-dt*(target>envelope[k]?18:7)))}
@@ -80,7 +84,7 @@
  gl.uniform2f(uniforms.center,(stage.x+stage.width/2)/innerWidth*2-1,1-(stage.top+stage.height*.40)/innerHeight*2);
  gl.uniform1f(uniforms.entityScale,Math.min(stage.width*.66,stage.height*.75)/(innerHeight*.58));
  for(const [buf,count,mode,point] of [[lines,links.length/7,gl.LINES,0],[dots,nodes.length,gl.POINTS,1]]){gl.bindBuffer(gl.ARRAY_BUFFER,buf);gl.vertexAttribPointer(attrs[0],3,gl.FLOAT,false,28,0);gl.vertexAttribPointer(attrs[1],3,gl.FLOAT,false,28,12);gl.vertexAttribPointer(attrs[2],1,gl.FLOAT,false,28,24);gl.uniform1f(uniforms.points,point);gl.drawArrays(mode,0,count)}
- sampleFrames++;if(now-sampleStart>=2000){window.luminariaRenderStats={fps:Math.round(sampleFrames*10000/(now-sampleStart))/10,paused,reducedMotion:reduce.matches,width:canvas.width,height:canvas.height};window.dispatchEvent(new CustomEvent('studio-render-stats',{detail:window.luminariaRenderStats}));sampleStart=now;sampleFrames=0}
- }label();requestAnimationFrame(frame);
- }catch(error){console.error('Luminaria renderer unavailable',error);canvas.remove();button.remove();document.body.classList.add('entity-fallback');window.addEventListener('studio-voice-state',e=>status.querySelector('strong').textContent=e.detail)}
+ sampleFrames++;if(now-sampleStart>=2000){publish({mode:'webgl',fps:Math.round(sampleFrames*10000/(now-sampleStart))/10,paused,reducedMotion:reduce.matches,width:canvas.width,height:canvas.height});sampleStart=now;sampleFrames=0}
+ }motionChanged();requestAnimationFrame(frame);
+ }catch(error){console.error('Luminaria renderer unavailable',error);fallback('3D graphics could not start. Voice and chat remain available.')}
 })();
