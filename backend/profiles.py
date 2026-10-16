@@ -23,7 +23,9 @@ def create(name):
 
 def select(id):
     data=registry()
-    if not any(p['id']==id for p in data['profiles']): raise ValueError('Profile not found')
+    profile=next((p for p in data['profiles'] if p['id']==id),None)
+    if not profile: raise ValueError('Profile not found')
+    if data.get('require_sign_in') is True and profile.get('provider')=='local': raise ValueError('Sign-in is required on this PC, so local profiles cannot be opened. Turn off Require sign-in in Accounts first.')
     data['selected']=id; save(data)
     return {'restart_required':True,'message':'Close all Luminaria windows and reopen to use this profile.'}
 

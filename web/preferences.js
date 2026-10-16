@@ -7,7 +7,7 @@ const brandThemes={
 function applyStudioTheme(p){
  const mode=p.theme_mode==='light'?'light':'dark';
  Object.entries(brandThemes[mode]).forEach(([k,v])=>document.documentElement.style.setProperty('--'+k,v));
- document.documentElement.dataset.theme=mode;document.documentElement.style.colorScheme=mode;
+ document.documentElement.dataset.theme=mode;document.documentElement.style.colorScheme=mode;try{localStorage.setItem('luminaria-theme',mode)}catch{}
  document.body.classList.toggle('hide-metrics',!p.metrics);
  window.dispatchEvent(new CustomEvent('studio-preferences',{detail:p}));
 }

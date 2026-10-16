@@ -93,14 +93,87 @@ async def poll(id):
             finally:pending.pop(id,None)
         return {'status':'complete','profile':profile,'restart_required':True,'message':'Signed in. Restart Luminaria to open your account profile. Existing local chats remain in their original profile.'}
 
+OFFLINE_GRACE=7*86400
+GATE_OPEN=['/api/bootstrap','/api/gate','/api/events','/api/accounts','/api/identity/start','/api/identity/poll','/api/identity/cancel']
+_gate={'checked':0.0,'result':None}
+
+def required():
+    from .profiles import registry
+    return registry().get('require_sign_in') is True
+
+def _verified_path():return DATA/'identity-verified.json'
+
+def _last_verified():
+    try:
+        import json
+        data=json.loads(_verified_path().read_text('utf-8'));return float(data['at']),str(data.get('name','your account'))
+    except Exception:return None,None
+
+def locked_now():
+    """Synchronous view for background work: locked unless a recent check unlocked the app."""
+    return required() and not (_gate['result'] or {}).get('unlocked')
+
+def forget_gate():_gate.update(checked=0.0,result=None)
+
+async def gate(force=False):
+    if not required():return {'required':False,'unlocked':True}
+    cached=_gate['result']
+    if cached and not force and time.monotonic()-_gate['checked']<(600 if cached['unlocked'] else 15):return cached
+    from .config import PROFILE_ID
+    from .profiles import registry
+    profile=next((p for p in registry()['profiles'] if p['id']==PROFILE_ID),None)
+    result={'required':True,'unlocked':False,'profile':PROFILE_ID}
+    if not profile or profile.get('provider')=='local':
+        result['reason']='Sign in with Google, GitHub or Discord to use Luminaria on this PC.'
+    else:
+        try:token=read_session()
+        except ValueError as error:token=None;result['reason']=str(error)
+        if not token:result.setdefault('reason','Your sign-in for this profile is missing. Sign in again.')
+        else:
+            try:
+                async with httpx.AsyncClient(timeout=10,follow_redirects=False) as client:
+                    response=await client.get(ORIGIN+'/session',headers={'Authorization':'Bearer '+token})
+                if response.status_code==401:
+                    _verified_path().unlink(missing_ok=True);result['reason']='Your sign-in expired or was revoked. Sign in again.'
+                else:
+                    response.raise_for_status();user=validate_user(response.json()['user'])
+                    if user['id']!=profile.get('identity_id') or user['provider']!=profile.get('provider'):result['reason']='This sign-in belongs to a different account. Sign in again.'
+                    else:
+                        import json
+                        _verified_path().write_text(json.dumps({'at':time.time(),'name':user['name']}),encoding='utf-8')
+                        result.update(unlocked=True,user=user)
+            except (httpx.HTTPError,KeyError,TypeError,ValueError,AttributeError):
+                at,name=_last_verified()
+                if at and 0<=time.time()-at<OFFLINE_GRACE:
+                    days=int((time.time()-at)//86400)
+                    result.update(unlocked=True,offline=True,reason=f'Offline. Signed in as {name}, last verified {"today" if days==0 else str(days)+" day"+("s" if days>1 else "")+" ago"}. Luminaria needs to verify again within 7 days.')
+                else:result['reason']='Luminaria cannot reach the sign-in service to verify your account. Connect to the internet and try again.'
+    _gate.update(checked=time.monotonic(),result=result)
+    return result
+
+async def set_required(enabled):
+    from .profiles import registry,save
+    data=registry()
+    if enabled:
+        data['require_sign_in']=True;save(data);forget_gate()
+        check=await gate(force=True)
+        if not check['unlocked'] or check.get('offline'):
+            data.pop('require_sign_in',None);save(data);forget_gate()
+            raise ValueError('Sign in and open your account profile first, while online, so you cannot be locked out. '+check.get('reason',''))
+        return {'required':True}
+    data.pop('require_sign_in',None);save(data);forget_gate()
+    return {'required':False}
+
 async def logout():
+    forget_gate()
     token=read_session()
     if token:
         async with httpx.AsyncClient(timeout=15,follow_redirects=False) as client:
             response=await client.post(ORIGIN+'/logout',headers={'Authorization':'Bearer '+token})
             if response.status_code!=401:response.raise_for_status()
         SESSION.unlink(missing_ok=True)
-    return {'signed_out':True}
+    _verified_path().unlink(missing_ok=True)
+    return {'signed_out':True,'locked':required()}
 
 def cancel(id):
     if not isinstance(id,str) or not re.fullmatch('[a-f0-9]{64}',id):raise ValueError('Invalid sign-in request')

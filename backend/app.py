@@ -22,7 +22,11 @@ async def scheduler():
     while True:
         await asyncio.sleep(10)
         if benchmarking: continue
-        for row in store.rows('SELECT * FROM schedules WHERE enabled=1 AND next_run<=?',(now(),)):
+        due=store.rows('SELECT * FROM schedules WHERE enabled=1 AND next_run<=?',(now(),))
+        if due:
+            from .identity import gate
+            if not (await gate())['unlocked']: continue
+        for row in due:
             chat=store.create_chat('Scheduled: '+row['title'])
             store.add(chat,{'role':'user','content':row['prompt']})
             store.execute('UPDATE schedules SET next_run=? WHERE id=?',(now()+row['interval'],row['id']))
@@ -59,6 +63,9 @@ async def local_only(request,call_next):
     if origin and origin not in {'http://'+h for h in hosts}: return JSONResponse({'error':'Foreign origin blocked'},403)
     if request.url.path.startswith('/api/') and request.url.path!='/api/bootstrap':
         if not secrets.compare_digest(request.headers.get('x-studio-token',''),TOKEN): return JSONResponse({'error':'Session token required'},403)
+        from .identity import GATE_OPEN,gate,required
+        if required() and request.url.path not in GATE_OPEN and not (await gate())['unlocked']:
+            return JSONResponse({'error':'Sign in to use Luminaria','locked':True},423)
     # Base64 adds a third, so a 25 MB document needs about 34 MB of request body.
     path=request.url.path
     limit=35_000_000 if path=='/api/attachments' or (path.startswith('/api/imports/') and path.endswith('/files')) else 12_000_000
@@ -646,6 +653,16 @@ async def identity_poll(request:Request):
     if any(not r.get('finished') for r in engine.runs.values()):raise ValueError('Finish or stop active tasks before completing sign-in')
     from .identity import poll
     return await identity_call(poll((await request.json()).get('flow_id','')))
+
+@app.get('/api/gate')
+async def gate_status(force:bool=False):
+    from .identity import gate
+    return await gate(force)
+
+@app.post('/api/identity/require')
+async def identity_require(request:Request):
+    from .identity import set_required
+    return await identity_call(set_required(bool((await request.json()).get('enabled'))))
 
 @app.post('/api/identity/logout')
 async def identity_logout():
