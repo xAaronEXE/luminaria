@@ -102,6 +102,12 @@ master-spec requirements remain in scope.
   queue, resume, checksum checks, the 100 GB budget, and disk-space refusal.
   Unit tests cover those paths with a local file server. A packaged Windows
   download, install, and model-manager reload has not been run.
+- Source now includes an update channel. The identity Worker reads releases from the
+  private repository with a read-only token. The desktop app checks for updates
+  through that Worker and verifies the installer's size and SHA-256 before it runs.
+  The version comes from the VERSION file, and the installer leaves App\data and
+  App\models in place. The token secret and Worker deploy are still pending, and
+  0.2.5 has not been built or published. Installers are not code-signed.
 - See verification-0.2.4.md for detailed historical evidence and remaining checks.
 
 ## Locations
