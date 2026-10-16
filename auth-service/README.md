@@ -14,7 +14,8 @@ wildcard redirects. Its client ID is provisioned to the personal Cloudflare
 Worker. The owner completed verification and GITHUB_CLIENT_SECRET was transferred
 directly to Wrangler stdin without a local secret file. Live health and the
 installed desktop accounts endpoint both report GitHub configured=true.
-The real browser flow reached GitHub consent; owner authorization is pending.
+The owner authorized GitHub. Desktop pairing completed with server-validated
+identity and encrypted session storage. Restart recovery remains unverified.
 
 ## Provider registration
 

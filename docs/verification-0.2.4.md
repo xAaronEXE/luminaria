@@ -65,8 +65,12 @@ GITHUB_CLIENT_ID and GITHUB_CLIENT_SECRET are provisioned to the personal
 Cloudflare Worker. Owner verification completed. The secret was passed directly
 through Wrangler stdin, without saving a plaintext local file. Live health and
 the installed desktop accounts API report GitHub configured=true. A desktop
-pairing request reached GitHub read-only profile consent. Owner consent and
-completed real login remain pending; mandatory sign-in is still disabled.
+pairing request reached GitHub read-only profile consent. Owner consent completed. The installed desktop pairing poll returned complete for
+xAaronEXE after server session validation and saved an encrypted account session.
+Accounts lists the separate GitHub profile selected for next launch; Personal is
+still active. Restart recovery, logout, denial and offline checks remain pending.
+An automated graceful restart was blocked by execution policy. Mandatory sign-in
+is still disabled.
 
 Register provider OAuth applications using the callback URLs in
 auth-service/README.md and provision secrets to the personal Cloudflare service.
