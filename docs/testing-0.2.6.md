@@ -111,9 +111,12 @@ Open **Tools & integrations → Integrations**.
 - [ ] With a model loaded, close the model manager process (Task Manager → end
       `llama-swap.exe`), then send a message. A notice says it is restarting, and the
       reply still arrives.
-- [ ] Register a model with a very large context (Models → Add a local GGUF model,
-      context 1000000), select it and send a message. The error explains the cause,
-      such as not enough GPU memory, rather than only showing a server code.
+- [ ] Make a fake model file: in PowerShell run
+      `Set-Content C:\Users\desse\Desktop\broken.gguf "not a model"`. In
+      **Models → Add a local GGUF model**, register it with ID `broken-test` and that
+      path, restart Luminaria, select it and send a message. The error says the model
+      file could not be loaded, instead of only a server code. Switch back to your real
+      model and remove `broken-test` afterwards.
 
 ### Activity history
 
