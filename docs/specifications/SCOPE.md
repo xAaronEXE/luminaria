@@ -1,3 +1,7 @@
+> Superseded by [MASTER-SPEC.md](MASTER-SPEC.md), the complete user-supplied specification accepted October 16, 2026. The older scope below is retained for history, not as competing requirements. Implementation and verification status are tracked separately; specification text is not evidence of feature completion.
+>
+> Current priorities: Graphite & Ivory visual polish and full palette controls; composer/settings/integration rows; model management and SQLite benchmarks; skills/files/compaction; voice and neural-toroid visuals; desktop packaging; hosted authentication; final verification and public release readiness. Authentication uses the personal Cloudflare account. Retain the existing plain JavaScript frontend and local assets.
+
 1. Product identity and visual direction
 - One permanent, availability-checked name reflecting freedom, open access, and bringing powerful local AI to people.
 - LibreKind is rejected. Luminaria is the selected name; users won’t choose between app names.

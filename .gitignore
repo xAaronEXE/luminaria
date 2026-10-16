@@ -64,3 +64,12 @@ tests/*.mjs
 tests/memory_denial.py
 test_mcp.py
 test_voice.py
+
+node_modules/
+.wrangler/
+App/
+.dev.vars
+.dev.vars.*
+
+archive/
+.build/

@@ -1,7 +1,7 @@
 $ErrorActionPreference='Stop'
 Set-Location $PSScriptRoot
-$python=if($env:STUDIO_BUILD_PYTHON){$env:STUDIO_BUILD_PYTHON}else{(Get-Command python -ErrorAction Stop).Source}
-& $python -m PyInstaller --noconfirm --clean --windowed --onedir --name LocalAIStudio --icon runtime/mint.ico --add-data 'web;web' --add-data 'skills;skills' --add-data 'runtime/llama-swap.exe;runtime' --add-data 'backend/research.py;backend' --collect-all webview --collect-submodules langgraph --collect-submodules mcp.client --collect-all faster_whisper --collect-all ctranslate2 --collect-all piper --collect-all onnxruntime --collect-all av --exclude-module matplotlib --exclude-module pandas --exclude-module scipy --exclude-module tkinter --exclude-module IPython desktop.py
+$python=if($env:STUDIO_BUILD_PYTHON){$env:STUDIO_BUILD_PYTHON}elseif(Test-Path "$PSScriptRoot/runtime/local-ai/agent-tools/python-env/Scripts/python.exe"){"$PSScriptRoot/runtime/local-ai/agent-tools/python-env/Scripts/python.exe"}else{(Get-Command python -ErrorAction Stop).Source}
+& $python -m PyInstaller --noconfirm --clean --workpath .build/work --distpath .build/dist --specpath .build --windowed --onedir --name LocalAIStudio --icon "$PSScriptRoot/web/brand/luminaria.ico" --add-data "$PSScriptRoot/web;web" --add-data "$PSScriptRoot/skills;skills" --add-data "$PSScriptRoot/runtime/llama-swap.exe;runtime" --add-data "$PSScriptRoot/backend/research.py;backend" --collect-all webview --collect-submodules langgraph --collect-submodules mcp.client --collect-all faster_whisper --collect-all ctranslate2 --collect-all piper --collect-all onnxruntime --collect-all av --exclude-module matplotlib --exclude-module pandas --exclude-module scipy --exclude-module tkinter --exclude-module IPython desktop.py
 if($LASTEXITCODE){throw 'Executable build failed'}
 & "$PSScriptRoot\runtime\inno\ISCC.exe" installer.iss
 if($LASTEXITCODE){throw 'Installer build failed'}

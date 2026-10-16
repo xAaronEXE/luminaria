@@ -1,8 +1,10 @@
 # Luminaria
 
+![Luminaria — Intelligence, on your terms.](web/brand/social-cover.jpg)
+
 A Windows desktop interface for local AI, built with plain HTML/JavaScript, a Python backend, SQLite and llama.cpp/llama-swap.
 
-**Development build — not a public stable release.** See [SCOPE.md](SCOPE.md) for the intended product and [VERIFICATION.md](VERIFICATION.md) for current evidence. UI availability alone does not establish that a feature is verified.
+**Development build — not a public stable release.** See [master specification](docs/specifications/MASTER-SPEC.md) for the intended product and [VERIFICATION.md](VERIFICATION.md) for current evidence. UI availability alone does not establish that a feature is verified.
 
 ## Run from source
 
@@ -12,9 +14,9 @@ The backend binds to loopback. Default file tools are confined to the app files 
 
 ## Build
 
-Run `build.ps1` from the configured Python environment. Required build inputs: `runtime/llama-swap.exe`, `runtime/mint.ico`, and Inno Setup compiler at `runtime/inno/ISCC.exe`. These binaries are intentionally excluded from Git.
+Run `build.ps1` from the configured Python environment. Required build inputs: `runtime/llama-swap.exe`, Inno Setup compiler at `runtime/inno/ISCC.exe`. These binaries are intentionally excluded from Git.
 
-The internal executable and installer AppId remain stable across the Luminaria rename to support upgrades. User history is stored separately from program files.
+The internal executable and installer AppId remain stable across the Luminaria rename to support upgrades. The installed app keeps its data in a `data/` folder inside its installation directory. On this PC the app, data and model library live in `Desktop/Luminaria/App`. See [FOLDER-GUIDE.md](FOLDER-GUIDE.md).
 
 ## Accounts and releases
 

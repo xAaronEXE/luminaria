@@ -255,13 +255,17 @@ async def schedule_delete(id:str): store.execute('DELETE FROM schedules WHERE id
 
 @app.get('/api/settings')
 async def settings():
+    from .config import access_status
     public={k:v for k,v in CONFIG.items() if k not in ('mcp','model_api_key')}
+    public['access_status']=access_status()
     public['data_directory']=str(DATA); public['mcp_configured']=list(CONFIG.get('mcp',{})); return public
 
 @app.post('/api/settings')
 async def settings_save(request:Request):
     if any(not r.get('finished') for r in engine.runs.values()): raise ValueError('Finish or stop active tasks before changing settings')
     b=await request.json(); allowed={'workspace','endpoint','tokenizer','model','context','output_tokens','compact_ratio','python','node','llama_executable','model_file','projector_file','external_tools','ask_reads'}
+    allowed.add('access_mode')
+    if 'access_mode' in b and b['access_mode'] not in ('review','full'): raise ValueError('Choose review or full access')
     changes={k:v for k,v in b.items() if k in allowed}
     for key in ('external_tools','ask_reads'):
         if key in changes and not isinstance(changes[key],bool): raise ValueError('Boolean setting required')
@@ -289,7 +293,10 @@ async def model_status():
 @app.post('/api/model/start')
 async def model_start():
     from .runtime import start_swap
-    return await asyncio.to_thread(start_swap)
+    result = await asyncio.to_thread(start_swap)
+    # Starting the manager can create the local key after Engine's client exists.
+    engine.client.headers['Authorization']='Bearer '+CONFIG.get('model_api_key','local-only')
+    return result
 
 @app.post('/api/model/unload')
 async def unload_model():

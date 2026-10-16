@@ -2,7 +2,8 @@ import json, os, sys
 from pathlib import Path
 
 ROOT = Path(getattr(sys, '_MEIPASS', Path(__file__).resolve().parents[1]))
-BASE_DATA = Path(os.environ.get('STUDIO_DATA', str(Path(os.environ.get('LOCALAPPDATA',Path.home()))/'LocalAIStudio')))
+APP_HOME = Path(sys.executable).resolve().parent if getattr(sys,'frozen',False) else ROOT
+BASE_DATA = Path(os.environ.get('STUDIO_DATA', str(APP_HOME/'data')))
 PROFILE_ID='local'
 if (BASE_DATA/'profiles.json').exists():
     import re
@@ -21,6 +22,17 @@ device=json.loads((BASE_DATA/'config.json').read_text('utf-8')) if (BASE_DATA/'c
 shared={k:v for k,v in device.items() if k in ('endpoint','tokenizer','model','context','model_file','projector_file','model_api_key','llama_executable','python','node','release_repo')}
 CONFIG=DEFAULT | shared | (json.loads(CONFIG_PATH.read_text('utf-8')) if CONFIG_PATH.exists() else {})
 CONFIG['version']='0.2.0'
+# Permission mode is latched at process startup. Saving it never changes a live run.
+FULL_ACCESS = CONFIG.get('access_mode', 'review') == 'full'
+CONFIG['access_mode'] = 'full' if FULL_ACCESS else 'review'
+
+def access_status():
+    active = 'full' if FULL_ACCESS else 'review'
+    return {'active': active, 'selected': CONFIG['access_mode'],
+            'restart_required': active != CONFIG['access_mode']}
+
+def external_tools_enabled():
+    return FULL_ACCESS or CONFIG.get('external_tools', False)
 try:
     Path(CONFIG['workspace']).mkdir(parents=True,exist_ok=True)
 except PermissionError:

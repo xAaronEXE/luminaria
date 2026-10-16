@@ -1,6 +1,6 @@
 import asyncio, base64, json, os, re, subprocess
 from pathlib import Path
-from .config import CONFIG, DATA, workspace_path
+from .config import CONFIG, DATA, workspace_path, FULL_ACCESS, external_tools_enabled
 
 def schema(name,description,properties,required=(),tier='auto',group='workspace'):
     return {'name':name,'description':description,'parameters':{'type':'object','properties':properties,'required':list(required),'additionalProperties':False},'tier':tier,'group':group}
@@ -35,14 +35,18 @@ def mcp_tier(group,name):
 class Toolbox:
     def __init__(self,store,connectors): self.store=store; self.connectors=connectors
     def catalog(self):
-        result=[dict(t) for t in BUILTINS if CONFIG.get('external_tools',False) or t['group']!='execution']
+        result=[dict(t) for t in BUILTINS if external_tools_enabled() or t['group']!='execution']
         if CONFIG.get('ask_reads',False):
             for t in result:
                 if t['tier']=='auto': t['tier']='approve'
         for group,c in self.connectors.items():
-            if not CONFIG.get('external_tools',False): continue
+            if not external_tools_enabled(): continue
             for t in c.tools:
                 result.append({'name':group+'__'+t['name'],'description':t.get('description',''),'parameters':t['inputSchema'],'tier':mcp_tier(group,t['name']),'group':group})
+        if FULL_ACCESS:
+            for t in result:
+                t['tier']='auto'
+                t['description']=t['description'].replace('Requires user approval.', 'Runs automatically in Full access mode.').replace('Always asks.', 'Runs automatically in Full access mode.').replace('Network request requires approval.', 'Network requests run automatically.').replace('Full PC access after approval;', 'Full PC access;').replace('Every side effect still needs its normal approval.', 'Actions run automatically in Full access mode.')
         return result
     def definitions(self,enabled):
         return [{'type':'function','function':{k:t[k] for k in ['name','description','parameters']}} for t in self.catalog() if t['group'] not in self.connectors or t['group'] in enabled]
@@ -63,7 +67,7 @@ class Toolbox:
                 await proc.wait()
             raise
     async def call(self,name,a,run):
-        if (name in ('run_command','run_code') or '__' in name) and not CONFIG.get('external_tools',False):
+        if (name in ('run_command','run_code') or '__' in name) and not external_tools_enabled():
             raise ValueError('Computer and command tools are disabled. Enable them in Settings first.')
         if name=='list_skills':
             from .skills import catalog

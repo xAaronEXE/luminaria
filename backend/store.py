@@ -10,6 +10,7 @@ def now(): return time.time()
 
 class Store:
     def __init__(self, path):
+        self.data_directory = Path(path).resolve().parent
         Path(path).parent.mkdir(parents=True, exist_ok=True)
         self.db = sqlite3.connect(path, check_same_thread=False)
         self.db.row_factory = sqlite3.Row
@@ -42,7 +43,7 @@ class Store:
     def save_run(self,run):
         safe={k:(list(v) if isinstance(v,set) else v) for k,v in run.items()}
         self.execute('INSERT OR REPLACE INTO runs VALUES(?,?,?,?,?)',(run['id'],run['chat'],json.dumps(safe),run['phase'],now()))
-        folder=Path(__import__('os').environ.get('MINT_RUNS',str(Path.home()/'agent'/'runs')))/run['id']
+        folder=self.data_directory/'runs'/run['id']
         folder.mkdir(parents=True,exist_ok=True); (folder/'artifacts').mkdir(exist_ok=True)
         with (folder/'conversation.jsonl').open('w',encoding='utf-8') as f:
             for msg in self.messages(run['chat']): f.write(json.dumps(msg,ensure_ascii=False)+'\n')

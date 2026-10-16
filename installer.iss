@@ -3,14 +3,15 @@ AppId={{C1DD4A29-1B64-433C-A69E-352D1DB9E575}
 AppName=Luminaria
 AppVersion=0.2.0
 AppPublisher=Luminaria Project
-DefaultDirName={localappdata}\Programs\LocalAIStudio
+DefaultDirName={userdesktop}\Luminaria\App
+UsePreviousAppDir=no
 DefaultGroupName=Luminaria
 PrivilegesRequired=lowest
 ArchitecturesAllowed=x64compatible
 ArchitecturesInstallIn64BitMode=x64compatible
 OutputDir=release
 OutputBaseFilename=Luminaria-0.2.0-Setup
-SetupIconFile=runtime\mint.ico
+SetupIconFile=web\brand\luminaria.ico
 UninstallDisplayIcon={app}\LocalAIStudio.exe
 Compression=lzma2/fast
 SolidCompression=yes
@@ -19,7 +20,7 @@ CloseApplications=yes
 RestartApplications=no
 
 [Files]
-Source: "dist\LocalAIStudio\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
+Source: ".build\dist\LocalAIStudio\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
 
 [Icons]
 Name: "{group}\Luminaria"; Filename: "{app}\LocalAIStudio.exe"

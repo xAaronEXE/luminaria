@@ -1,10 +1,10 @@
 <!doctype html>
 <html lang="en">
-<head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><meta name="color-scheme" content="dark"><title>Luminaria</title><link rel="icon" href="/mark.svg" type="image/svg+xml"><link rel="stylesheet" href="/style.css"><link rel="stylesheet" href="/settings.css"><script defer src="/lib/marked.min.js"></script><script defer src="/lib/purify.min.js"></script><script defer src="/lib/highlight.min.js"></script><script defer src="/app.js"></script><script defer src="/preferences.js"></script><script defer src="/settings.js"></script><script defer src="/workspace-ui.js"></script><script defer src="/core.js"></script><script defer src="/voice.js"></script></head>
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><meta name="color-scheme" content="dark"><title>Luminaria</title><meta name="description" content="Luminaria brings local AI models, real tools, persistent memory and voice into one desktop interface. Intelligence, on your terms."><meta property="og:title" content="Luminaria — Intelligence, on your terms."><meta property="og:description" content="Local models. Real tools. Your control."><meta property="og:image" content="/brand/social-cover.jpg"><link rel="icon" href="/brand/luminaria.png" type="image/png"><link rel="stylesheet" href="/style.css"><link rel="stylesheet" href="/settings.css"><script defer src="/lib/marked.min.js"></script><script defer src="/lib/purify.min.js"></script><script defer src="/lib/highlight.min.js"></script><script defer src="/app.js"></script><script defer src="/palettes.js"></script><script defer src="/preferences.js"></script><script defer src="/settings.js"></script><script defer src="/workspace-ui.js"></script><script defer src="/core.js"></script><script defer src="/voice.js"></script></head>
 <body>
 <div class="app">
  <aside class="sidebar" id="sidebar" aria-label="Task navigation">
-  <a class="brand" href="#" aria-label="Luminaria home"><img src="/mark.svg" alt="" width="29" height="29"><span>LUMINARIA<span class="brand-sub">LOCAL AI</span></span></a>
+  <a class="brand" href="#" aria-label="Luminaria home"><img src="/brand/luminaria.png" alt="" width="29" height="29"><span>LUMINARIA<span class="brand-sub">LOCAL AI</span></span></a>
   <button class="new-task" id="new-task"><span data-icon="plus"></span>New task<span class="keyhint">Ctrl N</span></button>
   <label class="search-box"><span data-icon="search"></span><input id="search" placeholder="Search your work" aria-label="Search tasks"></label>
   <div class="sidebar-label">Your chats</div>
@@ -27,7 +27,7 @@
   </header>
   <div id="messages-scroll" class="messages-scroll">
    <section id="welcome" class="welcome">
-    <div class="core-stage"><canvas id="mint-core" width="520" height="400" tabindex="0" role="img" aria-label="Interactive 3D wireframe. Drag or use arrow keys to rotate."></canvas><div>Drag to explore <button id="core-motion" aria-pressed="false">Pause motion</button></div></div><div class="welcome-mark"><img src="/mark.svg" alt="" width="42" height="42"></div>
+    <div class="core-stage"><canvas id="mint-core" width="520" height="400" tabindex="0" role="img" aria-label="Interactive 3D wireframe. Drag or use arrow keys to rotate."></canvas><div>Drag to explore <button id="core-motion" aria-pressed="false">Pause motion</button></div></div><div class="welcome-mark"><img src="/brand/luminaria.png" alt="" width="42" height="42"></div>
     <h1>Make something<br><span>that’s yours.</span></h1>
     <p>Your model. Your tools. Your ideas.<br>A place to think deeply and get things done.</p>
     <div class="starter-list">
@@ -37,7 +37,7 @@
     </div>
    </section>
    <div id="messages" class="messages" aria-live="polite" aria-label="Conversation"></div>
-   <article id="live-message" class="message assistant" hidden><div class="message-heading"><img src="/mark.svg" alt="" width="20" height="20"><strong>Luminaria</strong><span id="live-phase">Working</span></div><details id="live-reasoning" hidden><summary>Reasoning</summary><pre></pre></details><div class="markdown" id="live-content"></div><div class="working-line"><span class="working-dot"></span><span id="working-label">Thinking through your request…</span></div></article>
+   <article id="live-message" class="message assistant" hidden><div class="message-heading"><img src="/brand/luminaria.png" alt="" width="20" height="20"><strong>Luminaria</strong><span id="live-phase">Working</span></div><details id="live-reasoning" hidden><summary>Reasoning</summary><pre></pre></details><div class="markdown" id="live-content"></div><div class="working-line"><span class="working-dot"></span><span id="working-label">Thinking through your request…</span></div></article>
   </div>
   <section class="composer-area">
    <div id="pending-approvals" class="approvals" aria-live="polite"></div>
