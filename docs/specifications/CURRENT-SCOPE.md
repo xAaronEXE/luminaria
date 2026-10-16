@@ -117,6 +117,14 @@ master-spec requirements remain in scope.
   queue, resume, checksum checks, the 100 GB budget, and disk-space refusal.
   Unit tests cover those paths with a local file server. A packaged Windows
   download, install, and model-manager reload has not been run.
+- The catalog has 30 single-file GGUF models (15 Standard, 15 Abliterated) from 30
+  publisher repositories, each pinned to a commit. refresh_model_catalog.py reads
+  sizes and SHA256 from the LFS records and context and attention settings from
+  the GGUF header, without downloading weights. All 34 published records checked
+  live matched. Gemma 3 entries offer a shared vision projector. Memory figures
+  are estimates from file size plus the q8_0 context cache the runtime allocates.
+  The Models screen was reworked for the larger list and checked in the browser
+  preview in both modes; no multi-gigabyte download has been run yet.
 - Source now includes an update channel. The identity Worker reads releases from the
   private repository with a read-only token. The desktop app checks for updates
   through that Worker and verifies the installer's size and SHA-256 before it runs.
@@ -157,6 +165,7 @@ master-spec requirements remain in scope.
   owner: removing require_sign_in from App\data\profiles.json turns it off.
   Not yet tried with the real sign-in service.
 - Version 0.2.6 with release notes is prepared. See testing-0.2.6.md.
+- Version 0.2.7 adds the expanded model library. See testing-0.2.7.md.
 - See verification-0.2.4.md for detailed historical evidence and remaining checks.
 
 ## Locations

@@ -203,10 +203,76 @@ class ModelLibraryTests(unittest.TestCase):
         self.assertTrue(result['deleted'])
         self.assertFalse(target.exists())
         self.assertEqual(models.registry(), [])
+    def test_catalog_is_pinned_and_context_comes_from_file_metadata(self):
+        from backend.model_catalog import CONTEXT_LIMIT, cache_bytes
+        from backend.model_catalog_data import REPOS
+        self.assertGreaterEqual(sum(item['variant'] == 'standard' for item in CATALOG), 12)
+        self.assertGreaterEqual(sum(item['variant'] == 'abliterated' for item in CATALOG), 12)
+        for entry in CATALOG:
+            url = model_library.canonical_url(entry, entry['quants'][0])
+            self.assertIn('/resolve/' + entry['revision'] + '/', url)
+            self.assertNotIn('/resolve/main/', url)
+            self.assertEqual(entry['context_supported'], REPOS[entry['repo']]['context'])
+            self.assertEqual(entry['context'], min(CONTEXT_LIMIT, entry['context_supported']))
+            for quant in entry['quants']:
+                self.assertEqual(quant['memory_bytes'], quant['bytes'] + entry['cache_bytes'])
+            if entry['projector']:
+                self.assertIn('/resolve/' + entry['projector']['revision'] + '/', model_library.canonical_url(entry, entry['projector']))
+        phi = next(item for item in CATALOG if item['id'] == 'phi-4')
+        self.assertEqual(phi['context'], 16384)
+        plain = {'architecture': 'llama', 'layers': 2, 'kv_heads': 1, 'key_length': 16, 'value_length': 16, 'sliding_window': 0}
+        self.assertEqual(cache_bytes(plain, 1000), round(2 * 1000 * 32 * 34 / 32))
+        windowed = plain | {'architecture': 'gemma3', 'layers': 6, 'sliding_window': 100}
+        self.assertEqual(cache_bytes(windowed, 1000), round((1 * 1000 + 5 * 256) * 32 * 34 / 32))
+    def test_existing_quantization_ids_stay_stable(self):
+        ids = {quant['id'] for entry in CATALOG for quant in entry['quants']}
+        for ident in ('qwen3-8b-q4', 'qwen3-4b-q8', 'qwen25-coder-7b-q6', 'qwen25-coder-3b-q4',
+                      'qwen25-coder-7b-abliterated-q8', 'qwen25-7b-abliterated-q4', 'qwen25-coder-14b-abliterated-q6'):
+            self.assertIn(ident, ids)
+    def test_vision_projector_attaches_to_registered_models_and_is_protected(self):
+        payload = b'gguf-projector'
+        digest = hashlib.sha256(payload).hexdigest()
+        entry, quant = self.quant(hashlib.sha256(b'weights').hexdigest(), 7)
+        projector = {'id': 'test-mmproj', 'label': 'Vision projector', 'kind': 'projector', 'filename': 'test-mmproj.gguf',
+                     'bytes': len(payload), 'sha256': digest, 'repo': 'example/base', 'revision': 'b' * 40, 'note': ''}
+        entry = entry | {'projector': projector, 'revision': 'a' * 40, 'quants': [quant]}
+        folder = self.root / 'models'; folder.mkdir()
+        weights = folder / quant['filename']; weights.write_bytes(b'weights')
+        httpd, _, url = serve(payload)
+        lookup = lambda ident: (entry, quant) if ident == quant['id'] else (entry, projector) if ident == projector['id'] else (None, None)
+        try:
+            with patch.object(model_library, 'CATALOG', [entry]), patch.object(model_library, 'quant_by_id', lookup), \
+                 patch.object(model_library, 'resolve', lambda entry, item: {'url': url, 'size': item['bytes'], 'sha256': item['sha256']}):
+                self.assertEqual(model_library.canonical_url(entry, projector), f'https://huggingface.co/example/base/resolve/{"b" * 40}/test-mmproj.gguf')
+                model_library._register(entry, quant, weights)
+                self.assertEqual(models.registry()[0]['projector_file'], '')
+                model_library.enqueue(projector['id'])
+                final = folder / projector['filename']
+                wait_until(lambda: models.registry()[0]['projector_file'] == str(final))
+                self.assertEqual(final.read_bytes(), payload)
+                view = model_library.library(None)['models'][0]
+                self.assertTrue(view['projector']['verified'])
+                self.assertEqual([item['id'] for item in model_library.library(None)['models']], [entry['id']])
+                with self.assertRaisesRegex(ValueError, 'used together with a model'):
+                    model_library.prepare(projector['id'])
+                self.assertEqual(model_library.prepare(quant['id'])['projector_file'], str(final))
+                with patch.dict(model_library.CONFIG, projector_file=str(final)):
+                    with self.assertRaisesRegex(ValueError, 'using this vision projector'):
+                        model_library.remove(projector['id'], True)
+                with patch.dict(model_library.CONFIG, projector_file=''):
+                    result = model_library.remove(projector['id'], True)
+                self.assertTrue(result['deleted'])
+                self.assertFalse(final.exists())
+                self.assertTrue(weights.exists())
+                self.assertEqual(models.registry()[0]['projector_file'], '')
+        finally:
+            httpd.shutdown(); httpd.server_close()
     def quant(self, digest, size):
         entry = {'id': 'test-abliterated', 'name': 'Test Abliterated', 'variant': 'abliterated', 'parameters': '1B',
                  'purpose': 'Test', 'description': 'Test weights.', 'strengths': ['Test'], 'context': 32768, 'vision': False,
-                 'repo': 'example/test', 'license': 'Test', 'provenance': 'Test publisher', 'hardware': 'Test', 'caveat': 'Test caveat'}
+                 'repo': 'example/test', 'license': 'Test', 'provenance': 'Test publisher', 'hardware': 'Test', 'caveat': 'Test caveat',
+                 'family': 'Test', 'active_parameters': '', 'context_supported': 32768, 'cache_bytes': 0, 'architecture': 'llama',
+                 'revision': 'a' * 40, 'projector': None}
         quant = {'id': 'test-abliterated-q4', 'label': 'Q4_K_M', 'filename': 'test-abliterated-q4.gguf', 'bytes': size, 'sha256': digest, 'memory': 'Test'}
         return entry, quant
     def patch_quant(self, entry, quant, url):

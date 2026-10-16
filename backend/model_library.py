@@ -37,10 +37,33 @@ def state_path():
     return models.BASE_DATA / 'model-downloads.json'
 
 def quant_by_id(quant_id):
+    """Find a catalog file by id. Projectors are shared, so the first family that lists one owns the lookup."""
     for entry in CATALOG:
         for quant in entry['quants']:
             if quant['id'] == quant_id: return entry, quant
+        if entry['projector'] and entry['projector']['id'] == quant_id: return entry, entry['projector']
     return None, None
+
+def is_projector(item): return bool(item) and item.get('kind') == 'projector'
+
+def catalog_files():
+    seen = {}
+    for entry in CATALOG:
+        for item in entry['quants'] + ([entry['projector']] if entry['projector'] else []):
+            seen.setdefault(item['filename'], item)
+    return list(seen.values())
+
+def _verified(path, item):
+    sidecar = Path(str(path) + '.sha256')
+    try: return path.is_file() and sidecar.is_file() and sidecar.read_text(encoding='utf-8').strip() == item['sha256']
+    except OSError: return False
+
+def projector_path(entry):
+    """Path of this family's projector when it is downloaded and verified, else ''."""
+    projector = entry.get('projector') if entry else None
+    if not projector: return ''
+    path = models_folder() / projector['filename']
+    return str(path) if _verified(path, projector) else ''
 
 def format_bytes(n):
     if n >= 1 << 30: return f'{n / (1 << 30):.1f} GB'
@@ -49,7 +72,8 @@ def format_bytes(n):
     return f'{n} B'
 
 def canonical_url(entry, quant):
-    return f"https://huggingface.co/{entry['repo']}/resolve/main/{quant['filename']}"
+    repo, revision = (quant['repo'], quant['revision']) if is_projector(quant) else (entry['repo'], entry['revision'])
+    return f"https://huggingface.co/{repo}/resolve/{revision}/{quant['filename']}"
 
 def host_allowed(url, origin):
     host = (urlparse(url).hostname or '').lower()
@@ -177,12 +201,11 @@ def load_state():
 
 def _catalog_spent():
     folder = models_folder(); total = 0
-    for entry in CATALOG:
-        for quant in entry['quants']:
-            path = folder / quant['filename']
-            if path.is_file():
-                try: total += path.stat().st_size
-                except OSError: pass
+    for item in catalog_files():
+        path = folder / item['filename']
+        if path.is_file():
+            try: total += path.stat().st_size
+            except OSError: pass
     return total
 
 def _partial_bytes():
@@ -232,6 +255,11 @@ def _active(ident, path):
     except OSError: same = False
     return CONFIG.get('model') == ident or same
 
+def _projector_active(path):
+    configured = CONFIG.get('projector_file') or ''
+    try: return bool(configured) and Path(configured).resolve() == path.resolve()
+    except OSError: return False
+
 def library(store):
     load_state()
     from .benchmark_store import evaluations, history
@@ -250,16 +278,22 @@ def library(store):
             installed = path.is_file()
             if installed and not any(_same_file(Path(item.get('model_file', '')), path) for item in records):
                 records.append({'model_file': str(path)})
-            sidecar = Path(str(path) + '.sha256')
-            verified = installed and sidecar.is_file() and sidecar.read_text(encoding='utf-8').strip() == quant['sha256']
+            verified = installed and _verified(path, quant)
             benchmarks = history(registered['id'], registered.get('benchmarks', [])) if registered else []
             quants.append({**quant, 'installed': installed, 'registered': bool(registered),
                            'registry_id': registered['id'] if registered else quant['id'],
                            'verified': verified, 'bytes_on_disk': path.stat().st_size if installed else None,
                            'benchmarks': benchmarks, 'evaluations': evaluations(registered['id']) if registered else [], 'active': bool(registered) and _active(registered['id'], path),
                            'job': downloads.get(quant['id']), 'downloadable': True, 'managed': True})
-        entries.append({k: entry[k] for k in ('id', 'name', 'variant', 'parameters', 'purpose', 'description', 'strengths', 'context', 'vision', 'license', 'provenance', 'hardware', 'caveat')} |
-                       {'key': 'catalog:' + entry['id'], 'local': False, 'quants': quants})
+        projector = None
+        if entry['projector']:
+            spec = entry['projector']; path = folder / spec['filename']; installed = path.is_file()
+            projector = {k: spec[k] for k in ('id', 'label', 'filename', 'bytes', 'note')} | {
+                'installed': installed, 'verified': installed and _verified(path, spec), 'active': installed and _projector_active(path),
+                'source': f"{spec['repo']}@{spec['revision'][:10]}", 'job': downloads.get(spec['id'])}
+        entries.append({k: entry[k] for k in ('id', 'name', 'variant', 'family', 'parameters', 'active_parameters', 'purpose', 'description', 'strengths', 'context', 'context_supported', 'cache_bytes', 'vision', 'license', 'provenance', 'hardware', 'caveat', 'repo', 'architecture')} |
+                       {'key': 'catalog:' + entry['id'], 'local': False, 'quants': quants, 'projector': projector,
+                        'source': f"{entry['repo']}@{entry['revision'][:10]}", 'source_url': f"https://huggingface.co/{entry['repo']}/tree/{entry['revision']}"})
     for item in registry:
         if item['id'] in matched: continue
         path = Path(item.get('model_file', ''))
@@ -269,8 +303,9 @@ def library(store):
         entries.append({'id': item['id'], 'key': 'local:' + item['id'], 'name': item.get('name') or item['id'], 'variant': variant,
                         'parameters': item.get('parameters') or 'Not specified', 'purpose': 'Added from this PC',
                         'description': item.get('description') or 'Local GGUF registered on this PC.',
-                        'strengths': item.get('strengths') or ['Local file'], 'context': item.get('context') or 0, 'vision': bool(item.get('projector_file')),
-                        'license': item.get('license') or 'Not recorded', 'provenance': 'Registered from a file already on this PC',
+                        'strengths': item.get('strengths') or ['Local file'], 'context': item.get('context') or 0, 'context_supported': None, 'cache_bytes': None,
+                        'vision': bool(item.get('projector_file')), 'projector': None, 'family': 'This PC', 'active_parameters': '', 'repo': '', 'architecture': '',
+                        'license': item.get('license') or 'Not recorded', 'provenance': 'Registered from a file already on this PC', 'source': '', 'source_url': '',
                         'hardware': item.get('hardware') or 'Not recorded', 'caveat': '', 'local': True,
                         'quants': [{'id': item['id'], 'label': item.get('quantization') or 'Unknown', 'filename': path.name, 'bytes': path.stat().st_size if installed else None,
                                     'memory': 'Measured only by what this file uses on disk', 'installed': installed, 'registered': True, 'registry_id': item['id'],
@@ -356,7 +391,7 @@ def _register(entry, quant, path):
     registry = models.registry()
     previous = next((item for item in registry if item.get('id') == quant['id']), None)
     record = {'id': quant['id'], 'name': f"{entry['name']} · {quant['label']}"[:120], 'description': entry['description'][:1000],
-              'model_file': str(path), 'projector_file': '', 'context': entry['context'], 'quantization': quant['label'],
+              'model_file': str(path), 'projector_file': projector_path(entry), 'context': entry['context'], 'quantization': quant['label'],
               'strengths': entry['strengths'], 'variant': entry['variant'], 'parameters': entry['parameters'], 'purpose': entry['purpose'],
               'license': entry['license'], 'hardware': entry['hardware'], 'provenance': entry['provenance'], 'catalog_id': entry['id'],
               'sha256': quant['sha256'], 'benchmarks': previous.get('benchmarks', []) if previous else [],
@@ -364,12 +399,25 @@ def _register(entry, quant, path):
     registry = [item for item in registry if item.get('id') != quant['id'] and not _same_file(Path(item.get('model_file', '')), path)]
     registry.append(record); models.save(registry); return record
 
+def _families_using(projector_id):
+    return [entry for entry in CATALOG if entry['projector'] and entry['projector']['id'] == projector_id]
+
+def _attach_projector(projector_id, value):
+    """Point registered models of every family sharing this projector at it, or detach it."""
+    quant_ids = {quant['id'] for entry in _families_using(projector_id) for quant in entry['quants']}
+    registry = models.registry(); changed = False
+    for item in registry:
+        if item.get('id') in quant_ids and item.get('projector_file', '') != value:
+            item['projector_file'] = value; changed = True
+    if changed: models.save(registry)
+
 def _finish(entry, quant, partial):
     folder = models_folder(); folder.mkdir(parents=True, exist_ok=True)
     final = folder / quant['filename']
     partial.replace(final)
     Path(str(final) + '.sha256').write_text(quant['sha256'] + '\n', encoding='utf-8')
-    _register(entry, quant, final)
+    if is_projector(quant): _attach_projector(quant['id'], str(final))
+    else: _register(entry, quant, final)
 
 def _run(generation):
     global _worker
@@ -414,6 +462,7 @@ def _run(generation):
 
 def prepare(ident):
     entry, quant = quant_by_id(ident)
+    if is_projector(quant): raise ValueError('A vision projector is used together with a model. Choose a quantization instead.')
     if quant:
         path = models_folder() / quant['filename']
         if not path.is_file(): raise ValueError('Download this quantization before using it.')
@@ -421,16 +470,32 @@ def prepare(ident):
         sidecar = Path(str(path) + '.sha256')
         if sidecar.is_file() and sidecar.read_text(encoding='utf-8').strip() != quant['sha256']:
             raise ValueError('The saved checksum does not match the catalog. It was not selected.')
-        _register(entry, quant, path)
-        return {'id': quant['id']}
+        record = _register(entry, quant, path)
+        return {'id': quant['id'], 'projector_file': record['projector_file']}
     item = next((item for item in models.registry() if item['id'] == ident), None)
     if not item or not Path(item['model_file']).is_file(): raise ValueError('Model file is unavailable')
-    return {'id': ident}
+    return {'id': ident, 'projector_file': item.get('projector_file', '')}
+
+def _remove_projector(projector):
+    path = models_folder() / projector['filename']
+    if path.is_file() and _projector_active(path):
+        raise ValueError('The active model is using this vision projector. Select another model before removing it.')
+    deleted = path.is_file()
+    if deleted: path.unlink()
+    Path(str(path) + '.sha256').unlink(missing_ok=True)
+    partial_file(projector['id']).unlink(missing_ok=True)
+    with _lock:
+        _jobs.pop(projector['id'], None)
+        if projector['id'] in _queue: _queue.remove(projector['id'])
+        _persist_locked()
+    _attach_projector(projector['id'], '')
+    return {'deleted': deleted, 'unregistered': False, 'message': 'Vision projector removed.' if deleted else 'No projector file was found.'}
 
 def remove(ident, confirm):
     load_state()
     if confirm is not True: raise ValueError('Confirm removal before deleting a model file.')
     entry, quant = quant_by_id(ident)
+    if is_projector(quant): return _remove_projector(quant)
     registry = models.registry()
     if quant:
         path = models_folder() / quant['filename']
