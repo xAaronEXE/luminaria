@@ -59,7 +59,9 @@ async def local_only(request,call_next):
     if origin and origin not in {'http://'+h for h in hosts}: return JSONResponse({'error':'Foreign origin blocked'},403)
     if request.url.path.startswith('/api/') and request.url.path!='/api/bootstrap':
         if not secrets.compare_digest(request.headers.get('x-studio-token',''),TOKEN): return JSONResponse({'error':'Session token required'},403)
-    if request.headers.get('content-length') and int(request.headers['content-length'])>12_000_000: return JSONResponse({'error':'Request too large'},413)
+    # Base64 adds a third, so a 25 MB document needs about 34 MB of request body.
+    limit=35_000_000 if request.url.path=='/api/attachments' else 12_000_000
+    if request.headers.get('content-length') and int(request.headers['content-length'])>limit: return JSONResponse({'error':'Request too large'},413)
     response=await call_next(request)
     response.headers['X-Content-Type-Options']='nosniff'
     response.headers['Referrer-Policy']='no-referrer'
@@ -216,9 +218,9 @@ async def upload(request:Request):
     from PIL import Image
     import io
     b=await request.json(); raw=base64.b64decode(b['data'],validate=True)
-    from .attachments import TEXT_EXTENSIONS,save_text
-    if Path(str(b.get('name',''))).suffix.lower() in TEXT_EXTENSIONS:
-        return save_text(str(b['name']),raw)
+    from .attachments import DOCUMENT_EXTENSIONS,TEXT_EXTENSIONS,save
+    if Path(str(b.get('name',''))).suffix.lower() in TEXT_EXTENSIONS|DOCUMENT_EXTENSIONS:
+        return await asyncio.to_thread(save,str(b['name']),raw)
     if len(raw)>8_000_000: raise ValueError('Image exceeds 8 MB')
     img=Image.open(io.BytesIO(raw)); img.verify()
     if img.format not in ('PNG','JPEG','WEBP'): raise ValueError('PNG, JPEG or WebP required')
