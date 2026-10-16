@@ -4,6 +4,7 @@ from pathlib import Path
 ROOT = Path(getattr(sys, '_MEIPASS', Path(__file__).resolve().parents[1]))
 APP_HOME = Path(sys.executable).resolve().parent if getattr(sys,'frozen',False) else ROOT
 BASE_DATA = Path(os.environ.get('STUDIO_DATA', str(APP_HOME/'data')))
+VERSION = (ROOT/'VERSION').read_text(encoding='utf-8').strip()
 PROFILE_ID='local'
 if (BASE_DATA/'profiles.json').exists():
     import re
@@ -16,12 +17,13 @@ DEFAULT={
  'workspace':str((Path(sys.executable).parent if getattr(sys,'frozen',False) else DATA)/'Files'/PROFILE_ID),
  'endpoint':'http://127.0.0.1:8098/v1', 'tokenizer':'http://127.0.0.1:8097',
  'model':'local-qwen','context':32768,'output_tokens':4096,'compact_ratio':0.80,
- 'release_repo':'','version':'0.2.4', 'python':'python','node':'node','mcp':{},'external_tools':False,'ask_reads':False
+ 'version':VERSION, 'python':'python','node':'node','mcp':{},'external_tools':False,'ask_reads':False
 }
 device=json.loads((BASE_DATA/'config.json').read_text('utf-8')) if (BASE_DATA/'config.json').exists() else {}
-shared={k:v for k,v in device.items() if k in ('endpoint','tokenizer','model','context','model_file','projector_file','model_api_key','llama_executable','python','node','release_repo')}
+shared={k:v for k,v in device.items() if k in ('endpoint','tokenizer','model','context','model_file','projector_file','model_api_key','llama_executable','python','node')}
 CONFIG=DEFAULT | shared | (json.loads(CONFIG_PATH.read_text('utf-8')) if CONFIG_PATH.exists() else {})
-CONFIG['version']='0.2.4'
+CONFIG['version']=VERSION
+CONFIG.pop('release_repo',None)
 # Permission mode is latched at process startup. Saving it never changes a live run.
 FULL_ACCESS = CONFIG.get('access_mode', 'review') == 'full'
 CONFIG['access_mode'] = 'full' if FULL_ACCESS else 'review'

@@ -2,7 +2,7 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "test": "node test.mjs"
+    "test": "node test.mjs && node releases.test.mjs"
   },
   "devDependencies": {
     "miniflare": "5.20261012.0-beta",

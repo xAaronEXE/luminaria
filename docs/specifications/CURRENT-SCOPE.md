@@ -98,9 +98,16 @@ master-spec requirements remain in scope.
   validation and encrypted session storage. Restart recovery is not yet verified.
 - User confirmed real microphone recognition/Qwen spoken answer and interruption of
   spoken playback followed by a new answer. Full matrix remains unverified.
-- This pass adds source storage telemetry, Standard/Abliterated installed-list grouping,
-  and guards against selecting/benchmarking missing files. Unit/syntax checks are
-  separate from packaged desktop verification. Download catalog/queue is not built yet.
+- Source now includes a downloadable Standard/Abliterated catalog, one-at-a-time
+  queue, resume, checksum checks, the 100 GB budget, and disk-space refusal.
+  Unit tests cover those paths with a local file server. A packaged Windows
+  download, install, and model-manager reload has not been run.
+- Source now includes an update channel. The identity Worker reads releases from the
+  private repository with a read-only token. The desktop app checks for updates
+  through that Worker and verifies the installer's size and SHA-256 before it runs.
+  The version comes from the VERSION file, and the installer leaves App\data and
+  App\models in place. The token secret and Worker deploy are still pending, and
+  0.2.5 has not been built or published. Installers are not code-signed.
 - See verification-0.2.4.md for detailed historical evidence and remaining checks.
 
 ## Locations

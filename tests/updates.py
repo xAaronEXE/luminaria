@@ -1,25 +1,54 @@
 import hashlib,tempfile,unittest
 from pathlib import Path
-from unittest.mock import AsyncMock,patch
+from unittest.mock import patch
 import httpx
 from backend import updates
 
+PAYLOAD=b'test installer - never execute'
+NAME='Luminaria-9.0.0-Setup.exe'
+
+def manifest(digest=None,size=None,url=None,version='9.0.0',name=NAME):
+ return {'version':version,'notes':'Notes','installer':{'name':name,'size':len(PAYLOAD) if size is None else size,'sha256':digest or hashlib.sha256(PAYLOAD).hexdigest(),'url':url or f'{updates.CHANNEL}/download/v{version}/{name}'}}
+
 class UpdateTests(unittest.IsolatedAsyncioTestCase):
- async def attempt(self,valid=True,name='Luminaria-0.2.3-Setup.exe'):
-  payload=b'test installer - never execute'
-  prefix='https://github.com/example/luminaria/releases/download/v0.2.3/'
-  info={'available':True,'installable':True,'installer':{'name':name,'browser_download_url':prefix+name},'checksums':{'browser_download_url':prefix+'SHA256SUMS.txt'}}
-  digest=hashlib.sha256(payload).hexdigest() if valid else '0'*64
+ def client(self,latest,payload=PAYLOAD,status=200):
   def respond(request):
-   return httpx.Response(200,content=(digest+'  '+name).encode() if request.url.path.endswith('SHA256SUMS.txt') else payload)
-  client=httpx.AsyncClient(transport=httpx.MockTransport(respond))
-  with tempfile.TemporaryDirectory() as folder,patch.object(updates,'DATA',Path(folder)),patch.dict(updates.CONFIG,release_repo='example/luminaria'),patch.object(updates,'check',AsyncMock(return_value=info)),patch.object(updates.httpx,'AsyncClient',return_value=client),patch.object(updates.subprocess,'Popen') as launch:
-   if valid:
-    result=await updates.install();self.assertTrue(result['launched']);launch.assert_called_once()
-    self.assertEqual((Path(folder)/'updates'/name).read_bytes(),payload)
-   else:
-    with self.assertRaisesRegex(ValueError,'Checksum mismatch'):await updates.install()
-    launch.assert_not_called();self.assertEqual(list((Path(folder)/'updates').iterdir()),[])
- async def test_luminaria_installer_verified_before_launch(self):await self.attempt()
- async def test_legacy_name_supported(self):await self.attempt(name='LocalAIStudio-0.2.3-Setup.exe')
- async def test_corrupt_installer_never_launched(self):await self.attempt(valid=False)
+   if request.url.path.endswith('/latest'):
+    return httpx.Response(status,json=latest)
+   return httpx.Response(200,content=payload)
+  original=httpx.AsyncClient
+  return patch.object(updates.httpx,'AsyncClient',lambda *a,**k:original(transport=httpx.MockTransport(respond)))
+ async def install(self,latest,payload=PAYLOAD):
+  with tempfile.TemporaryDirectory() as folder,patch.object(updates,'DATA',Path(folder)),self.client(latest,payload),patch.object(updates.subprocess,'Popen') as launch:
+   saved=lambda:list((Path(folder)/'updates').glob('*'))
+   try:return await updates.install(),launch,saved()
+   except ValueError as e:return e,launch,saved()
+ async def test_verified_installer_launches(self):
+  result,launch,files=await self.install(manifest())
+  self.assertTrue(result['launched']);launch.assert_called_once();self.assertEqual([f.name for f in files],[NAME])
+ async def test_corrupt_installer_never_launches(self):
+  result,launch,files=await self.install(manifest(digest='0'*64))
+  self.assertIn('Checksum mismatch',str(result));launch.assert_not_called();self.assertEqual(files,[])
+ async def test_oversized_download_stops(self):
+  result,launch,files=await self.install(manifest(size=4))
+  self.assertIn('larger',str(result));launch.assert_not_called();self.assertEqual(files,[])
+ async def test_foreign_installer_address_rejected(self):
+  result,launch,_=await self.install(manifest(url='https://example.com/'+NAME))
+  self.assertIn('unexpected address',str(result));launch.assert_not_called()
+ async def test_channel_states_are_explained(self):
+  for status,text in ((503,'not set up'),(404,'No release'),(409,'missing its installer')):
+   with self.client({},status=status):
+    result=await updates.check()
+   self.assertFalse(result['available']);self.assertIn(text,result['message'])
+ async def test_same_version_is_not_offered(self):
+  with self.client(manifest(version=updates.CONFIG['version'],name=f"Luminaria-{updates.CONFIG['version']}-Setup.exe")):
+   result=await updates.check()
+  self.assertFalse(result['installable']);self.assertIn('latest version',result['message'])
+ async def test_offline_check_is_not_an_error(self):
+  def fail(request):raise httpx.ConnectError('offline')
+  original=httpx.AsyncClient
+  with patch.object(updates.httpx,'AsyncClient',lambda *a,**k:original(transport=httpx.MockTransport(fail))):
+   result=await updates.check()
+  self.assertFalse(result['reachable']);self.assertIn('Could not reach',result['message'])
+
+if __name__=='__main__':unittest.main()
