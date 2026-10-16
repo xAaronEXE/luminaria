@@ -363,12 +363,17 @@ async def update_install():
 @app.get('/api/skills')
 async def skills():
     from .skills import catalog
-    return [{**s,'enabled':store.setting('skill:'+s['name'],True)} for s in catalog()]
+    return [{**s,'enabled':store.setting('skill:'+s['name'],True)} for s in catalog(connectors)]
 
 @app.post('/api/skills')
 async def skill_import(request:Request):
     from .skills import save_skill
     b=await request.json(); return save_skill(b['name'],b['content'])
+
+@app.delete('/api/skills/{name}')
+async def skill_remove(name:str):
+    from .skills import remove_skill
+    return remove_skill(name)
 
 @app.get('/api/sessions')
 async def sessions(): return store.chats()

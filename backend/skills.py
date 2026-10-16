@@ -1,14 +1,32 @@
-import re
-from .config import DATA,ROOT
+import json,re
+from .config import DATA,ROOT,external_tools_enabled
 
-def catalog():
-    result={}
+NEEDS={'execution':'Computer and command tools (Settings → Tools & permissions)',
+       'github':'GitHub integration','browser':'Browser connector','windows':'Windows desktop connector'}
+
+def inventory():
+    path=ROOT/'skills'/'inventory.json'
+    return json.loads(path.read_text('utf-8')) if path.is_file() else {'categories':[],'skills':{}}
+
+def missing(requires,connectors):
+    gaps=[]
+    for need in requires:
+        if need!='execution':
+            c=(connectors or {}).get(need)
+            if not (c and c.status=='connected'):gaps.append(NEEDS.get(need,need))
+        if not external_tools_enabled() and NEEDS['execution'] not in gaps:gaps.append(NEEDS['execution'])
+    return gaps
+
+def catalog(connectors=None):
+    meta=inventory()['skills'];result={}
     for folder in [ROOT/'skills',DATA/'skills']:
         if folder.exists():
             for p in folder.glob('*/SKILL.md'):
-                text=p.read_text('utf-8')
-                result[p.parent.name]={'name':p.parent.name,'description':next((l for l in text.splitlines() if l.strip() and not l.startswith('#')),'')[:200],'local':folder==DATA/'skills'}
-    return list(result.values())
+                text=p.read_text('utf-8');name=p.parent.name;local=folder==DATA/'skills';info=meta.get(name,{}) if not local else {}
+                requires=info.get('requires',[]);gaps=missing(requires,connectors)
+                result[name]={'name':name,'description':next((l for l in text.splitlines() if l.strip() and not l.startswith('#')),'')[:200],'local':local,
+                              'category':info.get('category','Imported' if local else 'Other'),'requires':[NEEDS.get(r,r) for r in requires],'missing':gaps,'available':not gaps}
+    return sorted(result.values(),key=lambda s:s['name'])
 
 def load_skill(name):
     if not re.fullmatch(r'[a-z0-9-]{1,60}',name): raise ValueError('Invalid skill name')
@@ -21,4 +39,13 @@ def save_skill(name,content):
     if not re.fullmatch(r'[a-z0-9-]{1,60}',name): raise ValueError('Use lowercase letters, numbers and hyphens')
     if len(content)>20000: raise ValueError('Skill limit is 20,000 characters')
     p=DATA/'skills'/name/'SKILL.md'; p.parent.mkdir(parents=True,exist_ok=True); p.write_text(content,encoding='utf-8')
+    return {'name':name}
+
+def remove_skill(name):
+    if not re.fullmatch(r'[a-z0-9-]{1,60}',name): raise ValueError('Invalid skill name')
+    p=DATA/'skills'/name/'SKILL.md'
+    if not p.is_file(): raise ValueError('Only skills you imported can be removed')
+    p.unlink()
+    try: p.parent.rmdir()
+    except OSError: pass
     return {'name':name}

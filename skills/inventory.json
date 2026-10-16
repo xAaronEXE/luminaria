@@ -1,0 +1,26 @@
+{
+  "categories": ["Planning & writing", "Code", "GitHub", "Browser & desktop", "Automation", "Skills"],
+  "skills": {
+    "make-plan": {"category": "Planning & writing"},
+    "onboard": {"category": "Planning & writing"},
+    "research": {"category": "Planning & writing"},
+    "documents": {"category": "Planning & writing"},
+    "standup": {"category": "Planning & writing"},
+    "timeline-report": {"category": "Planning & writing"},
+    "statusline": {"category": "Planning & writing"},
+    "coding": {"category": "Code", "requires": ["execution"]},
+    "code-review": {"category": "Code"},
+    "review-security": {"category": "Code"},
+    "create-hook": {"category": "Code"},
+    "new-repo": {"category": "Code", "requires": ["execution"]},
+    "split-to-prs": {"category": "GitHub", "requires": ["execution"]},
+    "gh-address-comments": {"category": "GitHub", "requires": ["github"]},
+    "gh-fix-ci": {"category": "GitHub", "requires": ["github"]},
+    "playwright": {"category": "Browser & desktop", "requires": ["browser"]},
+    "computer-use": {"category": "Browser & desktop", "requires": ["windows"]},
+    "screenshot": {"category": "Browser & desktop", "requires": ["windows"]},
+    "automate": {"category": "Automation"},
+    "skill-creator": {"category": "Skills"},
+    "skill-installer": {"category": "Skills"}
+  }
+}

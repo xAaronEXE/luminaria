@@ -150,4 +150,5 @@ def catalog(configs,connectors):
                      'needs_client_id':bool(preset.get('client_id')),'needs_client_secret':bool(preset.get('client_secret')),'can_readonly':'readonly_url' in preset,
                      'configured':bool(config.get('url')),'readonly':bool(config.get('readonly')),'status':connector.status if connector else 'not connected',
                      'tools':len(connector.tools) if connector else 0,'connected':bool(connector) and connector.status=='connected'})
-    return {'integrations':rows,'redirect_uri':redirect_uri()}
+    from .config import external_tools_enabled
+    return {'integrations':rows,'redirect_uri':redirect_uri(),'tools_enabled':external_tools_enabled()}
