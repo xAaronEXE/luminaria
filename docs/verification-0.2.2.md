@@ -34,10 +34,11 @@ The installed backend is on port 3210. Preview ports are not installation eviden
   afterward. Its own next_run was advanced in SQLite to exercise the scheduler;
   the normal five-minute waiting period was not tested. Chat:
   `1ffa3ea7d8094367a5a7d9aad8108821`.
-- Nine Python regression tests pass: attachment validation/full-file retention,
+- Eleven Python regression tests pass: attachment validation/full-file retention,
   benchmark migration/persistence, bounded compaction/failure behavior,
   profile separation, restart-latched permissions, installer checksum acceptance
-  and rejection. The updater launcher is mocked, never executed by these tests.
+  and rejection, plus connector discovery/failure/shutdown notification.
+  The updater launcher is mocked, never executed by these tests.
 - Hosted identity service deployed to the personal Cloudflare account. Local
   workerd/D1 tests pass a mocked-provider flow and security rejection cases.
   Live endpoints correctly return 401/503 without credentials. Real Google,
@@ -59,6 +60,14 @@ The updater now accepts both Luminaria and legacy installer filenames, verifies
 the download against SHA256SUMS, and rejects corrupt payloads before launch.
 The final 0.2.2 rebuild includes that fix and byte-preserving text attachment storage.
 No public stable update channel or publisher code-signing certificate is configured.
+
+A restart inspection exposed a stale tool-count badge: the backend had 63 tools
+while the sidebar retained its startup count of 42. Connector discovery and
+shutdown now emit change events so the frontend refreshes the catalog; stopped
+connectors also clear their stale tool lists. Lifecycle tests cover connected,
+failed and stopped states. The connector rebuild installed with exit 0; native
+startup inspection then showed 63 tools without navigating or manually refreshing.
+Six agent-created verification chats were archived after testing; evidence remains.
 
 ## Earlier physical voice evidence retained
 

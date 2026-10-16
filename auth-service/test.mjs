@@ -1,8 +1,9 @@
 import {Miniflare,convertV4MiniflareOptions} from 'miniflare';
 import {readFile} from 'node:fs/promises';
 import assert from 'node:assert/strict';
+import {fileURLToPath} from 'node:url';
 const intercepted=[];
-const mf=new Miniflare(convertV4MiniflareOptions({modules:true,scriptPath:'src/index.js',compatibilityDate:'2026-10-16',d1Databases:{DB:'test'},bindings:{GITHUB_CLIENT_ID:'fixture',GITHUB_CLIENT_SECRET:'fixture-secret'},outboundService:async request=>{
+const mf=new Miniflare(convertV4MiniflareOptions({modules:true,scriptPath:fileURLToPath(new URL('./src/index.js',import.meta.url)),compatibilityDate:'2026-10-16',d1Databases:{DB:'test'},bindings:{GITHUB_CLIENT_ID:'fixture',GITHUB_CLIENT_SECRET:'fixture-secret'},outboundService:async request=>{
  const url=new URL(request.url);intercepted.push(url.origin+url.pathname);
  if(url.href==='https://github.com/login/oauth/access_token'&&request.method==='POST')return Response.json({access_token:'fixture-token',token_type:'bearer'});
  if(url.href==='https://api.github.com/user'&&request.headers.get('Authorization')==='Bearer fixture-token')return Response.json({id:123,name:'Fixture User'});
@@ -11,7 +12,7 @@ const mf=new Miniflare(convertV4MiniflareOptions({modules:true,scriptPath:'src/i
 const send=(path,body,headers={})=>mf.dispatchFetch('https://identity.test'+path,{method:body===undefined?'GET':'POST',headers:{...(body===undefined?{}:{'Content-Type':'application/json'}),...headers},body:body===undefined?undefined:JSON.stringify(body),redirect:'manual'});
 try{
  const db=await mf.getD1Database('DB');
- for(const sql of (await readFile('schema.sql','utf8')).split(';').filter(x=>x.trim()))await db.prepare(sql).run();
+ for(const sql of (await readFile(new URL('./schema.sql',import.meta.url),'utf8')).split(';').filter(x=>x.trim()))await db.prepare(sql).run();
  assert.equal((await send('/session')).status,401);
  assert.equal((await send('/device/start',{provider:'google'})).status,503);
  const started=await (await send('/device/start',{provider:'github'})).json();

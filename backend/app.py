@@ -33,7 +33,7 @@ async def lifespan(app):
     global engine
     for name,config in CONFIG.get('mcp',{}).items():
         if not re.fullmatch(r'[a-z][a-z0-9_]{0,30}',name): continue
-        c=Connector(name,config); connectors[name]=c; c.start()
+        c=Connector(name,config,broadcast); connectors[name]=c; c.start()
     import aiosqlite
     from langgraph.checkpoint.sqlite.aio import AsyncSqliteSaver
     conn=await aiosqlite.connect(DATA/'checkpoints.sqlite3')

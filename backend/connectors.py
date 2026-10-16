@@ -4,9 +4,12 @@ from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
 
 class Connector:
-    def __init__(self,name,config):
+    def __init__(self,name,config,on_change=None):
         self.name=name; self.config=config; self.status='connecting'; self.tools=[]
+        self.on_change=on_change
         self.queue=asyncio.Queue(); self.ready=asyncio.Event(); self.task=None
+    def changed(self):
+        if self.on_change:self.on_change({'type':'connectors_changed','connector':self.name})
     def start(self): self.task=asyncio.create_task(self.worker())
     async def worker(self):
         try:
@@ -16,6 +19,7 @@ class Connector:
                     await session.initialize()
                     result=await session.list_tools()
                     self.tools=[t.model_dump(by_alias=True) for t in result.tools]; self.status='connected'; self.ready.set()
+                    self.changed()
                     while True:
                         item=await self.queue.get()
                         if item is None: return
@@ -30,6 +34,8 @@ class Connector:
         except BaseException as e:
             self.status='unavailable: '+str(e)[:200]
         finally:
+            if self.status=='connected':self.status='stopped'
+            self.tools=[];self.changed()
             self.ready.set()
             while not self.queue.empty():
                 item=self.queue.get_nowait()
