@@ -75,3 +75,12 @@ The follow-up star-evolution test (run 7d92dbb261d34f1a8261fac35832543c) retaine
 - Remaining acceptance work includes explicit system reduced-motion testing, GPU/frame-rate measurement, WebGL fallback and approvals during voice. Do not label those tests passed.
 
 The focused Phase A installer built successfully, installed with exit code 0, and reopened in the native desktop. Installed core/settings assets matched source hashes, including exclusion of deferred model controls. The refined neural form rendered after restart. Data and the existing conversation remained present.
+
+## Accessibility and Phase B follow-up
+- The native Appearance diagnostics reported 30 canvas draw submissions/s at 1424 x 901 while idle. This is not GPU completion latency or a sustained voice frame-rate benchmark.
+- Settings background controls disappeared from the native accessibility tree once the modal settled. Escape closed Settings and returned focus to its opener.
+- Per-chat Rename opened the selected chat inline; Escape cancelled and returned focus to Rename.
+- Add-menu Escape is now handled locally with propagation stopped, preventing the global task-cancellation handler from receiving it. Native Escape returned focus to Add to chat. An active-run regression test is still pending.
+- Decorative voice caption is hidden from accessibility APIs; the call-bar status remains the live announcement source.
+- Removed remaining visible Studio wording in activity, memory, automation and legacy model copy.
+- Installer regenerated with these frontend assets and updated SHA256SUMS. The installed desktop was restarted and inspected.

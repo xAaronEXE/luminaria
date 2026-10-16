@@ -1,7 +1,7 @@
 /* Local WebGL neural lattice -> toroidal voice core. Motion represents UI events, not hidden thoughts. */
 (()=>{
  const canvas=document.createElement('canvas');canvas.id='ambient-field';canvas.setAttribute('aria-hidden','true');document.body.prepend(canvas);
- const status=document.createElement('div');status.className='entity-caption';status.innerHTML='<span>Voice conversation</span><strong>Listening</strong><small>Your voice stays on this PC</small>';document.body.append(status);
+ const status=document.createElement('div');status.className='entity-caption';status.setAttribute('aria-hidden','true');status.innerHTML='<span>Voice conversation</span><strong>Listening</strong><small>Your voice stays on this PC</small>';document.body.append(status);
  const button=document.createElement('button');button.id='ambient-motion';button.className='text-button';document.querySelector('.sidebar-bottom').prepend(button);
  const gl=canvas.getContext('webgl',{alpha:true,antialias:true,powerPreference:'low-power'}),reduce=matchMedia('(prefers-reduced-motion: reduce)');
  if(!gl){canvas.remove();button.remove();document.body.classList.add('entity-fallback');window.addEventListener('studio-voice-state',e=>status.querySelector('strong').textContent=e.detail);return}
@@ -69,7 +69,8 @@
  new ResizeObserver(layoutStage).observe(document.querySelector('.main'));new ResizeObserver(layoutStage).observe(document.querySelector('.composer-area'));layoutStage();
  window.addEventListener('resize',layoutStage);reduce.addEventListener('change',()=>{paused=reduce.matches||!studioPrefs.motion;dirty=true;label()});
  canvas.addEventListener('webglcontextlost',e=>{e.preventDefault();canvas.hidden=true;document.body.classList.add('entity-fallback')});
- function frame(now){requestAnimationFrame(frame);targetVoice=Number(document.body.dataset.voice==='conversation'&&!document.body.classList.contains('voice-review'));if(document.hidden)return;const interval=targetVoice?1000/60:1000/30;if(now-last<interval||paused&&!dirty&&Math.abs(voice-targetVoice)<.001)return;const dt=Math.min((now-last)/1000,.05);last=now;dirty=false;if(!paused)t+=dt;voice=paused?targetVoice:voice+(targetVoice-voice)*(1-Math.exp(-dt*6));pulse*=Math.exp(-dt*.25);
+ let sampleStart=performance.now(),sampleFrames=0;
+ function frame(now){requestAnimationFrame(frame);targetVoice=Number(document.body.dataset.voice==='conversation'&&!document.body.classList.contains('voice-review'));if(document.hidden){sampleStart=now;sampleFrames=0;return}const interval=targetVoice?1000/60:1000/30;if(now-last<interval||paused&&!dirty&&Math.abs(voice-targetVoice)<.001)return;const dt=Math.min((now-last)/1000,.05);last=now-(now-last)%interval;dirty=false;if(!paused)t+=dt;voice=paused?targetVoice:voice+(targetVoice-voice)*(1-Math.exp(-dt*6));pulse*=Math.exp(-dt*.25);
  const ratio=Math.min(devicePixelRatio||1,1.5),w=Math.min(2560,Math.round(innerWidth*ratio)),h=Math.round(w*innerHeight/innerWidth);if(canvas.width!==w||canvas.height!==h){canvas.width=w;canvas.height=h;gl.viewport(0,0,w,h)}
  const styles=getComputedStyle(document.documentElement),color=styles.getPropertyValue('--glow').trim()||'#D4CEB8',rgb=color.slice(1).match(/../g).map(x=>parseInt(x,16)/255);gl.clearColor(0,0,0,0);gl.clear(gl.COLOR_BUFFER_BIT);gl.uniform3f(uniforms.tint,...rgb);
  const audio=envelope;for(const k of ['rms','bass','mid','high']){const target=Math.min(1,Math.max(microphone[k]||0,output[k]||0));envelope[k]=paused?target:envelope[k]+(target-envelope[k])*(1-Math.exp(-dt*(target>envelope[k]?18:7)))}
@@ -79,6 +80,7 @@
  gl.uniform2f(uniforms.center,(stage.x+stage.width/2)/innerWidth*2-1,1-(stage.top+stage.height*.40)/innerHeight*2);
  gl.uniform1f(uniforms.entityScale,Math.min(stage.width*.66,stage.height*.75)/(innerHeight*.58));
  for(const [buf,count,mode,point] of [[lines,links.length/7,gl.LINES,0],[dots,nodes.length,gl.POINTS,1]]){gl.bindBuffer(gl.ARRAY_BUFFER,buf);gl.vertexAttribPointer(attrs[0],3,gl.FLOAT,false,28,0);gl.vertexAttribPointer(attrs[1],3,gl.FLOAT,false,28,12);gl.vertexAttribPointer(attrs[2],1,gl.FLOAT,false,28,24);gl.uniform1f(uniforms.points,point);gl.drawArrays(mode,0,count)}
+ sampleFrames++;if(now-sampleStart>=2000){window.luminariaRenderStats={fps:Math.round(sampleFrames*10000/(now-sampleStart))/10,paused,reducedMotion:reduce.matches,width:canvas.width,height:canvas.height};window.dispatchEvent(new CustomEvent('studio-render-stats',{detail:window.luminariaRenderStats}));sampleStart=now;sampleFrames=0}
  }label();requestAnimationFrame(frame);
  }catch(error){console.error('Luminaria renderer unavailable',error);canvas.remove();button.remove();document.body.classList.add('entity-fallback');window.addEventListener('studio-voice-state',e=>status.querySelector('strong').textContent=e.detail)}
 })();
