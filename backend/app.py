@@ -494,6 +494,17 @@ async def benchmark_model(id:str):
     finally:
         benchmarking=False
 
+@app.post('/api/models/{id}/evaluate')
+async def evaluate_model(id:str):
+    global benchmarking
+    if benchmarking or any(not r.get('finished') for r in engine.runs.values()): raise ValueError('Finish active tasks before running a quality check')
+    benchmarking=True
+    try:
+        from .quality import evaluate
+        return await evaluate(id)
+    finally:
+        benchmarking=False
+
 @app.get('/api/model-library')
 async def model_library():
     from .model_library import library

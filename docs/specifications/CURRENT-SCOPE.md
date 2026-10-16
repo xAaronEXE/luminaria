@@ -102,6 +102,17 @@ master-spec requirements remain in scope.
   after a confirmation. This erases their messages, summaries, tool records, run
   snapshots and model checkpoints. Files saved in My files are kept. Route tests
   cover this against a temporary data folder; not yet tried in the packaged app.
+- PDF and Word .docx files can be attached (up to 25 MB, 500 PDF pages). The original
+  is kept in My files/Attachments and its extracted text is given to the model.
+  Password-protected, scanned, damaged and legacy .doc files are refused with a
+  reason. Folders can be attached: up to 200 supported files and 100 MB are copied
+  to My files/Imports with their structure, and the model gets a contents list.
+  The plus menu no longer gets cut off by the composer. Tested with generated
+  files; not yet tried in the packaged app.
+- Models now have a quality check separate from speed: 12 fixed coding and reasoning
+  questions with exact answers. Code in the questions is read, never run. Results
+  are stored apart from speed history and shown per question. It has not been run
+  against a real model yet; tests use a simulated model server.
 - Source now includes a downloadable Standard/Abliterated catalog, one-at-a-time
   queue, resume, checksum checks, the 100 GB budget, and disk-space refusal.
   Unit tests cover those paths with a local file server. A packaged Windows
