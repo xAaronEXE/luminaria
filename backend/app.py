@@ -612,7 +612,8 @@ async def model_use(id:str):
     result=select(prepared['id'])
     runtime_config=DATA/'llama-swap.yaml'
     configured=json.loads(runtime_config.read_text('utf-8')).get('models',{}) if runtime_config.exists() else {}
-    if prepared['id'] not in configured:
+    command=configured.get(prepared['id'],{}).get('cmd','')
+    if prepared['id'] not in configured or ('--mmproj' in command)!=bool(prepared.get('projector_file')):
         from .runtime import stop_owned, start_swap
         await asyncio.to_thread(stop_owned); await asyncio.to_thread(start_swap)
     broadcast({'type':'changed'}); return result
