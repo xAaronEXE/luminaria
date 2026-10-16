@@ -3,7 +3,7 @@
 Deployed on the owner's personal Cloudflare account, separately from ACT resources.
 Service: https://luminaria-identity.johnnycox4431836.workers.dev
 
-All three providers currently report unconfigured. Desktop 0.2.4 includes the
+GitHub is configured; Google and Discord remain unconfigured. Desktop 0.2.4 includes the
 pairing client, server session validation, protected Windows session storage and
 separate account profiles. Real provider login and mandatory release sign-in
 remain unverified/incomplete; development access remains available.
@@ -11,9 +11,10 @@ remain unverified/incomplete; development access remains available.
 GitHub setup progress (2026-10-16): the Luminaria OAuth application was created
 under xAaronEXE (application 3938631), using the exact callback below with no
 wildcard redirects. Its client ID is provisioned to the personal Cloudflare
-Worker. GitHub requires owner verification before issuing the client secret;
-that verification is pending. GitHub readiness correctly remains false until
-both values are configured. No client secret has been saved in this repository.
+Worker. The owner completed verification and GITHUB_CLIENT_SECRET was transferred
+directly to Wrangler stdin without a local secret file. Live health and the
+installed desktop accounts endpoint both report GitHub configured=true.
+The real browser flow reached GitHub consent; owner authorization is pending.
 
 ## Provider registration
 
