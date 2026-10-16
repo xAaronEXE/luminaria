@@ -1,0 +1,65 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><meta name="color-scheme" content="dark"><title>Luminaria</title><link rel="icon" href="/mark.svg" type="image/svg+xml"><link rel="stylesheet" href="/style.css"><link rel="stylesheet" href="/settings.css"><script defer src="/lib/marked.min.js"></script><script defer src="/lib/purify.min.js"></script><script defer src="/lib/highlight.min.js"></script><script defer src="/app.js"></script><script defer src="/preferences.js"></script><script defer src="/settings.js"></script><script defer src="/workspace-ui.js"></script><script defer src="/core.js"></script><script defer src="/voice.js"></script></head>
+<body>
+<div class="app">
+ <aside class="sidebar" id="sidebar" aria-label="Task navigation">
+  <a class="brand" href="#" aria-label="Luminaria home"><img src="/mark.svg" alt="" width="29" height="29"><span>LUMINARIA<span class="brand-sub">LOCAL AI</span></span></a>
+  <button class="new-task" id="new-task"><span data-icon="plus"></span>New task<span class="keyhint">Ctrl N</span></button>
+  <label class="search-box"><span data-icon="search"></span><input id="search" placeholder="Search your work" aria-label="Search tasks"></label>
+  <div class="sidebar-label">Your chats</div>
+  <nav id="chats" class="chat-list" aria-label="Saved tasks"></nav>
+  <div class="sidebar-bottom">
+   <button data-panel="models"><span data-icon="models"></span>Model library</button>
+   <button data-panel="memory"><span data-icon="memory"></span>Memory<span id="memory-count" class="count">0</span></button>
+   <button data-panel="tools"><span data-icon="tools"></span>Tools & integrations<span id="tools-count" class="count">—</span></button>
+   <button data-panel="skills"><span data-icon="book"></span>Skills</button>
+   <button data-panel="schedules"><span data-icon="clock"></span>Automations</button>
+   <button data-panel="settings"><span data-icon="settings"></span>Settings & updates</button>
+   <div class="profile"><span class="profile-symbol">L</span><div>Personal profile<small>On your machine</small></div><span class="status-dot"></span></div>
+  </div>
+ </aside>
+ <main class="main">
+  <header class="topbar">
+   <button class="icon-btn mobile-menu" id="toggle-sidebar" aria-label="Toggle task sidebar"><span data-icon="menu"></span></button>
+   <div class="breadcrumb"><span data-icon="folder"></span><span id="workspace-name">Local-AI-Workspace</span><span class="separator">/</span><strong id="task-title">New task</strong></div>
+   <div class="top-actions"><button class="icon-btn" id="rename-task" aria-label="Rename task" title="Rename task"><span data-icon="edit"></span></button><button class="icon-btn" id="archive-task" aria-label="Archive task" title="Archive task"><span data-icon="archive"></span></button><button class="icon-btn" id="toggle-inspector" aria-label="Toggle files and activity" title="Files and activity"><span data-icon="panel"></span></button></div>
+  </header>
+  <div id="messages-scroll" class="messages-scroll">
+   <section id="welcome" class="welcome">
+    <div class="core-stage"><canvas id="mint-core" width="520" height="400" tabindex="0" role="img" aria-label="Interactive 3D wireframe. Drag or use arrow keys to rotate."></canvas><div>Drag to explore <button id="core-motion" aria-pressed="false">Pause motion</button></div></div><div class="welcome-mark"><img src="/mark.svg" alt="" width="42" height="42"></div>
+    <h1>Make something<br><span>that’s yours.</span></h1>
+    <p>Your model. Your tools. Your ideas.<br>A place to think deeply and get things done.</p>
+    <div class="starter-list">
+     <button data-prompt="Explore the files in this workspace and explain what is here."><span data-icon="code"></span><span>Explore a codebase<small>Find your way through the files</small></span><span data-icon="arrow-right"></span></button>
+     <button data-prompt="Help me plan a research project. First ask what topic and outcome I have in mind."><span data-icon="globe"></span><span>Research an idea<small>Find sources and build a plan</small></span><span data-icon="arrow-right"></span></button>
+     <button data-prompt="Help me create a useful document. Ask what it should contain and which format I need."><span data-icon="file"></span><span>Create something useful<small>Documents, scripts, and workflows</small></span><span data-icon="arrow-right"></span></button>
+    </div>
+   </section>
+   <div id="messages" class="messages" aria-live="polite" aria-label="Conversation"></div>
+   <article id="live-message" class="message assistant" hidden><div class="message-heading"><img src="/mark.svg" alt="" width="20" height="20"><strong>Luminaria</strong><span id="live-phase">Working</span></div><details id="live-reasoning" hidden><summary>Reasoning</summary><pre></pre></details><div class="markdown" id="live-content"></div><div class="working-line"><span class="working-dot"></span><span id="working-label">Thinking through your request…</span></div></article>
+  </div>
+  <section class="composer-area">
+   <div id="pending-approvals" class="approvals" aria-live="polite"></div>
+   <div id="run-status" class="run-status" hidden></div>
+   <form id="composer" class="composer">
+    <div id="attachment-list" class="attachment-list"></div>
+    <label class="sr-only" for="prompt">Message your local AI</label><textarea id="prompt" rows="2" placeholder="Ask, build, explore…" spellcheck="false"></textarea>
+    <div class="composer-toolbar"><div class="composer-tools"><button type="button" class="icon-btn" id="attach-button" aria-label="Attach an image" title="Attach an image"><span data-icon="plus"></span></button><input type="file" id="image-input" accept="image/png,image/jpeg,image/webp" hidden multiple><button type="button" class="model-button" data-panel="settings"><span class="status-dot" id="model-dot"></span><span id="model-label">local-qwen</span><span data-icon="chevron"></span></button><label class="reasoning-toggle" title="Enable the model’s reasoning mode. Supported behavior depends on the selected model."><input type="checkbox" id="reasoning"><span data-icon="brain"></span><span>Think harder</span></label></div><button type="submit" class="send-button" id="send" aria-label="Send message"><span data-icon="arrow-up"></span></button><button type="button" class="stop-button" id="stop" aria-label="Stop task" hidden><span data-icon="stop"></span></button></div>
+   </form>
+   <div class="composer-footer"><span><span data-icon="lock"></span>Local inference · actions stay in your control</span><span>Enter to send <span class="footer-divider">/</span> Shift Enter for a new line</span></div>
+  </section>
+ </main>
+ <aside class="inspector" id="inspector" aria-label="Files and activity">
+  <div class="inspector-header"><strong>Files &amp; activity</strong><button class="icon-btn" id="refresh-files" aria-label="Refresh files"><span data-icon="refresh"></span></button></div>
+  <div class="inspector-tabs" role="tablist"><button role="tab" aria-selected="true" data-tab="files">Files</button><button role="tab" aria-selected="false" data-tab="activity">Activity<span id="activity-count"></span></button><button role="tab" aria-selected="false" data-tab="context">Context</button></div>
+  <div id="inspector-content" class="inspector-content"></div>
+  <div class="context-card"><div><span>Working context</span><strong id="context-value">0 / 32k</strong></div><div class="context-track"><div id="context-fill"></div></div><p id="context-caption">History is saved. Context compacts automatically.</p><button id="compact" class="text-button"><span data-icon="compress"></span>Compact now</button></div>
+  <div class="local-status"><span class="status-dot" id="connection-dot"></span><span id="connection-label">Connecting to local model</span></div>
+ </aside>
+</div>
+<div id="panel-backdrop" class="panel-backdrop" hidden><section class="sheet" role="dialog" aria-modal="true" aria-labelledby="panel-title"><header><div><h2 id="panel-title"></h2><p id="panel-subtitle"></p></div><button class="icon-btn" id="close-panel" aria-label="Close panel"><span data-icon="close"></span></button></header><div id="panel-content" class="panel-content"></div></section></div>
+<div id="toast" role="status" class="toast" hidden></div>
+</body></html>
+
+

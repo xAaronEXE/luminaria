@@ -1,0 +1,2 @@
+# Computer use
+Discover Windows tools, inspect current screen or accessibility state, then act on observed targets. Read the tool schemas before invoking them. Re-observe after each meaningful action. USER_CONTROL means recent human input: stop and ask the user to let the desktop settle; never disable that guard. Tool permissions do not imply permission to send, purchase, delete or install. Ask for the concrete action and honor denials. Use screenshot images with the model's vision capability when accessibility data is insufficient.

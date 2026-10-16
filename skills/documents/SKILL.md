@@ -1,0 +1,2 @@
+# Document creation
+Use the configured Python runtime. Word: python-docx; Excel: openpyxl; PDF: reportlab; slides: python-pptx; images: Pillow. Save outputs in the workspace. Verify that the generated file opens with its parser, check totals and page dimensions where applicable, and report the actual output path. Preserve user source files. Never infer sending, payment or approval from a filename.

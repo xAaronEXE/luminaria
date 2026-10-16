@@ -1,0 +1,70 @@
+"""Durable source history and versioned working summaries. No transcript truncation."""
+import json
+import sqlite3
+import time
+import uuid
+from pathlib import Path
+
+def uid(): return uuid.uuid4().hex
+def now(): return time.time()
+
+class Store:
+    def __init__(self, path):
+        Path(path).parent.mkdir(parents=True, exist_ok=True)
+        self.db = sqlite3.connect(path, check_same_thread=False)
+        self.db.row_factory = sqlite3.Row
+        self.db.executescript('''
+        PRAGMA journal_mode=WAL;
+        PRAGMA foreign_keys=ON;
+        CREATE TABLE IF NOT EXISTS chats(id TEXT PRIMARY KEY,title TEXT,created REAL,updated REAL,archived INTEGER DEFAULT 0);
+        CREATE TABLE IF NOT EXISTS messages(id INTEGER PRIMARY KEY AUTOINCREMENT,chat TEXT REFERENCES chats(id),payload TEXT,created REAL);
+        CREATE INDEX IF NOT EXISTS message_chat ON messages(chat,id);
+        CREATE TABLE IF NOT EXISTS summaries(id INTEGER PRIMARY KEY,chat TEXT,through_id INTEGER,content TEXT,created REAL);
+        CREATE TABLE IF NOT EXISTS memories(id TEXT PRIMARY KEY,title TEXT,content TEXT,source TEXT,updated REAL);
+        CREATE TABLE IF NOT EXISTS actions(id TEXT PRIMARY KEY,chat TEXT,name TEXT,args TEXT,tier TEXT,status TEXT,result TEXT,created REAL);
+        CREATE TABLE IF NOT EXISTS schedules(id TEXT PRIMARY KEY,title TEXT,prompt TEXT,interval INTEGER,next_run REAL,enabled INTEGER);
+        CREATE TABLE IF NOT EXISTS settings(key TEXT PRIMARY KEY,value TEXT);
+        CREATE TABLE IF NOT EXISTS runs(id TEXT PRIMARY KEY,chat TEXT,payload TEXT,status TEXT,updated REAL);
+        ''')
+        # A process restart must never resume previously approved side effects.
+        self.db.execute("UPDATE actions SET status='interrupted' WHERE status='running'")
+        self.db.commit()
+
+    def rows(self, sql, args=()): return [dict(x) for x in self.db.execute(sql, args).fetchall()]
+    def execute(self, sql, args=()):
+        cur=self.db.execute(sql,args); self.db.commit(); return cur.lastrowid
+    def create_chat(self, title='New task'):
+        id=uid(); self.execute('INSERT INTO chats VALUES(?,?,?,?,0)',(id,title,now(),now())); return id
+    def chats(self): return self.rows('SELECT * FROM chats WHERE archived=0 ORDER BY updated DESC')
+    def add(self, chat, payload):
+        id=self.execute('INSERT INTO messages(chat,payload,created) VALUES(?,?,?)',(chat,json.dumps(payload,ensure_ascii=False),now()))
+        self.execute('UPDATE chats SET updated=? WHERE id=?',(now(),chat)); return id
+    def save_run(self,run):
+        safe={k:(list(v) if isinstance(v,set) else v) for k,v in run.items()}
+        self.execute('INSERT OR REPLACE INTO runs VALUES(?,?,?,?,?)',(run['id'],run['chat'],json.dumps(safe),run['phase'],now()))
+        folder=Path(__import__('os').environ.get('MINT_RUNS',str(Path.home()/'agent'/'runs')))/run['id']
+        folder.mkdir(parents=True,exist_ok=True); (folder/'artifacts').mkdir(exist_ok=True)
+        with (folder/'conversation.jsonl').open('w',encoding='utf-8') as f:
+            for msg in self.messages(run['chat']): f.write(json.dumps(msg,ensure_ascii=False)+'\n')
+    def messages(self, chat, after=0):
+        return [dict(id=r['id'],created=r['created'],**json.loads(r['payload'])) for r in self.rows('SELECT * FROM messages WHERE chat=? AND id>? ORDER BY id',(chat,after))]
+    def summary(self, chat):
+        r=self.rows('SELECT * FROM summaries WHERE chat=? ORDER BY id DESC LIMIT 1',(chat,)); return r[0] if r else None
+    def save_summary(self, chat, through, text):
+        if not text.strip(): raise ValueError('Empty summary; original context retained')
+        return self.execute('INSERT INTO summaries(chat,through_id,content,created) VALUES(?,?,?,?)',(chat,through,text,now()))
+    def memory(self): return self.rows('SELECT * FROM memories ORDER BY updated DESC')
+    def save_memory(self,title,content,source='user',id=None):
+        id=id or uid(); self.execute('INSERT OR REPLACE INTO memories VALUES(?,?,?,?,?)',(id,title,content,source,now())); return id
+    def setting(self,key,default=None):
+        r=self.rows('SELECT value FROM settings WHERE key=?',(key,)); return json.loads(r[0]['value']) if r else default
+    def set_setting(self,key,value): self.execute('INSERT OR REPLACE INTO settings VALUES(?,?)',(key,json.dumps(value)))
+    def actions(self,chat):
+        return [dict(r,args=json.loads(r['args']),result=json.loads(r['result']) if r['result'] else None) for r in self.rows('SELECT * FROM actions WHERE chat=? ORDER BY created',(chat,))]
+    def recover_tool_pairs(self,chat_id=None):
+        for chat in self.rows('SELECT id FROM chats WHERE id=?',(chat_id,)) if chat_id else self.rows('SELECT id FROM chats'):
+            msgs=self.messages(chat['id']); answered={m.get('tool_call_id') for m in msgs if m['role']=='tool'}
+            for msg in msgs:
+                for call in msg.get('tool_calls',[]):
+                    if call['id'] not in answered:
+                        self.add(chat['id'],{'role':'tool','tool_call_id':call['id'],'content':'Process interrupted. Action outcome unknown; inspect files/state before retrying. Do not assume it executed.'})

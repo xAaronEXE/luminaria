@@ -1,0 +1,468 @@
+import asyncio, base64, contextlib, json, os, re, secrets, time
+from pathlib import Path
+from contextlib import asynccontextmanager
+from fastapi import FastAPI, Request, HTTPException
+from fastapi.responses import JSONResponse, FileResponse, StreamingResponse, Response
+from fastapi.staticfiles import StaticFiles
+from .config import ROOT, DATA, CONFIG, save_config, workspace_path
+from .store import Store,uid,now
+from .connectors import Connector
+from .tools import Toolbox
+from .engine import Engine
+
+TOKEN=secrets.token_urlsafe(32)
+store=Store(DATA/'studio.sqlite3')
+subscribers=set(); connectors={}; engine=None; benchmarking=False
+
+def broadcast(event):
+    for queue in tuple(subscribers):
+        if not queue.full(): queue.put_nowait(event)
+
+async def scheduler():
+    while True:
+        await asyncio.sleep(10)
+        if benchmarking: continue
+        for row in store.rows('SELECT * FROM schedules WHERE enabled=1 AND next_run<=?',(now(),)):
+            chat=store.create_chat('Scheduled: '+row['title'])
+            store.add(chat,{'role':'user','content':row['prompt']})
+            store.execute('UPDATE schedules SET next_run=? WHERE id=?',(now()+row['interval'],row['id']))
+            engine.start(chat)
+
+@asynccontextmanager
+async def lifespan(app):
+    global engine
+    for name,config in CONFIG.get('mcp',{}).items():
+        if not re.fullmatch(r'[a-z][a-z0-9_]{0,30}',name): continue
+        c=Connector(name,config); connectors[name]=c; c.start()
+    import aiosqlite
+    from langgraph.checkpoint.sqlite.aio import AsyncSqliteSaver
+    conn=await aiosqlite.connect(DATA/'checkpoints.sqlite3')
+    saver=AsyncSqliteSaver(conn); await saver.setup()
+    engine=Engine(store,Toolbox(store,connectors),broadcast,saver)
+    await engine.restore()
+    task=asyncio.create_task(scheduler())
+    yield
+    task.cancel()
+    with contextlib.suppress(asyncio.CancelledError): await task
+    await engine.close()
+    await conn.close()
+    for c in connectors.values(): await c.close()
+
+app=FastAPI(lifespan=lifespan,docs_url=None,redoc_url=None,openapi_url=None)
+
+@app.middleware('http')
+async def local_only(request,call_next):
+    host=request.headers.get('host',''); port=os.environ.get('STUDIO_PORT','3210')
+    hosts={f'127.0.0.1:{port}',f'localhost:{port}'}
+    if host not in hosts: return JSONResponse({'error':'Local host required'},403)
+    origin=request.headers.get('origin')
+    if origin and origin not in {'http://'+h for h in hosts}: return JSONResponse({'error':'Foreign origin blocked'},403)
+    if request.url.path.startswith('/api/') and request.url.path!='/api/bootstrap':
+        if not secrets.compare_digest(request.headers.get('x-studio-token',''),TOKEN): return JSONResponse({'error':'Session token required'},403)
+    if request.headers.get('content-length') and int(request.headers['content-length'])>12_000_000: return JSONResponse({'error':'Request too large'},413)
+    response=await call_next(request)
+    response.headers['X-Content-Type-Options']='nosniff'
+    response.headers['Referrer-Policy']='no-referrer'
+    response.headers['Cache-Control']='no-store' if request.url.path.startswith('/api/') else 'no-cache'
+    response.headers['Content-Security-Policy']="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; media-src 'self' blob:; connect-src 'self'; frame-ancestors 'none'; object-src 'none'; base-uri 'none'"
+    return response
+
+@app.exception_handler(ValueError)
+async def value_error(request,exc): return JSONResponse({'error':str(exc)},400)
+
+def require_chat(id):
+    if not store.rows('SELECT id FROM chats WHERE id=?',(id,)): raise HTTPException(404,'Task not found')
+
+@app.get('/api/bootstrap')
+async def bootstrap(): return {'token':TOKEN,'version':CONFIG['version'],'name':'Luminaria'}
+
+@app.get('/api/state')
+async def state(chat:str=''):
+    if chat: require_chat(chat)
+    return {'chats':store.chats(),'chat':chat,'messages':store.messages(chat) if chat else [],'actions':store.actions(chat) if chat else [],'summary':store.summary(chat) if chat else None,'summaries':store.rows('SELECT id,through_id,created FROM summaries WHERE chat=? ORDER BY id',(chat,)) if chat else [],'run':engine.public_run(chat),'context':store.setting('context:'+chat,{}),'memories':store.memory(),'schedules':store.rows('SELECT * FROM schedules ORDER BY next_run'),'workspace':CONFIG['workspace'],'model':CONFIG['model'],'context_limit':CONFIG['context'],'connectors':{n:{'status':c.status,'tools':len(c.tools)} for n,c in connectors.items()},'tool_count':len(engine.tools.catalog()),'active_runs':[{'chat':k,'phase':v['phase']} for k,v in engine.runs.items() if not v.get('finished')]}
+
+@app.get('/api/events')
+async def events(request:Request):
+    queue=asyncio.Queue(maxsize=200); subscribers.add(queue)
+    async def stream():
+        try:
+            yield 'data: '+json.dumps({'type':'ready'})+'\n\n'
+            while not await request.is_disconnected():
+                try: event=await asyncio.wait_for(queue.get(),15)
+                except asyncio.TimeoutError: yield ': heartbeat\n\n'; continue
+                yield 'data: '+json.dumps(event,ensure_ascii=False)+'\n\n'
+        finally: subscribers.discard(queue)
+    return StreamingResponse(stream(),media_type='text/event-stream',headers={'X-Accel-Buffering':'no'})
+
+@app.post('/api/sessions')
+@app.post('/api/chats')
+async def create_chat(request:Request):
+    body=await request.json(); id=store.create_chat(str(body.get('title','New task'))[:160]); broadcast({'type':'changed'}); return {'id':id}
+
+@app.patch('/api/chats/{id}')
+async def edit_chat(id:str,request:Request):
+    require_chat(id); body=await request.json()
+    if 'title' in body: store.execute('UPDATE chats SET title=? WHERE id=?',(str(body['title'])[:160],id))
+    if 'archived' in body:
+        if id in engine.tasks and not engine.tasks[id].done(): raise ValueError('Stop the task before archiving')
+        store.execute('UPDATE chats SET archived=? WHERE id=?',(bool(body['archived']),id))
+    broadcast({'type':'changed'}); return {'ok':True}
+
+@app.get('/api/search')
+async def search(q:str=''):
+    return store.rows('SELECT DISTINCT c.id,c.title FROM chats c LEFT JOIN messages m ON c.id=m.chat WHERE c.archived=0 AND (instr(lower(c.title),?)>0 OR instr(lower(m.payload),?)>0) ORDER BY c.updated DESC LIMIT 50',(q.lower(),q.lower()))
+
+@app.get('/api/chats/hidden')
+async def hidden_chats():
+    return store.rows('SELECT id,title,archived FROM chats WHERE archived IN (1,2) ORDER BY updated DESC')
+
+@app.post('/api/chats/{id}/organize')
+async def organize_chat(id:str,request:Request):
+    require_chat(id)
+    if id in engine.runs and not engine.runs[id].get('finished'): raise ValueError('Finish or stop this chat before organizing it')
+    action=(await request.json()).get('action')
+    if action not in ('archive','delete','restore','fork'): raise ValueError('Unknown chat action')
+    if action=='fork':
+        original=store.rows('SELECT title FROM chats WHERE id=?',(id,))[0]
+        target=store.create_chat(original['title']+' (fork)')
+        # Copy the full transcript, never executable checkpoints or pending approvals.
+        for m in store.messages(id): store.add(target,{k:v for k,v in m.items() if k not in ('id','created')})
+        broadcast({'type':'changed'});return {'id':target}
+    store.execute('UPDATE chats SET archived=? WHERE id=?',({'archive':1,'delete':2,'restore':0}[action],id))
+    broadcast({'type':'changed'});return {'ok':True,'recoverable':True}
+
+@app.post('/api/chats/{id}/run')
+async def run_chat(id:str,request:Request):
+    if benchmarking: raise ValueError('Wait for the model benchmark to finish')
+    require_chat(id); b=await request.json()
+    if id in engine.tasks and not engine.tasks[id].done(): raise ValueError('Task already running')
+    if id in engine.runs and not engine.runs[id].get('finished'): raise ValueError('Resume or stop the existing task first')
+    text=str(b.get('text','')).strip()
+    if len(text)>100000: raise ValueError('Message exceeds 100,000 characters; put large material in a file')
+    attachments=b.get('attachments',[])
+    if not text and not attachments: raise ValueError('Write a message or attach an image')
+    content=[{'type':'text','text':text}]
+    if len(attachments)>4: raise ValueError('Attach at most four images per turn')
+    for ref in attachments:
+        if not re.fullmatch(r'[a-f0-9]{32}\.(png|jpg|webp)',ref['id']): raise ValueError('Invalid image')
+        p=DATA/'attachments'/ref['id']
+        if not p.is_file(): raise ValueError('Image no longer exists')
+        content.append({'type':'image_ref','id':ref['id'],'mime':{'png':'image/png','jpg':'image/jpeg','webp':'image/webp'}[p.suffix[1:]]})
+    if not store.messages(id): store.execute('UPDATE chats SET title=? WHERE id=?',(text[:70] or 'Image analysis',id))
+    store.add(id,{'role':'user','content':content if attachments else text})
+    return {'run_id':engine.start(id,bool(b.get('reasoning',False)))}
+
+@app.post('/api/chats/{id}/stop')
+async def stop_chat(id:str):
+    require_chat(id)
+    if id in engine.tasks and not engine.tasks[id].done():
+        task=engine.tasks[id]; task.cancel()
+        with contextlib.suppress(asyncio.CancelledError): await task
+    elif id in engine.runs:
+        run=engine.runs[id]; run['phase']='Stopped';run['finished']=now();store.save_run(run)
+        store.execute("UPDATE actions SET status='denied' WHERE chat=? AND status='pending'",(id,));store.recover_tool_pairs(id)
+        for aid,cid in list(engine.approvals.items()):
+            if cid==id: engine.approvals.pop(aid,None)
+        broadcast({'type':'changed','chat':id})
+    return {'ok':True}
+
+@app.post('/api/chats/{id}/compact')
+async def compact_chat(id:str):
+    if benchmarking: raise ValueError('Wait for the model benchmark to finish')
+    require_chat(id); return {'run_id':engine.start(id,compact_only=True)}
+
+@app.get('/api/approvals')
+async def pending():
+    return [a for id in engine.runs for a in store.actions(id) if a['status']=='pending']
+
+@app.post('/api/approvals/{id}/decision')
+@app.post('/api/approvals/{id}')
+async def decision(id:str,request:Request):
+    body=await request.json(); chat=engine.approvals.get(id)
+    if not chat: raise ValueError('Approval is no longer pending')
+    approved=body.get('decision')=='allow' or body.get('approved') is True
+    if body.get('scope')=='always' and approved:
+        a=store.rows('SELECT name,tier FROM actions WHERE id=?',(id,))[0]
+        if a['tier']!='approve': raise ValueError('This tool always requires approval for each action')
+        store.set_setting('permission:'+a['name'],True)
+    engine.resume(chat,{'approved':approved}); return {'ok':True}
+
+@app.post('/api/attachments')
+async def upload(request:Request):
+    from PIL import Image
+    import io
+    b=await request.json(); raw=base64.b64decode(b['data'],validate=True)
+    if len(raw)>8_000_000: raise ValueError('Image exceeds 8 MB')
+    img=Image.open(io.BytesIO(raw)); img.verify()
+    if img.format not in ('PNG','JPEG','WEBP'): raise ValueError('PNG, JPEG or WebP required')
+    if img.width*img.height>30_000_000: raise ValueError('Image dimensions too large')
+    ext={'PNG':'png','JPEG':'jpg','WEBP':'webp'}[img.format]; id=uid()+'.'+ext
+    folder=DATA/'attachments'; folder.mkdir(exist_ok=True); (folder/id).write_bytes(raw)
+    return {'id':id,'mime':'image/'+('jpeg' if ext=='jpg' else ext),'name':str(b.get('name','Image'))[:100]}
+
+@app.get('/api/attachments/{id}')
+async def attachment(id:str):
+    if not re.fullmatch(r'[a-f0-9]{32}\.(png|jpg|webp)',id): raise HTTPException(404)
+    p=DATA/'attachments'/id
+    if not p.exists(): raise HTTPException(404)
+    return FileResponse(p)
+
+@app.get('/api/files')
+async def files(path:str='.'):
+    return await engine.tools.call('list_files',{'path':path},{})
+
+@app.get('/api/file')
+async def file(path:str):
+    return await engine.tools.call('read_file',{'path':path,'limit':32000},{})
+
+@app.get('/api/file/download')
+async def download(path:str):
+    p=workspace_path(path)
+    if not p.is_file(): raise HTTPException(404)
+    return FileResponse(p,filename=p.name)
+
+@app.get('/api/actions/{id}/output')
+async def output(id:str):
+    if not re.fullmatch('[a-f0-9]{32}',id): raise HTTPException(404)
+    p=DATA/'tool-outputs'/(id+'.json')
+    if not p.exists(): raise HTTPException(404)
+    return FileResponse(p,media_type='application/json',filename=id+'.json')
+
+@app.get('/api/tools')
+async def tool_list(): return engine.tools.catalog()
+
+@app.post('/api/memories')
+async def memory_save(request:Request):
+    b=await request.json(); title=str(b.get('title','')).strip(); content=str(b.get('content','')).strip()
+    if not title or not content: raise ValueError('Title and memory text are required')
+    if len(content)>6000: raise ValueError('Keep each memory below 6,000 characters')
+    if sum(len(m['content']) for m in store.memory() if m['id']!=b.get('id'))+len(content)>16000: raise ValueError('Pinned memory limit reached. Shorten existing notes to leave room for conversation.')
+    id=store.save_memory(title[:120],content,id=b.get('id')); broadcast({'type':'changed'}); return {'id':id}
+
+@app.delete('/api/memories/{id}')
+async def memory_delete(id:str): store.execute('DELETE FROM memories WHERE id=?',(id,)); broadcast({'type':'changed'}); return {'ok':True}
+
+@app.post('/api/schedules')
+async def schedule_create(request:Request):
+    b=await request.json(); return await engine.tools.call('create_schedule',{'title':str(b['title'])[:120],'prompt':str(b['prompt'])[:10000],'interval_minutes':int(b['interval_minutes'])},{})
+
+@app.patch('/api/schedules/{id}')
+async def schedule_update(id:str,request:Request):
+    b=await request.json(); store.execute('UPDATE schedules SET enabled=? WHERE id=?',(bool(b['enabled']),id)); return {'ok':True}
+
+@app.delete('/api/schedules/{id}')
+async def schedule_delete(id:str): store.execute('DELETE FROM schedules WHERE id=?',(id,)); return {'ok':True}
+
+@app.get('/api/settings')
+async def settings():
+    public={k:v for k,v in CONFIG.items() if k not in ('mcp','model_api_key')}
+    public['data_directory']=str(DATA); public['mcp_configured']=list(CONFIG.get('mcp',{})); return public
+
+@app.post('/api/settings')
+async def settings_save(request:Request):
+    if any(not r.get('finished') for r in engine.runs.values()): raise ValueError('Finish or stop active tasks before changing settings')
+    b=await request.json(); allowed={'workspace','endpoint','tokenizer','model','context','output_tokens','compact_ratio','python','node','llama_executable','model_file','projector_file','external_tools','ask_reads'}
+    changes={k:v for k,v in b.items() if k in allowed}
+    for key in ('external_tools','ask_reads'):
+        if key in changes and not isinstance(changes[key],bool): raise ValueError('Boolean setting required')
+    for key in ['endpoint','tokenizer']:
+        if key in changes and not re.match(r'^https?://',changes[key]): raise ValueError('HTTP(S) endpoint required')
+    if 'context' in changes: changes['context']=max(4096,min(262144,int(changes['context'])))
+    if 'output_tokens' in changes: changes['output_tokens']=max(256,min(8192,int(changes['output_tokens'])))
+    if 'compact_ratio' in changes: changes['compact_ratio']=max(.4,min(.85,float(changes['compact_ratio'])))
+    if 'workspace' in changes: Path(changes['workspace']).mkdir(parents=True,exist_ok=True)
+    if changes.get('release_repo') and not re.fullmatch(r'[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+',changes['release_repo']): raise ValueError('Use owner/repository for GitHub releases')
+    save_config(changes); broadcast({'type':'changed'}); return {'ok':True}
+
+@app.get('/api/model/status')
+async def model_status():
+    import httpx
+    try:
+        async with httpx.AsyncClient(timeout=3,trust_env=False,headers={'Authorization':'Bearer '+CONFIG.get('model_api_key','local-only')}) as client:
+            r=await client.get(CONFIG['endpoint']+'/models'); r.raise_for_status()
+            loaded=False
+            try: loaded=(await client.get(CONFIG['tokenizer']+'/health')).status_code==200
+            except httpx.HTTPError: pass
+        return {'connected':True,'loaded':loaded,'models':r.json().get('data',[]),'model':CONFIG['model']}
+    except Exception as e: return {'connected':False,'loaded':False,'error':str(e),'model':CONFIG['model']}
+
+@app.post('/api/model/start')
+async def model_start():
+    from .runtime import start_swap
+    return await asyncio.to_thread(start_swap)
+
+@app.post('/api/model/unload')
+async def unload_model():
+    if any(not t.done() for t in engine.tasks.values()): raise ValueError('Stop running tasks before unloading')
+    # Fixed local llama-swap control endpoint; never a caller-supplied URL.
+    r=await engine.client.post('http://127.0.0.1:8098/models/unload',timeout=20)
+    r.raise_for_status(); return {'ok':True}
+
+@app.get('/api/updates')
+async def updates():
+    from .updates import check
+    return await check()
+
+@app.post('/api/updates/install')
+async def update_install():
+    from .updates import install
+    return await install()
+
+@app.get('/api/skills')
+async def skills():
+    from .skills import catalog
+    return [{**s,'enabled':store.setting('skill:'+s['name'],True)} for s in catalog()]
+
+@app.post('/api/skills')
+async def skill_import(request:Request):
+    from .skills import save_skill
+    b=await request.json(); return save_skill(b['name'],b['content'])
+
+@app.get('/api/sessions')
+async def sessions(): return store.chats()
+
+@app.get('/api/sessions/{id}')
+async def session(id:str): return await state(id)
+
+@app.delete('/api/sessions/{id}')
+async def delete_session(id:str):
+    await stop_chat(id); store.execute('UPDATE chats SET archived=1 WHERE id=?',(id,));return {'archived':True,'history_preserved':True}
+
+@app.post('/api/chats/{id}/resume')
+async def resume_chat(id:str): return {'run_id':engine.resume(id)}
+
+@app.post('/api/permissions/reset')
+async def reset_permissions(): store.execute("DELETE FROM settings WHERE key LIKE 'permission:%'");return {'ok':True}
+
+@app.get('/api/models')
+async def models():
+    from .models import public_models
+    return public_models(store)
+
+@app.post('/api/models')
+async def add_model(request:Request):
+    if any(not r.get('finished') for r in engine.runs.values()): raise ValueError('Finish active tasks before editing the registry')
+    from .models import add_model
+    result=add_model(await request.json())
+    from .runtime import swap_process,stop_owned
+    if swap_process and swap_process.poll() is None: stop_owned()
+    return result
+
+@app.post('/api/models/{id}/select')
+async def select_model(id:str):
+    if benchmarking: raise ValueError('Wait for the model benchmark to finish')
+    if any(not r.get('finished') for r in engine.runs.values()): raise ValueError('Finish or stop active tasks before switching models')
+    from .models import select
+    result=select(id)
+    runtime_config=DATA/'llama-swap.yaml'
+    configured=json.loads(runtime_config.read_text('utf-8')).get('models',{}) if runtime_config.exists() else {}
+    if id not in configured:
+        from .runtime import stop_owned,start_swap
+        await asyncio.to_thread(stop_owned);await asyncio.to_thread(start_swap)
+    broadcast({'type':'changed'});return result
+
+@app.post('/api/connectors')
+async def connector_save(request:Request):
+    b=await request.json(); name=b.get('name','')
+    if not re.fullmatch('[a-z][a-z0-9_]{0,30}',name): raise ValueError('Invalid connector name')
+    if not isinstance(b.get('args'),list) or not all(isinstance(a,str) for a in b['args']): raise ValueError('Arguments must be a JSON array of strings')
+    configs=CONFIG.get('mcp',{}).copy(); configs[name]={'command':str(b['command']),'args':b['args'],'cwd':CONFIG['workspace']}
+    save_config({'mcp':configs});return {'restart_required':True}
+
+@app.post('/api/skills/{name}/toggle')
+async def skill_toggle(name:str,request:Request):
+    b=await request.json();store.set_setting('skill:'+name,bool(b['enabled']));return {'ok':True}
+
+@app.post('/api/chat')
+async def chat_stream(request:Request):
+    if benchmarking: raise ValueError('Wait for the model benchmark to finish')
+    b=await request.json(); id=b.get('session_id') or store.create_chat()
+    require_chat(id)
+    if id in engine.runs and not engine.runs[id].get('finished'): raise ValueError('Session already active')
+    queue=asyncio.Queue(maxsize=500);subscribers.add(queue)
+    store.add(id,{'role':'user','content':str(b.get('message',b.get('text','')))})
+    engine.start(id,bool(b.get('reasoning',False)))
+    async def generate():
+        yield 'event: session\ndata: '+json.dumps({'session_id':id})+'\n\n'
+        try:
+            while True:
+                try: e=await asyncio.wait_for(queue.get(),1)
+                except asyncio.TimeoutError: e=None
+                if e and e.get('chat')==id:
+                    event={'delta':'token','approval':'approval_requested','compacted':'compaction'}.get(e['type'],e['type'])
+                    yield 'event: '+event+'\ndata: '+json.dumps(e)+'\n\n'
+                run=engine.runs[id]
+                if run.get('finished'):
+                    yield 'event: '+('error' if run['phase']=='Error' else 'done')+'\ndata: '+json.dumps(engine.public_run(id))+'\n\n';break
+                if await request.is_disconnected(): break
+        finally: subscribers.discard(queue)
+    return StreamingResponse(generate(),media_type='text/event-stream')
+
+@app.get('/api/voice/status')
+async def voice_status():
+    from .voice import status
+    return status()
+
+@app.post('/api/voice/transcribe')
+async def voice_transcribe(request:Request):
+    from .voice import transcribe
+    raw=await request.body()
+    if len(raw)>1_200_000: raise ValueError('Voice recording exceeds 35 seconds')
+    return await asyncio.to_thread(transcribe,raw)
+
+@app.post('/api/voice/install')
+async def voice_install():
+    from .voice import install_models
+    return await asyncio.to_thread(install_models)
+
+@app.post('/api/voice/speak')
+async def voice_speak(request:Request):
+    from .voice import synthesize
+    b=await request.json()
+    return Response(await asyncio.to_thread(synthesize,b.get('text',''),b.get('voice_id',store.setting('preferences',{}).get('voice_id','lessac'))),media_type='audio/wav')
+
+@app.post('/api/voice/voices/{id}/install')
+async def voice_install_choice(id:str):
+    from .voice import install_voice
+    return await asyncio.to_thread(install_voice,id)
+
+@app.get('/api/preferences')
+async def preferences():
+    from .preferences import DEFAULTS
+    return DEFAULTS | store.setting('preferences',{})
+
+@app.post('/api/models/{id}/benchmark')
+async def benchmark_model(id:str):
+    global benchmarking
+    if benchmarking or any(not r.get('finished') for r in engine.runs.values()): raise ValueError('Finish active tasks before benchmarking')
+    benchmarking=True
+    try:
+        from .benchmark import measure
+        return await measure(id)
+    finally:
+        benchmarking=False
+
+@app.post('/api/preferences')
+async def preferences_save(request:Request):
+    from .preferences import validate
+    values=store.setting('preferences',{}) | validate(await request.json())
+    store.set_setting('preferences',values); return {'ok':True}
+
+@app.get('/api/accounts')
+async def accounts():
+    from .profiles import status
+    return status()
+
+@app.post('/api/accounts')
+async def account_create(request:Request):
+    from .profiles import create
+    return create((await request.json()).get('name',''))
+
+@app.post('/api/accounts/{id}/select')
+async def account_select(id:str):
+    if any(not r.get('finished') for r in engine.runs.values()): raise ValueError('Finish or stop active tasks before switching profiles')
+    from .profiles import select
+    return select(id)
+
+app.mount('/',StaticFiles(directory=ROOT/'web',html=True),name='ui')
+
