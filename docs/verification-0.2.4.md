@@ -59,6 +59,13 @@ has been provisioned and no existing user account/profile was changed by the tes
 
 ## Remaining release blockers
 
+Follow-up registration progress: the owner approved registration and secret
+setup. GitHub application 3938631 was successfully created under xAaronEXE;
+GITHUB_CLIENT_ID was uploaded to the personal Cloudflare Worker. GitHub then
+presented a Confirm access verification-code screen before secret issuance.
+Owner verification is pending; no secret has been generated/provisioned, and
+the live service still correctly reports GitHub configured=false.
+
 Register provider OAuth applications using the callback URLs in
 auth-service/README.md and provision secrets to the personal Cloudflare service.
 Then test real browser consent, cancellation/denial, restart/session recovery,
