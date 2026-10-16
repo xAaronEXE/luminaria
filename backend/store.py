@@ -78,6 +78,22 @@ class Store:
     def set_setting(self,key,value): self.execute('INSERT OR REPLACE INTO settings VALUES(?,?)',(key,json.dumps(value)))
     def actions(self,chat):
         return [dict(r,args=json.loads(r['args']),result=json.loads(r['result']) if r['result'] else None) for r in self.rows('SELECT * FROM actions WHERE chat=? ORDER BY created',(chat,))]
+    def action_history(self,status='',query='',limit=200):
+        sql='SELECT a.id,a.chat,a.name,a.args,a.tier,a.status,a.result,a.created,c.title,c.archived FROM actions a JOIN chats c ON c.id=a.chat WHERE 1=1'
+        params=[]
+        if status=='problems':sql+=" AND a.status IN ('error','denied','interrupted')"
+        elif status:sql+=' AND a.status=?';params.append(status)
+        if query:
+            sql+=" AND (a.name LIKE ? ESCAPE '\\' OR a.args LIKE ? ESCAPE '\\' OR c.title LIKE ? ESCAPE '\\')"
+            like='%'+query.replace('\\','\\\\').replace('%','\\%').replace('_','\\_')+'%';params+=[like]*3
+        sql+=' ORDER BY a.created DESC LIMIT ?';params.append(max(1,min(int(limit),500)))
+        rows=[]
+        for r in self.rows(sql,tuple(params)):
+            result=json.loads(r['result']) if r['result'] else None
+            text=result.get('text') if isinstance(result,dict) and isinstance(result.get('text'),str) else (json.dumps(result)[:2000] if result is not None else '')
+            rows.append({'id':r['id'],'chat':r['chat'],'chat_title':r['title'],'chat_place':{1:'archived',2:'trash'}.get(r['archived'],'active'),
+                         'name':r['name'],'args':json.loads(r['args']),'tier':r['tier'],'status':r['status'],'created':r['created'],'output':text[:600],'truncated':len(text)>600})
+        return rows
     def recover_tool_pairs(self,chat_id=None):
         for chat in self.rows('SELECT id FROM chats WHERE id=?',(chat_id,)) if chat_id else self.rows('SELECT id FROM chats'):
             msgs=self.messages(chat['id']); answered={m.get('tool_call_id') for m in msgs if m['role']=='tool'}

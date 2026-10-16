@@ -267,6 +267,11 @@ async def download(path:str):
     if not p.is_file(): raise HTTPException(404)
     return FileResponse(p,filename=p.name)
 
+@app.get('/api/actions')
+async def action_history(status:str='',q:str='',limit:int=200):
+    if status not in ('','problems','done','error','denied','interrupted','pending','running'): raise ValueError('Unknown status filter')
+    return store.action_history(status,q[:200],limit)
+
 @app.get('/api/actions/{id}/output')
 async def output(id:str):
     if not re.fullmatch('[a-f0-9]{32}',id): raise HTTPException(404)
