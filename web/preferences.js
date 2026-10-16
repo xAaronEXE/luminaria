@@ -1,8 +1,8 @@
 /* Profile-local settings and theme application. No external assets. */
 window.studioPrefs={motion:true,metrics:true,microphone:'',voice_rate:1,voice_threshold:.022,voice_silence:.85,interruptible:true,saved_themes:[],background:'#141A17',accent:'#EAE6D9',theme:'Graphite & Ivory',colors:{}};
 const brandThemes={
- dark:{bg:'#141A17',sidebar:'#171D19',panel:'#181F1C',raised:'#222A25',hover:'#2D3630',line:'#3C4740',text:'#F4F4F0',muted:'#C5CBC5',dim:'#A6B0A8',accent:'#EAE6D9','accent-dark':'#141A17',glow:'#D4CEB8',warning:'#E1B878',danger:'#F09B94'},
- light:{bg:'#F4F4F0',sidebar:'#EDEEE7',panel:'#FAFAF6',raised:'#E5E8DF',hover:'#DCE1D5',line:'#B7BFB2',text:'#18231C',muted:'#435246',dim:'#526054',accent:'#283D2D','accent-dark':'#FAFAF6',glow:'#647859',warning:'#795300',danger:'#A52B32'}
+ dark:{bg:'#141A17',sidebar:'#171D19',panel:'#181F1C',raised:'#222A25',hover:'#2D3630',line:'#3C4740','control-line':'#6B786F',text:'#F4F4F0',muted:'#C5CBC5',dim:'#A6B0A8',accent:'#EAE6D9','accent-dark':'#141A17',glow:'#D4CEB8',warning:'#E1B878',danger:'#F09B94'},
+ light:{bg:'#F4F4F0',sidebar:'#EDEEE7',panel:'#FAFAF6',raised:'#E5E8DF',hover:'#DCE1D5',line:'#B7BFB2','control-line':'#7A8476',text:'#18231C',muted:'#435246',dim:'#526054',accent:'#283D2D','accent-dark':'#FAFAF6',glow:'#647859',warning:'#795300',danger:'#A52B32'}
 };
 function applyStudioTheme(p){
  const mode=p.theme_mode==='light'?'light':'dark';
