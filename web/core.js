@@ -1,37 +1,76 @@
-/* Perspective filament field: local WebGL, no textures or remote assets. */
+/* Local WebGL neural lattice -> toroidal voice core. Motion represents UI events, not hidden thoughts. */
 (()=>{
  const canvas=document.createElement('canvas');canvas.id='ambient-field';canvas.setAttribute('aria-hidden','true');document.body.prepend(canvas);
- document.querySelector('.core-stage')?.remove();
+ const status=document.createElement('div');status.className='entity-caption';status.innerHTML='<span>Voice conversation</span><strong>Listening</strong><small>Your voice stays on this PC</small>';document.body.append(status);
  const button=document.createElement('button');button.id='ambient-motion';button.className='text-button';document.querySelector('.sidebar-bottom').prepend(button);
- const gl=canvas.getContext('webgl',{alpha:false,antialias:false,powerPreference:'low-power'});if(!gl){canvas.remove();button.remove();return}
- const reduce=matchMedia('(prefers-reduced-motion: reduce)');let paused=reduce.matches||localStorage.getItem('studio-motion')==='off',energy=0,voice=0,audioLevel=0,activity=0,px=0,py=0,last=0,clock=0,dirty=true;
- function shader(type,text){const s=gl.createShader(type);gl.shaderSource(s,text);gl.compileShader(s);if(!gl.getShaderParameter(s,gl.COMPILE_STATUS))throw Error(gl.getShaderInfoLog(s));return s}
- const program=gl.createProgram();gl.attachShader(program,shader(gl.VERTEX_SHADER,`
- attribute vec3 position;uniform float time,aspect,energy,voice,activity;uniform vec2 pointer;varying float depth;varying float hue;
+ const gl=canvas.getContext('webgl',{alpha:true,antialias:true,powerPreference:'low-power'}),reduce=matchMedia('(prefers-reduced-motion: reduce)');
+ if(!gl){canvas.remove();button.remove();document.body.classList.add('entity-fallback');window.addEventListener('studio-voice-state',e=>status.querySelector('strong').textContent=e.detail);return}
+ let voice=0,targetVoice=0,t=0,last=0,dirty=true,paused=false,px=0,py=0,region=-1,pulse=0,phase='idle';
+ let microphone={rms:0,bass:0,mid:0,high:0},output={rms:0,bass:0,mid:0,high:0};
+ function shader(type,code){const s=gl.createShader(type);gl.shaderSource(s,code);gl.compileShader(s);if(!gl.getShaderParameter(s,gl.COMPILE_STATUS))throw Error(gl.getShaderInfoLog(s));return s}
+ try{
+ const program=gl.createProgram();
+ gl.attachShader(program,shader(gl.VERTEX_SHADER,`
+ precision mediump float;
+ attribute vec3 brain;attribute vec3 torus;attribute float cluster;
+ uniform float time,morph,aspect,amplitude,bass,mid,high,reduced;uniform vec2 pointer;
+ varying float depth;varying float zone;varying float travel;
  void main(){
- vec3 p=position;
- float longitude=atan(position.z,position.x),latitude=position.y;
- float side=sign(position.x);
- vec3 brain=vec3(side*(.13+abs(position.x)*.68),position.y*.95,position.z*.68);
- brain.y+=.12*sin(longitude*9.)*cos(latitude*8.);
- float ring=2.1+.5*cos(latitude*2.4+time*.3);
- vec3 torus=vec3(ring*cos(longitude),.55*sin(latitude*2.4+time*.3),ring*sin(longitude));
- p=mix(brain,torus,voice);
- float a=time*.045+pointer.x*.13;
- p*=1.+energy*.12;
- p.y+=sin(longitude*5.+time*2.)*energy*.12;
- p.xz=mat2(cos(a),-sin(a),sin(a),cos(a))*p.xz;
- p.y+=pointer.y*.16;p.z+=mix(7.,5.6,voice);
- depth=clamp(1.-p.z/13.,.06,.85);
- hue=position.y;
- gl_Position=vec4(p.x*1.65/aspect,p.y*1.65,0.,p.z);
- gl_PointSize=(1.4+energy*2.)*max(1.,4./p.z);
+ vec3 b=brain; b.x+=.025*sin(b.y*11.+b.z*7.);b.z+=.02*cos(b.x*17.);
+ vec3 v=torus;float a=atan(v.z,v.x);
+ v.xz*=1.+bass*.22*(1.-reduced);v.y*=1.+high*.7*(1.-reduced);
+ v+=normalize(v)*sin(a*7.+time*2.5)*mid*.09*(1.-reduced);
+ vec3 p=mix(b,v,morph);
+ float rotation=time*.07*(1.-reduced)+pointer.x*.12*(1.-reduced);
+ p.xz=mat2(cos(rotation),-sin(rotation),sin(rotation),cos(rotation))*p.xz;
+ float tilt=.28+pointer.y*.08*(1.-reduced);p.yz=mat2(cos(tilt),-sin(tilt),sin(tilt),cos(tilt))*p.yz;
+ p*=mix(.23,1.15,morph);p.z+=4.6;
+ vec2 offset=mix(vec2(.34,.50),vec2(0.,.12),morph);
+ gl_Position=vec4(p.x*2.15/aspect+offset.x*p.z,p.y*2.15+offset.y*p.z,0.,p.z);
+ depth=clamp(1.-(p.z-2.)/5.,.15,1.);zone=cluster;travel=brain.y*3.+brain.x*2.;
+ gl_PointSize=mix(1.7,2.6,morph)+amplitude*2.*(1.-reduced);
  }`));
- gl.attachShader(program,shader(gl.FRAGMENT_SHADER,`precision mediump float;varying float depth;varying float hue;uniform float points,time,activity;uniform vec3 tint;void main(){if(points>.5&&length(gl_PointCoord-vec2(.5))>.5)discard;float pulse=pow(max(0.,sin(hue*9.-time*3.)),14.)*activity;vec3 color=mix(tint,vec3(1.),pulse*.55);gl_FragColor=vec4(color,depth*(points>.5?.66:.18));}`));gl.linkProgram(program);gl.useProgram(program);
- const vertices=[],lines=[];for(let band=0;band<14;band++)for(let i=0;i<190;i++){const t=i/189*Math.PI*4.4,phase=band*.09,radius=2.4+band*.09,p=[Math.cos(t+phase)*radius,Math.sin(t*.55+phase)*1.8+(band-7)*.055,Math.sin(t+phase)*radius];vertices.push(...p);if(i)lines.push(...vertices.slice(vertices.length-6,vertices.length-3),...p)}
- const bind=data=>{const b=gl.createBuffer();gl.bindBuffer(gl.ARRAY_BUFFER,b);gl.bufferData(gl.ARRAY_BUFFER,new Float32Array(data),gl.STATIC_DRAW);return b};const dots=bind(vertices),threads=bind(lines),position=gl.getAttribLocation(program,'position');gl.enableVertexAttribArray(position);const u=Object.fromEntries(['time','aspect','energy','pointer','points','voice','activity','tint'].map(n=>[n,gl.getUniformLocation(program,n)]));gl.enable(gl.BLEND);gl.blendFunc(gl.SRC_ALPHA,gl.ONE_MINUS_SRC_ALPHA);
- function label(){button.textContent=paused?'Resume background motion':'Pause background motion';button.setAttribute('aria-pressed',String(paused))}label();button.onclick=()=>{paused=!paused;localStorage.setItem('studio-motion',paused?'off':'on');dirty=true;label()};
- window.addEventListener('studio-audio',e=>{audioLevel=Math.min(1,e.detail||0)});window.addEventListener('studio-preferences',e=>{paused=reduce.matches||!e.detail.motion;dirty=true;label()});window.addEventListener('studio-state',()=>{activity=state.run&&!state.run.finished?1:0;dirty=true});
- window.addEventListener('pointermove',e=>{px=e.clientX/innerWidth-.5;py=.5-e.clientY/innerHeight});window.addEventListener('resize',()=>dirty=true);window.addEventListener('mint-token',()=>energy=.65);window.addEventListener('mint-type',()=>energy=1);reduce.addEventListener('change',e=>{paused=e.matches;dirty=true;label()});canvas.addEventListener('webglcontextlost',e=>{e.preventDefault();canvas.hidden=true;button.hidden=true});
- function frame(now){requestAnimationFrame(frame);if(document.hidden||(paused&&!dirty)||now-last<50)return;if(!paused)clock+=Math.min((now-last)/1000,.1);last=now;dirty=false;energy=Math.max(energy*.94,audioLevel);voice+=(Number(document.body.dataset.voice==='conversation')-voice)*.08;const ratio=Math.min(devicePixelRatio||1,2),scale=Math.min(1,3840/(innerWidth*ratio),2160/(innerHeight*ratio)),w=Math.round(innerWidth*ratio*scale),h=Math.round(innerHeight*ratio*scale);if(canvas.width!==w||canvas.height!==h){canvas.width=w;canvas.height=h;gl.viewport(0,0,w,h)}const color=h=>h.slice(1).match(/../g).map(v=>parseInt(v,16)/255),bg=color(studioPrefs.colors?.bg||studioPrefs.background||'#141A17'),accent=color(studioPrefs.colors?.glow||getComputedStyle(document.documentElement).getPropertyValue('--glow').trim()||'#D4CEB8');gl.clearColor(...bg,1);gl.uniform3f(u.tint,...accent);gl.uniform1f(u.voice,voice);gl.uniform1f(u.activity,activity);gl.clear(gl.COLOR_BUFFER_BIT);gl.uniform1f(u.time,clock);gl.uniform1f(u.aspect,w/h);gl.uniform1f(u.energy,paused?0:energy);gl.uniform2f(u.pointer,px,py);for(const [buffer,count,mode,points]of [[threads,lines.length/3,gl.LINES,0],[dots,vertices.length/3,gl.POINTS,1]]){gl.bindBuffer(gl.ARRAY_BUFFER,buffer);gl.vertexAttribPointer(position,3,gl.FLOAT,false,0,0);gl.uniform1f(u.points,points);gl.drawArrays(mode,0,count)}}requestAnimationFrame(frame);
+ gl.attachShader(program,shader(gl.FRAGMENT_SHADER,`
+ precision mediump float;uniform vec3 tint;uniform float points,time,region,pulse,morph,amplitude;
+ varying float depth;varying float zone;varying float travel;
+ void main(){float shape=1.;if(points>.5){float d=length(gl_PointCoord-vec2(.5));if(d>.5)discard;shape=1.-smoothstep(.12,.5,d);}
+ float zoneActive=1.-step(.4,abs(zone-region));float packet=pow(max(0.,sin(travel-time*4.)),18.)*zoneActive*pulse;
+ float alpha=depth*mix(.32,.72,morph)*(points>.5?.86:.24)+packet*.6+amplitude*.08;
+ gl_FragColor=vec4(tint,alpha*shape);
+ }`));gl.linkProgram(program);if(!gl.getProgramParameter(program,gl.LINK_STATUS))throw Error(gl.getProgramInfoLog(program));gl.useProgram(program);
+ // Deterministic anatomical lobes and neighboring synapses, each with a stable torus destination.
+ const nodes=[],links=[],rings=42,steps=60;
+ for(let j=0;j<rings;j++)for(let i=0;i<steps;i++){
+  const u=i/steps*Math.PI*2,v=(j+.5)/rings*Math.PI,side=Math.cos(u)<0?-1:1;
+  const fold=1+.045*Math.sin(u*15)*Math.sin(v*13);
+  const b=[side*.12+Math.sin(v)*Math.cos(u)*.88*fold,Math.cos(v)*1.12,Math.sin(v)*Math.sin(u)*.76*fold];
+  const a=i/steps*Math.PI*2,c=j/rings*Math.PI*2,r=.98+.26*Math.cos(c);
+  const tor=[r*Math.cos(a),.26*Math.sin(c),r*Math.sin(a)];
+  const zone=b[1]>.35?0:b[0]<0?1:b[2]>0?2:3;
+  nodes.push([...b,...tor,zone]);
+ }
+ for(let j=0;j<rings;j++)for(let i=0;i<steps;i++){const at=j*steps+i;links.push(...nodes[at],...nodes[j*steps+(i+1)%steps]);if(j<rings-1&&i%3===0)links.push(...nodes[at],...nodes[at+steps]);}
+ const buffer=data=>{const b=gl.createBuffer();gl.bindBuffer(gl.ARRAY_BUFFER,b);gl.bufferData(gl.ARRAY_BUFFER,new Float32Array(data),gl.STATIC_DRAW);return b};
+ const dots=buffer(nodes.flat()),lines=buffer(links),attrs=['brain','torus','cluster'].map(n=>gl.getAttribLocation(program,n));attrs.forEach(a=>gl.enableVertexAttribArray(a));
+ const uniforms=Object.fromEntries(['time','morph','aspect','amplitude','bass','mid','high','reduced','pointer','tint','points','region','pulse'].map(n=>[n,gl.getUniformLocation(program,n)]));
+ gl.enable(gl.BLEND);gl.blendFuncSeparate(gl.SRC_ALPHA,gl.ONE_MINUS_SRC_ALPHA,gl.ONE,gl.ONE_MINUS_SRC_ALPHA);
+ const label=()=>{button.textContent=paused?'Resume background motion':'Pause background motion';button.setAttribute('aria-pressed',String(paused))};
+ button.onclick=safe(async()=>{await savePrefs({motion:!studioPrefs.motion})});
+ window.addEventListener('studio-preferences',e=>{paused=reduce.matches||!e.detail.motion;dirty=true;label()});
+ window.addEventListener('studio-audio',e=>{const d=e.detail;if(d&&typeof d==='object'){if(d.source==='output')output=d;else microphone=d}else{microphone={rms:Number(d)||0,bass:0,mid:0,high:0};output={rms:0,bass:0,mid:0,high:0}}dirty=true});
+ window.addEventListener('studio-voice-state',e=>{phase=e.detail;targetVoice=Number(document.body.dataset.voice==='conversation'&&!document.body.classList.contains('voice-review'));status.querySelector('strong').textContent=phase;dirty=true});
+ window.addEventListener('studio-state',()=>{const r=state.run,action=(state.actions||[]).at(-1);region=-1;pulse=0;if(r&&!r.finished){phase=r.phase||'Working';region=/think|reason/i.test(phase)?0:/compact/i.test(phase)?1:3;pulse=.7;if(action&&['running','ready','pending'].includes(action.status)){region=/memory|history|remember/.test(action.name)?1:2;pulse=1}}dirty=true});
+ window.addEventListener('mint-token',()=>{region=3;pulse=1;dirty=true});
+ window.addEventListener('pointermove',e=>{px=e.clientX/innerWidth-.5;py=.5-e.clientY/innerHeight});
+ window.addEventListener('resize',()=>dirty=true);reduce.addEventListener('change',()=>{paused=reduce.matches||!studioPrefs.motion;dirty=true;label()});
+ canvas.addEventListener('webglcontextlost',e=>{e.preventDefault();canvas.hidden=true;document.body.classList.add('entity-fallback')});
+ function frame(now){requestAnimationFrame(frame);targetVoice=Number(document.body.dataset.voice==='conversation'&&!document.body.classList.contains('voice-review'));if(document.hidden)return;const interval=targetVoice?1000/60:1000/30;if(now-last<interval||paused&&!dirty&&Math.abs(voice-targetVoice)<.001)return;const dt=Math.min((now-last)/1000,.05);last=now;dirty=false;if(!paused)t+=dt;voice=paused?targetVoice:voice+(targetVoice-voice)*(1-Math.exp(-dt*6));pulse*=Math.exp(-dt*.25);
+ const ratio=Math.min(devicePixelRatio||1,1.5),w=Math.min(2560,Math.round(innerWidth*ratio)),h=Math.round(w*innerHeight/innerWidth);if(canvas.width!==w||canvas.height!==h){canvas.width=w;canvas.height=h;gl.viewport(0,0,w,h)}
+ const styles=getComputedStyle(document.documentElement),color=styles.getPropertyValue('--glow').trim()||'#D4CEB8',rgb=color.slice(1).match(/../g).map(x=>parseInt(x,16)/255);gl.clearColor(0,0,0,0);gl.clear(gl.COLOR_BUFFER_BIT);gl.uniform3f(uniforms.tint,...rgb);
+ const audio={};for(const k of ['rms','bass','mid','high'])audio[k]=Math.min(1,Math.max(microphone[k]||0,output[k]||0));
+ for(const [k,v] of Object.entries({time:t,morph:voice,aspect:w/h,amplitude:audio.rms,bass:audio.bass,mid:audio.mid,high:audio.high,reduced:Number(paused),region,pulse}))gl.uniform1f(uniforms[k],v);
+ gl.uniform2f(uniforms.pointer,px,py);
+ for(const [buf,count,mode,point] of [[lines,links.length/7,gl.LINES,0],[dots,nodes.length,gl.POINTS,1]]){gl.bindBuffer(gl.ARRAY_BUFFER,buf);gl.vertexAttribPointer(attrs[0],3,gl.FLOAT,false,28,0);gl.vertexAttribPointer(attrs[1],3,gl.FLOAT,false,28,12);gl.vertexAttribPointer(attrs[2],1,gl.FLOAT,false,28,24);gl.uniform1f(uniforms.points,point);gl.drawArrays(mode,0,count)}
+ }label();requestAnimationFrame(frame);
+ }catch(error){console.error('Luminaria renderer unavailable',error);canvas.remove();button.remove();document.body.classList.add('entity-fallback');window.addEventListener('studio-voice-state',e=>status.querySelector('strong').textContent=e.detail)}
 })();

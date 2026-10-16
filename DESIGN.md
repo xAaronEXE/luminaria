@@ -1,6 +1,6 @@
 ---
-name: Studio (temporary name)
-description: A local agent workspace with forestry graphite structure and acid mint actions.
+name: Luminaria
+description: A local AI desktop with graphite and warm ivory, plus a branded light appearance.
 colors:
   bg: "#141A17"
   sidebar: "#101612"
@@ -8,10 +8,10 @@ colors:
   raised: "#1B231F"
   hover: "#212B26"
   line: "#2C3831"
-  text: "#D6E0DA"
-  muted: "#A4B2A6"
-  dim: "#8B9A91"
-  accent: "#B7FF2E"
+  text: "#F4F4F0"
+  muted: "#C5CBC5"
+  dim: "#A6B0A8"
+  accent: "#EAE6D9"
   danger: "#FF6B5E"
   warning: "#E3C886"
 typography:
@@ -170,3 +170,6 @@ The Voice button starts inactive. After readiness and microphone access, it chan
 - Claim voice, model, installer or integration testing from visual review alone.
 
 Source snapshot: web/style.css, web/index.html, web/app.js, web/core.js and web/voice.js. Review captures are .impeccable/review/desktop.png, compact.png and user-3840.png; they are visual references, not runtime acceptance evidence.
+
+## Appearance revision, 2026-10-16
+Only Dark / Graphite and Light / Ivory are exposed. Custom palette controls are superseded. `web/preferences.js` defines both semantic token sets. Voice mode morphs a neural lattice into a torus; microphone and output FFT magnitudes drive deformation. Activity pulses represent observed application states, not hidden model thoughts. Reduced-motion and the motion preference suppress spatial animation.

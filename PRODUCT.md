@@ -1,4 +1,4 @@
-# Local AI Studio
+# Luminaria
 
 ## Platform
 web, packaged for Windows desktop
@@ -13,7 +13,7 @@ Aaron's local coding, reasoning, research, document creation, vision and compute
 Use the existing local Qwen model, llama.cpp, llama-swap and installed browser/Windows tools. Start with one model. Full history persists; compaction is a lossy working-context summary, never deletion. Auto reads/search/screenshots; approval for writes, commands, network and GUI actions; always ask for deletes/sends/installs. Credentials are not supplied. Automatic task routing waits until multiple models are justified.
 
 ## Brand commitments
-Codex-inspired task sidebar, central conversation and workspace inspector. Acid mint #B7FF2E and forestry graphite #141A17.
+Codex-inspired task sidebar, central conversation and workspace inspector. Two branded modes only: Graphite (#141A17) with warm ivory (#EAE6D9), and Ivory (#F4F4F0) with forest accents (#283D2D). Custom palette controls were removed at the user's request.
 
 ## Packaging
 Windows installer/uninstaller and opt-in GitHub Release update checks. Signing certificate and public release repository are not yet configured. Do not claim signed or publicly published builds.

@@ -2,7 +2,7 @@
 import re
 
 COLOR_KEYS = {'bg','sidebar','panel','raised','hover','line','text','muted','dim','accent','accent-dark','glow','warning','danger'}
-DEFAULTS = {'theme': 'Graphite & Ivory', 'background': '#141A17', 'accent': '#EAE6D9', 'colors': {},
+DEFAULTS = {'theme_mode': 'dark', 'theme': 'Graphite & Ivory', 'background': '#141A17', 'accent': '#EAE6D9', 'colors': {},
             'motion': True, 'metrics': True, 'microphone': '', 'voice_rate': 1.0,
             'voice_threshold': 0.022, 'voice_silence': 0.85, 'interruptible': True,
             'saved_themes': [], 'voice_id':'lessac'}
@@ -11,7 +11,9 @@ def validate(body):
     out = {}
     for key, value in body.items():
         if key not in DEFAULTS: raise ValueError('Unknown preference: '+key)
-        if key=='voice_id':
+        if key=='theme_mode':
+            if value not in ('dark','light'): raise ValueError('Choose dark or light mode')
+        elif key=='voice_id':
             from .voice import VOICES
             if value not in VOICES: raise ValueError('Unknown voice')
         elif key == 'colors':

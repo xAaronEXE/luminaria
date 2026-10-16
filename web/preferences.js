@@ -1,15 +1,15 @@
 /* Profile-local settings and theme application. No external assets. */
 window.studioPrefs={motion:true,metrics:true,microphone:'',voice_rate:1,voice_threshold:.022,voice_silence:.85,interruptible:true,saved_themes:[],background:'#141A17',accent:'#EAE6D9',theme:'Graphite & Ivory',colors:{}};
-const themePresets=[['Graphite & Ivory','#141A17','#EAE6D9'],['Acid mint','#141A17','#B7FF2E'],['Glacier','#141C26','#79D8FF'],['Amethyst','#211A2C','#CEAAFF'],['Ember','#261C19','#FFB17C'],['Rosewood','#261B23','#FFADCE'],['Ocean','#122426','#71E7D8'],['Solar','#242215','#F5DF72'],['Cobalt','#171E30','#A6BAFF'],['Sage','#1C241E','#BCD4AD'],['Monochrome','#1B1D20','#E4E7ED'],['Cherry','#28191E','#FF9FAD'],['Lavender','#20202B','#C4BEFF']];
+const brandThemes={
+ dark:{bg:'#141A17',sidebar:'#171D19',panel:'#181F1C',raised:'#222A25',hover:'#2D3630',line:'#3C4740',text:'#F4F4F0',muted:'#C5CBC5',dim:'#A6B0A8',accent:'#EAE6D9','accent-dark':'#141A17',glow:'#D4CEB8',warning:'#E1B878',danger:'#F09B94'},
+ light:{bg:'#F4F4F0',sidebar:'#EDEEE7',panel:'#FAFAF6',raised:'#E5E8DF',hover:'#DCE1D5',line:'#B7BFB2',text:'#18231C',muted:'#435246',dim:'#526054',accent:'#283D2D','accent-dark':'#FAFAF6',glow:'#647859',warning:'#795300',danger:'#A52B32'}
+};
 function applyStudioTheme(p){
- const rgb=h=>h.slice(1).match(/../g).map(v=>parseInt(v,16)),base=rgb(p.background),accent=rgb(p.accent);
- const luma=c=>c.map(x=>{x/=255;return x<=.04045?x/12.92:((x+.055)/1.055)**2.4}).reduce((a,x,i)=>a+x*[.2126,.7152,.0722][i],0);
- const light=luma(base)>.35,mix=(c,t,n)=>'#'+c.map((x,i)=>Math.round(x*(1-n)+t[i]*n).toString(16).padStart(2,'0')).join('');
- const fg=light?[20,26,23]:[235,240,237],style=document.documentElement.style;
- const values={bg:p.background,sidebar:mix(base,fg,.025),panel:mix(base,fg,.035),raised:mix(base,fg,.065),hover:mix(base,fg,.11),line:mix(base,fg,.22),text:mix(base,fg,1),muted:mix(base,fg,.78),dim:mix(base,fg,.72),accent:p.accent,'accent-dark':luma(accent)>.4?'#141A17':'#FFFFFF'};
- Object.assign(values,{glow:p.accent,warning:'#E1B878',danger:'#F09B94'},p.theme==='Graphite & Ivory'?{panel:'#181F1C',text:'#F4F4F0',muted:'#E5E5DF',line:'#2D3632',glow:'#D4CEB8'}:{},p.colors||{});
- Object.entries(values).forEach(([k,v])=>style.setProperty('--'+k,v));
- document.body.classList.toggle('hide-metrics',!p.metrics);window.dispatchEvent(new CustomEvent('studio-preferences',{detail:p}));
+ const mode=p.theme_mode==='light'?'light':'dark';
+ Object.entries(brandThemes[mode]).forEach(([k,v])=>document.documentElement.style.setProperty('--'+k,v));
+ document.documentElement.dataset.theme=mode;document.documentElement.style.colorScheme=mode;
+ document.body.classList.toggle('hide-metrics',!p.metrics);
+ window.dispatchEvent(new CustomEvent('studio-preferences',{detail:p}));
 }
 async function savePrefs(values){await api('/preferences','POST',values);Object.assign(studioPrefs,values);applyStudioTheme(studioPrefs);toast('Settings saved')}
 const checkField=(label,id,checked,help)=>`<label class="setting-row"><div><h3>${label}</h3><p>${help}</p></div><input type="checkbox" id="${id}" ${checked?'checked':''}></label>`;

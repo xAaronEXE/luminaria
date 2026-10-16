@@ -1,7 +1,7 @@
 [Setup]
 AppId={{C1DD4A29-1B64-433C-A69E-352D1DB9E575}
 AppName=Luminaria
-AppVersion=0.2.0
+AppVersion=0.2.1
 AppPublisher=Luminaria Project
 DefaultDirName={userdesktop}\Luminaria\App
 UsePreviousAppDir=no
@@ -10,7 +10,7 @@ PrivilegesRequired=lowest
 ArchitecturesAllowed=x64compatible
 ArchitecturesInstallIn64BitMode=x64compatible
 OutputDir=release
-OutputBaseFilename=Luminaria-0.2.0-Setup
+OutputBaseFilename=Luminaria-0.2.1-Setup
 SetupIconFile=web\brand\luminaria.ico
 UninstallDisplayIcon={app}\LocalAIStudio.exe
 Compression=lzma2/fast

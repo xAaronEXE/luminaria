@@ -1,7 +1,7 @@
 /* Explicit opt-in microphone, local recognition and synthesis, cancellable playback. */
 (()=>{
- let mode='conversation';
- let enabled=false,stream,context,node,source,sink,audio,fetchController,epoch=0;
+ let mode='conversation',starting=false;
+ let enabled=false,stream,context,node,source,sink,audio,micAnalyser,fetchController,epoch=0,lastAudioFrame=0;
  let frames=[],pre=[],talking=false,loud=0,quiet=0,length=0,transcribing=false;
  let voiceChat='',seen=new Set(),queue=[],speaking=false,interrupting=Promise.resolve();
  const voiceIcon='<svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 10v4m4-8v12m4-15v18m4-15v12m4-8v4"/></svg>';
@@ -12,12 +12,17 @@
  const bar=document.createElement('div');bar.className='voice-bar';bar.hidden=true;
  bar.innerHTML='<span class="voice-light"></span><span id="voice-status" role="status">Microphone off</span><button type="button" id="voice-interrupt">Interrupt</button><button type="button" id="voice-end">End voice</button>';
  document.querySelector('.composer-area').prepend(bar);
- const label=text=>{document.getElementById('voice-status').textContent=text};
+ const label=text=>{document.getElementById('voice-status').textContent=text;window.dispatchEvent(new CustomEvent('studio-voice-state',{detail:text}));};
+ function audioFrame(analyser,source,rms){const bins=new Uint8Array(analyser.frequencyBinCount);analyser.getByteFrequencyData(bins);const hz=context.sampleRate/analyser.fftSize;const average=(lo,hi)=>{let sum=0,n=0;for(let i=Math.max(1,Math.floor(lo/hz));i<Math.min(bins.length,Math.ceil(hi/hz));i++){sum+=bins[i]/255;n++}return n?sum/n:0};const samples=new Float32Array(analyser.fftSize);analyser.getFloatTimeDomainData(samples);let power=0;for(const value of samples)power+=value*value;return {source,rms:rms??Math.min(1,Math.sqrt(power/samples.length)*8),bass:average(60,300),mid:average(300,2000),high:average(2000,7000)}}
  const clearSpeech=()=>{epoch++;queue=[];fetchController?.abort();if(audio){audio.pause();audio.src='';audio=null}speaking=false};
  function resetCapture(){frames=[];pre=[];talking=false;loud=quiet=length=0}
- function end(){enabled=false;delete document.body.dataset.voice;window.dispatchEvent(new CustomEvent('studio-audio',{detail:0}));clearSpeech();stream?.getTracks().forEach(t=>t.stop());node?.disconnect();source?.disconnect();sink?.disconnect();context?.close();context=null;resetCapture();bar.hidden=true;button.innerHTML=voiceIcon;button.setAttribute('aria-pressed','false')}
+ function end(){if(enabled&&mode==='conversation'&&chat===voiceChat&&active())stop().catch(e=>toast(e.message,true));enabled=false;delete document.body.dataset.voice;document.body.classList.remove('voice-review');label('Microphone off');window.dispatchEvent(new CustomEvent('studio-audio',{detail:0}));clearSpeech();stream?.getTracks().forEach(t=>t.stop());node?.disconnect();source?.disconnect();sink?.disconnect();context?.close();context=null;micAnalyser=null;resetCapture();bar.hidden=true;button.innerHTML=voiceIcon;button.setAttribute('aria-pressed','false');dictation.setAttribute('aria-pressed','false')}
  async function interrupt(){clearSpeech();if(enabled)label('Listening · reply interrupted');if(active()&&chat===voiceChat)await stop()}
  async function begin(nextMode='conversation'){
+  if(starting)return;starting=true;button.disabled=dictation.disabled=true;
+  try{await startCapture(nextMode)}finally{starting=false;button.disabled=dictation.disabled=false}
+ }
+ async function startCapture(nextMode){
   mode=nextMode;
   const readiness=await api('/voice/status');if(!readiness.ready){
    window.studioSettingsCategory='Voice';await openPanel('settings');window.studioSettingsCategory=null;toast('Install the local voice models in Voice settings first.');return;
@@ -27,15 +32,15 @@
    await ensureChat();await refresh();voiceChat=chat;seen=new Set((state.messages||[]).map(m=>m.id));
    context=new AudioContext({sampleRate:16000});await context.audioWorklet.addModule('/voice-capture.js');await context.resume();
    source=context.createMediaStreamSource(stream);node=new AudioWorkletNode(context,'voice-capture');sink=context.createGain();sink.gain.value=0;
-   source.connect(node);node.connect(sink);sink.connect(context.destination);node.port.onmessage=e=>capture(e.data);
-   enabled=true;document.body.dataset.voice=mode;bar.hidden=false;button.innerHTML=voiceIcon;button.setAttribute('aria-pressed','true');label('Listening · speak naturally');
+   micAnalyser=context.createAnalyser();micAnalyser.fftSize=1024;source.connect(micAnalyser);source.connect(node);node.connect(sink);sink.connect(context.destination);node.port.onmessage=e=>capture(e.data);
+   enabled=true;document.body.dataset.voice=mode;bar.hidden=false;button.innerHTML=voiceIcon;button.setAttribute('aria-pressed',String(mode==='conversation'));dictation.setAttribute('aria-pressed',String(mode==='dictation'));label('Listening · speak naturally');
    toast('Voice is local. Use headphones for the most reliable interruption.');
   }catch(e){end();throw e}
  }
  function capture(samples){
   if(!enabled||transcribing)return;
   const dt=samples.length/context.sampleRate;let power=0;for(const v of samples)power+=v*v;
-  const level=Math.sqrt(power/samples.length);window.dispatchEvent(new CustomEvent('studio-audio',{detail:Math.min(1,level*8)}));const voiced=level>(studioPrefs.voice_threshold||.022);
+  const level=Math.sqrt(power/samples.length);if(performance.now()-lastAudioFrame>30){lastAudioFrame=performance.now();window.dispatchEvent(new CustomEvent('studio-audio',{detail:audioFrame(micAnalyser,'microphone',Math.min(1,level*8))}));}const voiced=level>(studioPrefs.voice_threshold||.022);
   if(!talking){pre.push(samples);while(pre.length*dt>.32)pre.shift();loud=voiced?loud+dt:0;
    if(loud<.18)return;talking=true;frames=pre.slice();pre=[];length=frames.length*dt;
    interrupting=(mode==='conversation'&&studioPrefs.interruptible?interrupt():Promise.resolve()).catch(e=>{toast(e.message,true)});label('Listening…');
@@ -52,7 +57,7 @@
   return buffer;
  }
  async function transcribe(chunks){
-  transcribing=true;const current=epoch,target=voiceChat,rate=context.sampleRate;label('Transcribing locally…');
+  transcribing=true;window.dispatchEvent(new CustomEvent('studio-audio',{detail:{source:'microphone',rms:0,bass:0,mid:0,high:0}}));const current=epoch,target=voiceChat,rate=context.sampleRate;label('Transcribing locally…');
   try{
    await interrupting;
    const r=await fetch('/api/voice/transcribe',{method:'POST',headers:{'X-Studio-Token':token,'Content-Type':'audio/wav'},body:wav(chunks,rate)});
@@ -72,13 +77,13 @@
    const r=await fetch('/api/voice/speak',{method:'POST',headers:{'X-Studio-Token':token,'Content-Type':'application/json'},body:JSON.stringify({text:queue.shift(),voice_id:studioPrefs.voice_id||'lessac'}),signal:fetchController.signal});
    if(!r.ok)throw Error('Local speech synthesis failed');const blob=await r.blob();if(!enabled||current!==epoch)break;
    const url=URL.createObjectURL(blob),player=new Audio(url);player.playbackRate=studioPrefs.voice_rate||1;audio=player;
-   const analyser=context.createAnalyser();analyser.fftSize=256;const media=context.createMediaElementSource(player);media.connect(analyser);analyser.connect(context.destination);const bins=new Uint8Array(analyser.frequencyBinCount);const pulse=()=>{if(audio!==player||player.paused)return;analyser.getByteFrequencyData(bins);window.dispatchEvent(new CustomEvent('studio-audio',{detail:bins.reduce((a,b)=>a+b,0)/bins.length/128}));requestAnimationFrame(pulse)};player.addEventListener('playing',pulse); label('Speaking · talk to interrupt');
-   try{await new Promise((resolve,reject)=>{player.onended=resolve;player.onerror=()=>reject(Error('Audio playback failed'));player.onpause=resolve;player.play().catch(reject)})}finally{media.disconnect();analyser.disconnect();window.dispatchEvent(new CustomEvent('studio-audio',{detail:0}));URL.revokeObjectURL(url)}
+   const analyser=context.createAnalyser();analyser.fftSize=1024;const media=context.createMediaElementSource(player);media.connect(analyser);analyser.connect(context.destination);const bins=new Uint8Array(analyser.frequencyBinCount);const pulse=()=>{if(audio!==player||player.paused)return;analyser.getByteFrequencyData(bins);window.dispatchEvent(new CustomEvent('studio-audio',{detail:audioFrame(analyser,'output')}));requestAnimationFrame(pulse)};player.addEventListener('playing',pulse); label('Speaking · talk to interrupt');
+   try{await new Promise((resolve,reject)=>{player.onended=resolve;player.onerror=()=>reject(Error('Audio playback failed'));player.onpause=resolve;player.play().catch(reject)})}finally{media.disconnect();analyser.disconnect();window.dispatchEvent(new CustomEvent('studio-audio',{detail:{source:'output',rms:0,bass:0,mid:0,high:0}}));URL.revokeObjectURL(url)}
   }}catch(e){if(e.name!=='AbortError')toast(e.message,true)}finally{if(current===epoch){speaking=false;audio=null;if(enabled)label('Listening · speak naturally')}}
  }
  window.addEventListener('studio-state',()=>{
-  if(!enabled||mode==='dictation')return;if(chat!==voiceChat){end();return}
-  if(state.run?.phase==='Waiting for approval'){label('Review the tool approval on screen');return}
+  if(!enabled||mode==='dictation')return;if(state.run?.phase==='Error'){clearSpeech();label('Reply failed � see chat for details')}if(chat!==voiceChat){end();return}
+  document.body.classList.toggle('voice-review',state.run?.phase==='Waiting for approval');if(state.run?.phase==='Waiting for approval'){label('Review the tool approval on screen');return}
   for(const m of state.messages||[]){
    if(seen.has(m.id))continue;seen.add(m.id);
    if(m.role!=='assistant'||m.tool_calls?.length||m.interrupted||!m.content)continue;
