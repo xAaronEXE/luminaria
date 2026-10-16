@@ -1,0 +1,219 @@
+import hashlib, shutil, tempfile, threading, time, unittest
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from pathlib import Path
+from unittest.mock import patch
+import httpx
+from backend import model_library, models
+from backend.model_catalog import CATALOG
+
+class QuietHandler(BaseHTTPRequestHandler):
+    def log_message(self, format, *args):
+        return
+
+def serve(payload, delay=0, step=8):
+    ranges = []
+    class Handler(QuietHandler):
+        def do_GET(self):
+            data = payload
+            start = 0
+            status = 200
+            header = self.headers.get('Range')
+            if header:
+                ranges.append(header)
+                start = int(header.split('=', 1)[1].split('-', 1)[0])
+                data = payload[start:]
+                status = 206
+            self.send_response(status)
+            self.send_header('Content-Length', str(len(data)))
+            if status == 206:
+                self.send_header('Content-Range', f'bytes {start}-{len(payload) - 1}/{len(payload)}')
+            self.end_headers()
+            view = memoryview(data)
+            try:
+                for offset in range(0, len(view), step):
+                    if delay: time.sleep(delay)
+                    self.wfile.write(view[offset:offset + step])
+                    self.wfile.flush()
+            except (BrokenPipeError, ConnectionResetError):
+                return
+    httpd = ThreadingHTTPServer(('127.0.0.1', 0), Handler)
+    thread = threading.Thread(target=httpd.serve_forever, daemon=True)
+    thread.start()
+    return httpd, ranges, f'http://127.0.0.1:{httpd.server_address[1]}/model.gguf'
+
+def wait_until(predicate, timeout=5):
+    end = time.time() + timeout
+    while time.time() < end:
+        if predicate(): return
+        time.sleep(0.02)
+    raise AssertionError('timed out')
+
+class ModelLibraryTests(unittest.TestCase):
+    def setUp(self):
+        model_library.reset()
+        self.tmp = tempfile.TemporaryDirectory()
+        self.root = Path(self.tmp.name)
+        self.data = self.root / 'data'
+        self.data.mkdir()
+        self.patches = [
+            patch.object(models, 'BASE_DATA', self.data),
+            patch.object(models, 'PATH', self.data / 'models.json'),
+        ]
+        for item in self.patches: item.start()
+    def tearDown(self):
+        model_library.reset()
+        for item in self.patches: item.stop()
+        self.tmp.cleanup()
+    def test_catalog_keeps_standard_and_abliterated_separate(self):
+        self.assertTrue(any(item['variant'] == 'standard' for item in CATALOG))
+        self.assertTrue(any(item['variant'] == 'abliterated' and item['caveat'] for item in CATALOG))
+        view = model_library.library(None)
+        self.assertIn('Qwen3 8B', [item['name'] for item in view['models']])
+        self.assertEqual(view['budget']['limit'], 100 * 1024 ** 3)
+        self.assertGreater(view['storage']['total'], 0)
+        self.assertGreaterEqual(view['storage']['free'], 0)
+        self.assertFalse((self.root / 'models').exists())
+        folder = self.root / 'models'
+        folder.mkdir()
+        (folder / 'Qwen3-4B-Q4_K_M.gguf').write_bytes(b'installed')
+        installed = model_library.library(None)
+        standard = next(item for item in installed['models'] if item['id'] == 'qwen3-4b')
+        quant = next(item for item in standard['quants'] if item['id'] == 'qwen3-4b-q4')
+        self.assertEqual(standard['variant'], 'standard')
+        self.assertTrue(quant['installed'])
+        self.assertFalse(quant['verified'])
+        self.assertTrue(all(item['caveat'] for item in installed['models'] if item['variant'] == 'abliterated'))
+    def test_disk_and_budget_stop_before_any_download(self):
+        with self.assertRaisesRegex(ValueError, 'Not enough free space'):
+            model_library.check_room(100, 0, 50, 0, 0, 0)
+        with self.assertRaisesRegex(ValueError, '100 GB'):
+            model_library.check_room(80, 0, 1 << 40, 40, 0, 0, budget=100)
+    def test_redirect_host_must_stay_with_the_publisher(self):
+        self.assertTrue(model_library.host_allowed('https://cdn-lfs.huggingface.co/file', 'https://huggingface.co/org/repo/resolve/main/file.gguf'))
+        self.assertFalse(model_library.host_allowed('https://example.com/file', 'https://huggingface.co/org/repo/resolve/main/file.gguf'))
+        self.assertTrue(model_library.host_allowed('http://127.0.0.1:9/file', 'http://127.0.0.1:9/file'))
+    def test_published_file_must_match_the_catalog(self):
+        entry, quant = model_library.quant_by_id('qwen3-4b-q4')
+        def handler(request):
+            return httpx.Response(302, headers={'x-linked-size': '10', 'x-linked-etag': '"' + quant['sha256'] + '"'})
+        client = httpx.Client
+        with patch.object(model_library.httpx, 'Client', lambda *args, **kwargs: client(transport=httpx.MockTransport(handler))):
+            with self.assertRaisesRegex(ValueError, 'no longer matches'):
+                model_library.resolve(entry, quant)
+    def test_download_verifies_and_registers_inside_models_folder(self):
+        payload = b'gguf-weights-for-test'
+        digest = hashlib.sha256(payload).hexdigest()
+        httpd, ranges, url = serve(payload)
+        entry, quant = self.quant(digest, len(payload))
+        try:
+            self.patch_quant(entry, quant, url)
+            model_library.enqueue(quant['id'])
+            final = self.root / 'models' / quant['filename']
+            wait_until(final.is_file)
+            self.assertEqual(final.read_bytes(), payload)
+            self.assertEqual((self.root / 'models' / (quant['filename'] + '.sha256')).read_text().strip(), digest)
+            self.assertEqual(models.registry()[0]['id'], quant['id'])
+            self.assertEqual(models.registry()[0]['variant'], 'abliterated')
+            self.assertFalse(ranges)
+        finally:
+            httpd.shutdown(); httpd.server_close()
+    def test_checksum_mismatch_deletes_the_partial_file(self):
+        payload = b'not-the-catalog-bytes'
+        digest = hashlib.sha256(b'the-real-bytes').hexdigest()
+        httpd, _, url = serve(payload)
+        entry, quant = self.quant(digest, len(payload))
+        try:
+            self.patch_quant(entry, quant, url)
+            model_library.enqueue(quant['id'])
+            wait_until(lambda: any(job['status'] == 'error' for job in model_library.jobs_view()))
+            self.assertFalse((self.root / 'models' / quant['filename']).exists())
+            self.assertFalse((self.root / 'models' / '.partial' / (quant['id'] + '.part')).exists())
+            self.assertEqual(models.registry(), [])
+            self.assertIn('Checksum mismatch', model_library.jobs_view()[0]['error'])
+        finally:
+            httpd.shutdown(); httpd.server_close()
+    def test_resume_continues_from_the_partial_file(self):
+        payload = b'0123456789abcdef'
+        digest = hashlib.sha256(payload).hexdigest()
+        httpd, ranges, url = serve(payload)
+        entry, quant = self.quant(digest, len(payload))
+        partial = self.root / 'models' / '.partial' / (quant['id'] + '.part')
+        partial.parent.mkdir(parents=True)
+        partial.write_bytes(payload[:6])
+        try:
+            self.patch_quant(entry, quant, url)
+            model_library.enqueue(quant['id'])
+            final = self.root / 'models' / quant['filename']
+            wait_until(final.is_file)
+            self.assertEqual(final.read_bytes(), payload)
+            self.assertEqual(ranges, ['bytes=6-'])
+        finally:
+            httpd.shutdown(); httpd.server_close()
+    def test_cancel_keeps_the_partial_download(self):
+        payload = b'x' * (128 * 1024)
+        digest = hashlib.sha256(payload).hexdigest()
+        httpd, _, url = serve(payload, delay=0.25, step=32 * 1024)
+        entry, quant = self.quant(digest, len(payload))
+        partial = self.root / 'models' / '.partial' / (quant['id'] + '.part')
+        try:
+            self.patch_quant(entry, quant, url)
+            model_library.enqueue(quant['id'])
+            wait_until(lambda: partial.exists() and partial.stat().st_size > 0)
+            model_library.cancel(quant['id'])
+            wait_until(lambda: model_library.jobs_view()[0]['status'] == 'paused')
+            self.assertTrue(partial.exists())
+            self.assertFalse((self.root / 'models' / quant['filename']).exists())
+            self.assertEqual(models.registry(), [])
+        finally:
+            httpd.shutdown(); httpd.server_close()
+    def test_enqueue_rejects_tight_disk_and_budget_without_a_partial(self):
+        entry, quant = self.quant('a' * 64, 5000)
+        usage = shutil.disk_usage(self.data)._replace(free=100)
+        with patch.object(model_library, 'quant_by_id', lambda ident: (entry, quant) if ident == quant['id'] else (None, None)), \
+             patch.object(model_library, 'resolve', lambda entry, quant: {'url': 'http://127.0.0.1/file', 'size': quant['bytes'], 'sha256': quant['sha256']}), \
+             patch.object(model_library.shutil, 'disk_usage', lambda path: usage):
+            with self.assertRaisesRegex(ValueError, 'Not enough free space'):
+                model_library.enqueue(quant['id'])
+        self.assertFalse((self.root / 'models').exists())
+        with patch.object(model_library, 'BUDGET', 1000), \
+             patch.object(model_library, 'quant_by_id', lambda ident: (entry, quant) if ident == quant['id'] else (None, None)), \
+             patch.object(model_library, 'resolve', lambda entry, quant: {'url': 'http://127.0.0.1/file', 'size': quant['bytes'], 'sha256': quant['sha256']}):
+            with self.assertRaisesRegex(ValueError, '100 GB'):
+                model_library.enqueue(quant['id'])
+        self.assertFalse((self.root / 'models' / '.partial').exists())
+    def test_remove_requires_confirmation_and_protects_the_active_file(self):
+        payload = b'remove-me'
+        digest = hashlib.sha256(payload).hexdigest()
+        entry, quant = self.quant(digest, len(payload))
+        folder = self.root / 'models'
+        folder.mkdir()
+        target = folder / quant['filename']
+        target.write_bytes(payload)
+        with patch.object(model_library, 'quant_by_id', lambda ident: (entry, quant) if ident == quant['id'] else (None, None)):
+            model_library._register(entry, quant, target)
+            with patch.dict(model_library.CONFIG, model=quant['id'], model_file=str(target)):
+                with self.assertRaisesRegex(ValueError, 'Confirm removal'):
+                    model_library.remove(quant['id'], False)
+                self.assertTrue(target.exists())
+                with self.assertRaisesRegex(ValueError, 'active'):
+                    model_library.remove(quant['id'], True)
+                self.assertTrue(target.exists())
+            with patch.dict(model_library.CONFIG, model='other', model_file=''):
+                result = model_library.remove(quant['id'], True)
+        self.assertTrue(result['deleted'])
+        self.assertFalse(target.exists())
+        self.assertEqual(models.registry(), [])
+    def quant(self, digest, size):
+        entry = {'id': 'test-abliterated', 'name': 'Test Abliterated', 'variant': 'abliterated', 'parameters': '1B',
+                 'purpose': 'Test', 'description': 'Test weights.', 'strengths': ['Test'], 'context': 32768, 'vision': False,
+                 'repo': 'example/test', 'license': 'Test', 'provenance': 'Test publisher', 'hardware': 'Test', 'caveat': 'Test caveat'}
+        quant = {'id': 'test-abliterated-q4', 'label': 'Q4_K_M', 'filename': 'test-abliterated-q4.gguf', 'bytes': size, 'sha256': digest, 'memory': 'Test'}
+        return entry, quant
+    def patch_quant(self, entry, quant, url):
+        quant_patch = patch.object(model_library, 'quant_by_id', lambda ident, entry=entry, quant=quant: (entry, quant) if ident == quant['id'] else (None, None))
+        resolve_patch = patch.object(model_library, 'resolve', lambda entry, quant, url=url: {'url': url, 'size': quant['bytes'], 'sha256': quant['sha256']})
+        quant_patch.start(); resolve_patch.start()
+        self.patches.extend([quant_patch, resolve_patch])
+
+if __name__ == '__main__':
+    unittest.main()

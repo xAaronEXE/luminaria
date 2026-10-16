@@ -455,6 +455,53 @@ async def benchmark_model(id:str):
     finally:
         benchmarking=False
 
+@app.get('/api/model-library')
+async def model_library():
+    from .model_library import library
+    return await asyncio.to_thread(library, store)
+
+@app.post('/api/model-library/{id}/download')
+async def model_download(id:str):
+    from .model_library import enqueue, library
+    await asyncio.to_thread(enqueue, id)
+    return await asyncio.to_thread(library, store)
+
+@app.post('/api/model-library/{id}/cancel')
+async def model_download_cancel(id:str):
+    from .model_library import cancel, library
+    await asyncio.to_thread(cancel, id)
+    return await asyncio.to_thread(library, store)
+
+@app.post('/api/model-library/{id}/discard')
+async def model_download_discard(id:str):
+    from .model_library import discard, library
+    await asyncio.to_thread(discard, id)
+    return await asyncio.to_thread(library, store)
+
+@app.post('/api/model-library/{id}/use')
+async def model_use(id:str):
+    if benchmarking: raise ValueError('Wait for the model benchmark to finish')
+    if any(not r.get('finished') for r in engine.runs.values()): raise ValueError('Finish or stop active tasks before switching models')
+    from .model_library import prepare
+    from .models import select
+    prepared=await asyncio.to_thread(prepare, id)
+    result=select(prepared['id'])
+    runtime_config=DATA/'llama-swap.yaml'
+    configured=json.loads(runtime_config.read_text('utf-8')).get('models',{}) if runtime_config.exists() else {}
+    if prepared['id'] not in configured:
+        from .runtime import stop_owned, start_swap
+        await asyncio.to_thread(stop_owned); await asyncio.to_thread(start_swap)
+    broadcast({'type':'changed'}); return result
+
+@app.post('/api/model-library/{id}/remove')
+async def model_remove(id:str, request:Request):
+    if benchmarking: raise ValueError('Wait for the model benchmark to finish')
+    if any(not r.get('finished') for r in engine.runs.values()): raise ValueError('Finish or stop active tasks before removing a model')
+    from .model_library import remove, library
+    await asyncio.to_thread(remove, id, (await request.json()).get('confirm'))
+    broadcast({'type':'changed'})
+    return await asyncio.to_thread(library, store)
+
 @app.post('/api/preferences')
 async def preferences_save(request:Request):
     from .preferences import validate

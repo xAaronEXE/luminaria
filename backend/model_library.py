@@ -1,0 +1,464 @@
+"""Downloadable model library. Files land only in the app models folder."""
+import hashlib, json, re, shutil, threading, time
+from pathlib import Path
+from urllib.parse import urlparse
+import httpx
+from . import models
+from .config import CONFIG
+from .model_catalog import BUDGET, CATALOG, HEADROOM
+
+_lock = threading.Lock()
+_jobs = {}
+_queue = []
+_cancels = {}
+_worker = None
+_generation = 0
+_loaded = False
+
+def reset():
+    """Stop workers and forget in-memory jobs. Used by tests and process reuse."""
+    global _worker, _generation, _loaded
+    with _lock:
+        _generation += 1
+        for event in _cancels.values(): event.set()
+        worker = _worker
+        _queue.clear(); _jobs.clear(); _cancels.clear(); _worker = None
+        _loaded = False
+    if worker and worker.is_alive(): worker.join(timeout=2)
+
+def models_folder():
+    return models.BASE_DATA.parent / 'models'
+
+def partial_file(quant_id):
+    if not re.fullmatch(r'[a-z0-9-]{1,60}', quant_id): raise ValueError('Unknown model')
+    return models_folder() / '.partial' / f'{quant_id}.part'
+
+def state_path():
+    return models.BASE_DATA / 'model-downloads.json'
+
+def quant_by_id(quant_id):
+    for entry in CATALOG:
+        for quant in entry['quants']:
+            if quant['id'] == quant_id: return entry, quant
+    return None, None
+
+def format_bytes(n):
+    if n >= 1 << 30: return f'{n / (1 << 30):.1f} GB'
+    if n >= 1 << 20: return f'{n / (1 << 20):.1f} MB'
+    if n >= 1 << 10: return f'{round(n / (1 << 10))} KB'
+    return f'{n} B'
+
+def canonical_url(entry, quant):
+    return f"https://huggingface.co/{entry['repo']}/resolve/main/{quant['filename']}"
+
+def host_allowed(url, origin):
+    host = (urlparse(url).hostname or '').lower()
+    origin_host = (urlparse(origin).hostname or '').lower()
+    if origin_host in ('127.0.0.1', 'localhost'): return host in ('127.0.0.1', 'localhost')
+    return host == 'huggingface.co' or host.endswith('.huggingface.co') or host.endswith('.hf.co')
+
+def check_room(needed, already, free, spent, reserved_additional, reserved_full, budget=None):
+    limit = BUDGET if budget is None else budget
+    if needed <= 0: raise ValueError('This catalog entry has no file size. Nothing was downloaded.')
+    additional = max(0, needed - already)
+    if free < additional + HEADROOM + reserved_additional:
+        raise ValueError(f'Not enough free space for this {format_bytes(needed)} download. Keep at least 1 GB free afterward. Nothing new was saved.')
+    if spent + reserved_full + needed > limit:
+        raise ValueError(f'This {format_bytes(needed)} download would pass the 100 GB additional-model budget. Remove a downloaded model or choose a smaller quantization. Nothing new was saved.')
+
+def _digest(header):
+    raw = re.sub(r'^W/', '', (header or '').strip()).strip('"').lower()
+    if raw.startswith('sha256:'): raw = raw.split(':', 1)[1]
+    return raw
+
+def resolve(entry, quant):
+    url = canonical_url(entry, quant)
+    try:
+        with httpx.Client(timeout=30, follow_redirects=False, trust_env=True) as client:
+            response = client.head(url, headers={'User-Agent': 'Luminaria'})
+    except httpx.HTTPError as exc:
+        raise ValueError('Could not reach the model publisher. Check your connection and try again. Nothing was downloaded.') from exc
+    if response.status_code not in (200, 301, 302, 303, 307, 308):
+        raise ValueError(f'Could not read the published file ({response.status_code}). Nothing was downloaded.')
+    size = int(response.headers.get('x-linked-size') or response.headers.get('content-length') or 0)
+    digest = _digest(response.headers.get('x-linked-etag') or response.headers.get('etag'))
+    if not size or not re.fullmatch(r'[a-f0-9]{64}', digest):
+        raise ValueError('The publisher did not provide a size and SHA256. Nothing was downloaded.')
+    if size != quant['bytes'] or digest != quant['sha256']:
+        raise ValueError('The published file no longer matches the catalog. Nothing was downloaded.')
+    return {'url': url, 'size': size, 'sha256': digest}
+
+def _open_stream(url, headers):
+    client = httpx.Client(timeout=httpx.Timeout(30, read=120), follow_redirects=False, trust_env=True)
+    current = url
+    try:
+        for _ in range(6):
+            response = client.send(client.build_request('GET', current, headers=headers), stream=True)
+            if response.status_code in (301, 302, 303, 307, 308):
+                location = response.headers.get('location'); response.close()
+                if not location:
+                    client.close(); raise ValueError('Download redirect was missing a destination. The partial file was kept.')
+                current = str(httpx.URL(current).join(location))
+                if not host_allowed(current, url):
+                    client.close(); raise ValueError('Download redirected to an unexpected server. The partial file was kept.')
+                continue
+            if not host_allowed(str(response.url), url):
+                response.close(); client.close(); raise ValueError('Download used an unexpected server. The partial file was kept.')
+            return client, response
+        client.close(); raise ValueError('Download had too many redirects. The partial file was kept.')
+    except Exception:
+        client.close(); raise
+
+def _sha256(path):
+    digest = hashlib.sha256()
+    with path.open('rb') as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b''): digest.update(chunk)
+    return digest.hexdigest()
+
+def transfer(url, partial, total, digest, cancel, progress):
+    partial.parent.mkdir(parents=True, exist_ok=True)
+    existing = partial.stat().st_size if partial.exists() else 0
+    if existing == total and _sha256(partial) == digest:
+        progress(total); return {'status': 'complete', 'received': total}
+    if existing >= total:
+        partial.unlink(); existing = 0
+    headers = {'User-Agent': 'Luminaria'}
+    if 0 < existing < total: headers['Range'] = f'bytes={existing}-'
+    client, response = _open_stream(url, headers)
+    received = existing
+    try:
+        if existing and response.status_code == 200:
+            existing = 0; mode = 'wb'; received = 0
+        elif existing and response.status_code == 206:
+            mode = 'ab'
+        elif response.status_code == 200:
+            mode = 'wb'; received = 0
+        elif response.status_code == 416 and existing:
+            partial.unlink(); raise ValueError('The partial download could not be resumed. It was discarded. Start the download again.')
+        else:
+            raise ValueError(f'Download failed ({response.status_code}). The partial file was kept so you can retry.')
+        with partial.open(mode) as handle:
+            for chunk in response.iter_bytes(32 * 1024):
+                if cancel.is_set():
+                    return {'status': 'paused', 'received': received}
+                handle.write(chunk); handle.flush(); received += len(chunk); progress(received)
+    except httpx.HTTPError as exc:
+        raise ValueError('The connection failed. The partial file was kept so you can resume.') from exc
+    finally:
+        response.close(); client.close()
+    if cancel.is_set(): return {'status': 'paused', 'received': partial.stat().st_size if partial.exists() else received}
+    if not partial.exists() or partial.stat().st_size != total or _sha256(partial) != digest:
+        partial.unlink(missing_ok=True)
+        raise ValueError('Checksum mismatch. The incomplete file was deleted. Start the download again.')
+    return {'status': 'complete', 'received': total}
+
+def _persist_locked():
+    visible = []
+    for job in _jobs.values():
+        visible.append({k: job[k] for k in ('id', 'status', 'received', 'total', 'error', 'filename', 'url', 'sha256') if k in job})
+    path = state_path(); path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps({'jobs': visible}, indent=2), encoding='utf-8')
+
+def load_state():
+    global _loaded
+    with _lock:
+        if _loaded: return
+        _loaded = True
+        path = state_path()
+        if not path.exists(): return
+        try: saved = json.loads(path.read_text(encoding='utf-8')).get('jobs', [])
+        except (OSError, json.JSONDecodeError): return
+        for job in saved:
+            if job.get('id') in _jobs or not quant_by_id(job.get('id', ''))[1]: continue
+            if job.get('status') in ('downloading', 'queued'):
+                job['status'] = 'paused'
+                job['error'] = 'Download stopped when the app closed. The partial file can resume.'
+            _jobs[job['id']] = job
+
+def _catalog_spent():
+    folder = models_folder(); total = 0
+    for entry in CATALOG:
+        for quant in entry['quants']:
+            path = folder / quant['filename']
+            if path.is_file():
+                try: total += path.stat().st_size
+                except OSError: pass
+    return total
+
+def _partial_bytes():
+    folder = models_folder() / '.partial'
+    if not folder.is_dir(): return 0
+    return sum(path.stat().st_size for path in folder.glob('*.part') if path.is_file())
+
+def _reservations(except_id=None):
+    full = additional = 0
+    for ident, job in _jobs.items():
+        if ident == except_id or job.get('status') not in ('queued', 'downloading'): continue
+        full += job.get('total') or 0
+        additional += max(0, (job.get('total') or 0) - (job.get('received') or 0))
+    return full, additional
+
+def _public_job(job, position=None):
+    return {'id': job['id'], 'status': job['status'], 'received': job.get('received') or 0,
+            'total': job.get('total') or 0, 'error': job.get('error') or '', 'filename': job.get('filename') or '',
+            'queue_position': position}
+
+def jobs_view():
+    load_state()
+    with _lock:
+        positions = {ident: index + 1 for index, ident in enumerate(_queue)}
+        current = {ident: dict(job) for ident, job in _jobs.items()}
+    folder = models_folder() / '.partial'
+    if folder.is_dir():
+        for part in folder.glob('*.part'):
+            ident = part.name[:-5]
+            if ident in current or not quant_by_id(ident)[1]: continue
+            quant = quant_by_id(ident)[1]
+            current[ident] = {'id': ident, 'status': 'paused', 'received': part.stat().st_size, 'total': quant['bytes'],
+                              'error': 'Download stopped. The partial file is saved and can resume.', 'filename': quant['filename']}
+    return [_public_job(job, positions.get(job['id'])) for job in current.values()]
+
+def _same_file(path, target):
+    try: return path.is_file() and path.resolve() == target.resolve()
+    except OSError: return False
+
+def _inside_models(path):
+    try: path.resolve().relative_to(models_folder().resolve()); return True
+    except (OSError, ValueError): return False
+
+def _active(ident, path):
+    configured = CONFIG.get('model_file') or ''
+    try: same = bool(configured) and Path(configured).resolve() == path.resolve()
+    except OSError: same = False
+    return CONFIG.get('model') == ident or same
+
+def library(store):
+    load_state()
+    from .benchmark_store import history
+    folder = models_folder()
+    registry = models.registry()
+    downloads = {job['id']: job for job in jobs_view()}
+    records = list(registry)
+    entries = []
+    matched = set()
+    for entry in CATALOG:
+        quants = []
+        for quant in entry['quants']:
+            path = folder / quant['filename']
+            registered = next((item for item in registry if item.get('id') == quant['id'] or _same_file(Path(item.get('model_file', '')), path)), None)
+            if registered: matched.add(registered['id'])
+            installed = path.is_file()
+            if installed and not any(_same_file(Path(item.get('model_file', '')), path) for item in records):
+                records.append({'model_file': str(path)})
+            sidecar = Path(str(path) + '.sha256')
+            verified = installed and sidecar.is_file() and sidecar.read_text(encoding='utf-8').strip() == quant['sha256']
+            benchmarks = history(registered['id'], registered.get('benchmarks', [])) if registered else []
+            quants.append({**quant, 'installed': installed, 'registered': bool(registered),
+                           'registry_id': registered['id'] if registered else quant['id'],
+                           'verified': verified, 'bytes_on_disk': path.stat().st_size if installed else None,
+                           'benchmarks': benchmarks, 'active': bool(registered) and _active(registered['id'], path),
+                           'job': downloads.get(quant['id']), 'downloadable': True, 'managed': True})
+        entries.append({k: entry[k] for k in ('id', 'name', 'variant', 'parameters', 'purpose', 'description', 'strengths', 'context', 'vision', 'license', 'provenance', 'hardware', 'caveat')} |
+                       {'key': 'catalog:' + entry['id'], 'local': False, 'quants': quants})
+    for item in registry:
+        if item['id'] in matched: continue
+        path = Path(item.get('model_file', ''))
+        installed = path.is_file()
+        benchmarks = history(item['id'], item.get('benchmarks', []))
+        variant = item.get('variant') if item.get('variant') in ('standard', 'abliterated') else ('abliterated' if re.search(r'abliterat|huihui', (item.get('name', '') + ' ' + item.get('description', '')), re.I) else 'standard')
+        entries.append({'id': item['id'], 'key': 'local:' + item['id'], 'name': item.get('name') or item['id'], 'variant': variant,
+                        'parameters': item.get('parameters') or 'Not specified', 'purpose': 'Added from this PC',
+                        'description': item.get('description') or 'Local GGUF registered on this PC.',
+                        'strengths': item.get('strengths') or ['Local file'], 'context': item.get('context') or 0, 'vision': bool(item.get('projector_file')),
+                        'license': item.get('license') or 'Not recorded', 'provenance': 'Registered from a file already on this PC',
+                        'hardware': item.get('hardware') or 'Not recorded', 'caveat': '', 'local': True,
+                        'quants': [{'id': item['id'], 'label': item.get('quantization') or 'Unknown', 'filename': path.name, 'bytes': path.stat().st_size if installed else None,
+                                    'memory': 'Measured only by what this file uses on disk', 'installed': installed, 'registered': True, 'registry_id': item['id'],
+                                    'verified': False, 'bytes_on_disk': path.stat().st_size if installed else None, 'benchmarks': benchmarks,
+                                    'active': _active(item['id'], path) if installed else CONFIG.get('model') == item['id'], 'job': None,
+                                    'downloadable': False, 'managed': installed and _inside_models(path), 'sha256': ''}]})
+    storage = models.model_storage(records)
+    storage['partial_bytes'] = _partial_bytes()
+    spent = _catalog_spent()
+    return {'active': CONFIG.get('model'), 'context': CONFIG.get('context'), 'storage': storage,
+            'budget': {'limit': BUDGET, 'used': spent, 'remaining': max(0, BUDGET - spent)},
+            'downloads': list(downloads.values()), 'models': entries}
+
+def _start_worker():
+    global _worker
+    if _worker and _worker.is_alive(): return
+    generation = _generation
+    _worker = threading.Thread(target=_run, args=(generation,), name='model-download', daemon=True)
+    _worker.start()
+
+def enqueue(quant_id):
+    load_state()
+    entry, quant = quant_by_id(quant_id)
+    if not quant: raise ValueError('That model is not in the download catalog.')
+    final = models_folder() / quant['filename']
+    if final.is_file() and final.stat().st_size == quant['bytes']:
+        raise ValueError('This quantization is already downloaded.')
+    with _lock:
+        job = _jobs.get(quant_id)
+        if job and job.get('status') in ('queued', 'downloading'): return _public_job(job)
+    meta = resolve(entry, quant)
+    partial = partial_file(quant_id)
+    already = partial.stat().st_size if partial.exists() else 0
+    free = shutil.disk_usage(models_folder() if models_folder().exists() else models.BASE_DATA).free
+    with _lock:
+        reserved_full, reserved_additional = _reservations(quant_id)
+        check_room(quant['bytes'], already, free, _catalog_spent(), reserved_additional, reserved_full)
+        _jobs[quant_id] = {'id': quant_id, 'status': 'queued', 'received': already, 'total': quant['bytes'], 'error': '',
+                           'filename': quant['filename'], 'url': meta['url'], 'sha256': meta['sha256']}
+        if quant_id not in _queue: _queue.append(quant_id)
+        _persist_locked(); _start_worker()
+        return _public_job(_jobs[quant_id], _queue.index(quant_id) + 1)
+
+def cancel(quant_id):
+    load_state()
+    with _lock:
+        job = _jobs.get(quant_id)
+        if job and job.get('status') == 'cancelling': return _public_job(job)
+        if not job or job.get('status') not in ('queued', 'downloading'):
+            raise ValueError('There is no active download to cancel.')
+        if job['status'] == 'queued':
+            if quant_id in _queue: _queue.remove(quant_id)
+            job['status'] = 'paused'
+            job['error'] = 'Download stopped before it started. You can resume it.'
+            _persist_locked(); return _public_job(job)
+        job['status'] = 'cancelling'
+        job['error'] = 'Stopping the download. The partial file will be kept.'
+        event = _cancels.get(quant_id)
+        _persist_locked()
+    if event: event.set()
+    return {'id': quant_id, 'status': 'cancelling'}
+
+def discard(quant_id):
+    load_state()
+    with _lock:
+        job = _jobs.get(quant_id)
+        if job and job.get('status') in ('queued', 'downloading'):
+            raise ValueError('Cancel the download before discarding its partial file.')
+        _jobs.pop(quant_id, None); _persist_locked()
+    partial_file(quant_id).unlink(missing_ok=True)
+    return {'discarded': True}
+
+def _progress(quant_id, received):
+    with _lock:
+        job = _jobs.get(quant_id)
+        if not job: return
+        job['received'] = received
+        now = time.monotonic()
+        if now - job.get('_saved', 0) > 0.5:
+            job['_saved'] = now; _persist_locked()
+
+def _register(entry, quant, path):
+    registry = models.registry()
+    previous = next((item for item in registry if item.get('id') == quant['id']), None)
+    record = {'id': quant['id'], 'name': f"{entry['name']} · {quant['label']}"[:120], 'description': entry['description'][:1000],
+              'model_file': str(path), 'projector_file': '', 'context': entry['context'], 'quantization': quant['label'],
+              'strengths': entry['strengths'], 'variant': entry['variant'], 'parameters': entry['parameters'], 'purpose': entry['purpose'],
+              'license': entry['license'], 'hardware': entry['hardware'], 'provenance': entry['provenance'], 'catalog_id': entry['id'],
+              'sha256': quant['sha256'], 'benchmarks': previous.get('benchmarks', []) if previous else [],
+              'benchmark_note': 'Not benchmarked on this machine.'}
+    registry = [item for item in registry if item.get('id') != quant['id'] and not _same_file(Path(item.get('model_file', '')), path)]
+    registry.append(record); models.save(registry); return record
+
+def _finish(entry, quant, partial):
+    folder = models_folder(); folder.mkdir(parents=True, exist_ok=True)
+    final = folder / quant['filename']
+    partial.replace(final)
+    Path(str(final) + '.sha256').write_text(quant['sha256'] + '\n', encoding='utf-8')
+    _register(entry, quant, final)
+
+def _run(generation):
+    global _worker
+    while True:
+        with _lock:
+            if generation != _generation or not _queue:
+                if _worker and generation == _generation: _worker = None
+                return
+            quant_id = _queue.pop(0)
+            job = _jobs[quant_id]
+            job['status'] = 'downloading'; job['error'] = ''
+            cancel_event = threading.Event(); _cancels[quant_id] = cancel_event
+            url, total, digest = job['url'], job['total'], job['sha256']
+            _persist_locked()
+        entry, quant = quant_by_id(quant_id)
+        partial = partial_file(quant_id)
+        try:
+            already = partial.stat().st_size if partial.exists() else 0
+            probe = partial.parent if partial.parent.exists() else models.BASE_DATA
+            free = shutil.disk_usage(probe).free
+            with _lock: reserved_full, reserved_additional = _reservations(quant_id)
+            check_room(total, already, free, _catalog_spent(), reserved_additional, reserved_full)
+            result = transfer(url, partial, total, digest, cancel_event, lambda amount: _progress(quant_id, amount))
+            if generation != _generation: return
+            if result['status'] == 'complete': _finish(entry, quant, partial)
+        except Exception as exc:
+            if generation != _generation: return
+            message = str(exc) if isinstance(exc, ValueError) else 'The download could not be saved. The partial file was kept so you can retry.'
+            with _lock:
+                if quant_id in _jobs:
+                    _jobs[quant_id]['status'] = 'error'; _jobs[quant_id]['error'] = message
+                    _cancels.pop(quant_id, None); _persist_locked()
+            continue
+        if generation != _generation: return
+        with _lock:
+            _cancels.pop(quant_id, None)
+            if result['status'] == 'complete': _jobs.pop(quant_id, None)
+            elif quant_id in _jobs:
+                _jobs[quant_id]['status'] = 'paused'; _jobs[quant_id]['received'] = result['received']
+                _jobs[quant_id]['error'] = 'Download stopped. The partial file is saved and can resume.'
+            _persist_locked()
+
+def prepare(ident):
+    entry, quant = quant_by_id(ident)
+    if quant:
+        path = models_folder() / quant['filename']
+        if not path.is_file(): raise ValueError('Download this quantization before using it.')
+        if path.stat().st_size != quant['bytes']: raise ValueError('The file size does not match the catalog. It was not selected.')
+        sidecar = Path(str(path) + '.sha256')
+        if sidecar.is_file() and sidecar.read_text(encoding='utf-8').strip() != quant['sha256']:
+            raise ValueError('The saved checksum does not match the catalog. It was not selected.')
+        _register(entry, quant, path)
+        return {'id': quant['id']}
+    item = next((item for item in models.registry() if item['id'] == ident), None)
+    if not item or not Path(item['model_file']).is_file(): raise ValueError('Model file is unavailable')
+    return {'id': ident}
+
+def remove(ident, confirm):
+    load_state()
+    if confirm is not True: raise ValueError('Confirm removal before deleting a model file.')
+    entry, quant = quant_by_id(ident)
+    registry = models.registry()
+    if quant:
+        path = models_folder() / quant['filename']
+        registered = next((item for item in registry if item.get('id') == quant['id'] or _same_file(Path(item.get('model_file', '')), path)), None)
+        active_id = registered['id'] if registered else quant['id']
+    else:
+        registered = next((item for item in registry if item['id'] == ident), None)
+        if not registered: raise ValueError('Model not found')
+        path = Path(registered.get('model_file', ''))
+        active_id = registered['id']
+    if path and _active(active_id, path if path else Path()):
+        raise ValueError('This model is active. Select another model before removing its file.')
+    deleted = False
+    if path and path.is_file():
+        if not _inside_models(path):
+            models.save([item for item in registry if item.get('id') != active_id])
+            return {'deleted': False, 'unregistered': True, 'message': 'Removed from the library. The file is outside the models folder and was left in place.'}
+        path.unlink(); deleted = True
+        Path(str(path) + '.sha256').unlink(missing_ok=True)
+    if quant: partial_file(quant['id']).unlink(missing_ok=True)
+    with _lock:
+        _jobs.pop(ident, None)
+        if ident in _queue: _queue.remove(ident)
+        _persist_locked()
+    keep = []
+    for item in registry:
+        if item.get('id') == active_id: continue
+        if path and _same_file(Path(item.get('model_file', '')), path): continue
+        keep.append(item)
+    models.save(keep)
+    return {'deleted': deleted, 'unregistered': True, 'message': 'Model file removed.' if deleted else 'Model removed from the library.'}
