@@ -10,7 +10,7 @@ async def check():
     if not repo: return {'configured':False,'current':CONFIG['version'],'message':'Updates will be available when the publisher enables the release channel.'}
     if not re.fullmatch(r'[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+',repo): raise ValueError('Invalid release repository')
     async with httpx.AsyncClient(timeout=25,follow_redirects=True) as c:
-        r=await c.get(f'https://api.github.com/repos/{repo}/releases/latest',headers={'Accept':'application/vnd.github+json','User-Agent':'LocalAIStudio-Updater'})
+        r=await c.get(f'https://api.github.com/repos/{repo}/releases/latest',headers={'Accept':'application/vnd.github+json','User-Agent':'Luminaria-Updater'})
         if r.status_code==404: return {'configured':True,'available':False,'current':CONFIG['version'],'message':'No public stable release has been published yet.'}
         r.raise_for_status(); release=r.json()
     tag=release['tag_name']; assets=release.get('assets',[])
@@ -27,7 +27,7 @@ async def install():
         if not a['browser_download_url'].startswith(prefix): raise ValueError('Unexpected release asset origin')
     folder=DATA/'updates'; folder.mkdir(exist_ok=True)
     name=Path(asset['name']).name
-    if not re.fullmatch(r'LocalAIStudio-[A-Za-z0-9.-]+-Setup\.exe',name): raise ValueError('Invalid installer filename')
+    if name != asset['name'] or not re.fullmatch(r'(?:Luminaria|LocalAIStudio)-[A-Za-z0-9.-]+-Setup\.exe',name): raise ValueError('Invalid installer filename')
     target=folder/name; partial=folder/(name+'.partial')
     async with httpx.AsyncClient(timeout=120,follow_redirects=True) as c:
         r=await c.get(checksum['browser_download_url']); r.raise_for_status()
@@ -48,4 +48,4 @@ async def install():
         finally:
             if partial.exists(): partial.unlink()
     subprocess.Popen([str(target)],creationflags=subprocess.CREATE_NO_WINDOW if os.name=='nt' else 0)
-    return {'launched':True,'message':'Verified installer opened. Close Studio when the installer requests it. Your history is retained.'}
+    return {'launched':True,'message':'Verified installer opened. Close Luminaria when the installer requests it. Your history is retained.'}

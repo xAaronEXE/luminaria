@@ -19,5 +19,7 @@ prompt descriptions, unchanged effective permissions after saving, and activatio
 of the saved mode in a fresh process. Python compilation and frontend JavaScript
 syntax checks passed. No full-access actions were run on the user's data.
 
-The source backend must be restarted to load this feature; the installed desktop
-executable must be rebuilt before it includes these changes.
+The installed 0.2.2 desktop includes this feature. Isolated process tests cover
+both restart directions. Live verification used Full access only on newly created
+test fixtures, including a text attachment and a Python calculation. Existing user
+files were not modified by those checks.

@@ -7,10 +7,11 @@ def registry():
     return json.loads(PATH.read_text('utf-8')) if PATH.exists() else []
 def save(models): PATH.write_text(json.dumps(models,indent=2),encoding='utf-8')
 def public_models(store):
+    from .benchmark_store import history
     result=[]
     for m in registry():
         p=Path(m.get('model_file',''))
-        result.append({**m,'installed':p.is_file(),'bytes':p.stat().st_size if p.is_file() else None,'vision':bool(m.get('projector_file') and Path(m['projector_file']).is_file()),'latest_run':store.setting('model_metrics:'+m['id'])})
+        result.append({**m,'benchmarks':history(m['id'],m.get('benchmarks',[])),'installed':p.is_file(),'bytes':p.stat().st_size if p.is_file() else None,'vision':bool(m.get('projector_file') and Path(m['projector_file']).is_file()),'latest_run':store.setting('model_metrics:'+m['id'])})
     return {'active':CONFIG['model'],'context':CONFIG['context'],'models':result}
 def add_model(body):
     id=body.get('id','')

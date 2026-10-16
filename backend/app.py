@@ -140,10 +140,13 @@ async def run_chat(id:str,request:Request):
     text=str(b.get('text','')).strip()
     if len(text)>100000: raise ValueError('Message exceeds 100,000 characters; put large material in a file')
     attachments=b.get('attachments',[])
-    if not text and not attachments: raise ValueError('Write a message or attach an image')
+    if not text and not attachments: raise ValueError('Write a message or attach a file')
     content=[{'type':'text','text':text}]
-    if len(attachments)>4: raise ValueError('Attach at most four images per turn')
+    if len(attachments)>4: raise ValueError('Attach at most four files per turn')
     for ref in attachments:
+        if str(ref.get('id','')).endswith('.txt'):
+            from .attachments import text_part
+            content.append(text_part(ref['id']));continue
         if not re.fullmatch(r'[a-f0-9]{32}\.(png|jpg|webp)',ref['id']): raise ValueError('Invalid image')
         p=DATA/'attachments'/ref['id']
         if not p.is_file(): raise ValueError('Image no longer exists')
@@ -192,6 +195,9 @@ async def upload(request:Request):
     from PIL import Image
     import io
     b=await request.json(); raw=base64.b64decode(b['data'],validate=True)
+    from .attachments import TEXT_EXTENSIONS,save_text
+    if Path(str(b.get('name',''))).suffix.lower() in TEXT_EXTENSIONS:
+        return save_text(str(b['name']),raw)
     if len(raw)>8_000_000: raise ValueError('Image exceeds 8 MB')
     img=Image.open(io.BytesIO(raw)); img.verify()
     if img.format not in ('PNG','JPEG','WEBP'): raise ValueError('PNG, JPEG or WebP required')

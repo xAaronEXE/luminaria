@@ -1,8 +1,14 @@
-"""MINT Windows desktop host. WebView2 frontend + loopback-only Python API."""
+"""Luminaria Windows desktop host. WebView2 + loopback-only Python API."""
 import os,sys,time,threading,urllib.request,json,logging
 from pathlib import Path
 
 def main():
+    import argparse
+    parser=argparse.ArgumentParser(description='Luminaria local AI desktop. Agent tools are enabled by default; the saved permission mode controls execution.')
+    parser.add_argument('--agent',action='store_true',default=True,help='Enable agent tools (already enabled by default)')
+    parser.add_argument('--server',action='store_true',help='Run the local backend without the desktop window')
+    parser.add_argument('--version',action='version',version='Luminaria 0.2.2')
+    options=parser.parse_args()
     from backend.config import DATA,ROOT
     logging.basicConfig(filename=DATA/'desktop.log',level=logging.INFO,format='%(asctime)s %(levelname)s %(message)s')
     # Webview/uvicorn may write diagnostics even from a windowed executable.
@@ -26,7 +32,7 @@ def main():
             if server.started:break
             if not thread.is_alive():raise RuntimeError('Backend failed. See desktop.log')
             time.sleep(.1)
-    if '--server' in sys.argv:
+    if options.server:
         try:
             while True:time.sleep(1)
         except KeyboardInterrupt:pass

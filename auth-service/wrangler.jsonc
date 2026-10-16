@@ -1,0 +1,12 @@
+{
+ "$schema":"./node_modules/wrangler/config-schema.json",
+ "name":"luminaria-identity",
+ "main":"src/index.js",
+ "account_id":"f891e584a6097b5480b2ccc6702631c7",
+ "compatibility_date":"2026-10-16",
+ "compatibility_flags":["nodejs_compat"],
+ "workers_dev":true,
+ "observability":{"enabled":true,"head_sampling_rate":0.1},
+ "d1_databases":[{"binding":"DB","database_name":"luminaria-identity","database_id":"e98e03d1-1ef6-42f3-9076-001742dbb56c"}],
+ "triggers":{"crons":["17 * * * *"]}
+}

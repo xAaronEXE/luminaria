@@ -2,7 +2,8 @@
 import json,time,datetime
 import httpx
 from .config import CONFIG
-from .models import registry,save
+from .models import registry
+from .benchmark_store import record
 
 async def measure(id):
     models=registry(); model=next((m for m in models if m['id']==id),None)
@@ -20,4 +21,5 @@ async def measure(id):
     if not count or first is None: raise ValueError('Server did not return token usage; no benchmark score saved')
     result={'test':'Fixed short generation · '+datetime.date.today().isoformat(),'tps':round(count/elapsed,1),'measurement':'end-to-end (includes load and prompt processing)','first_token_seconds':round(first-start,2),'completion_tokens':count,'prompt_tokens':usage.get('prompt_tokens'),'elapsed':round(elapsed,2),'context':model['context']}
     if timing.get('predicted_per_second'): result['decode_tps']=round(timing['predicted_per_second'],1)
-    model.setdefault('benchmarks',[]).insert(0,result);save(models);return result
+    result.update({'model':id,'quantization':model.get('quantization'),'kind':'generation-speed','quality_evaluated':False,'measured_at':time.time()})
+    record(id,result);return result
