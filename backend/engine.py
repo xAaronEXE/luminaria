@@ -1,4 +1,5 @@
 import asyncio, base64, json, time
+from contextlib import AsyncExitStack,asynccontextmanager
 from pathlib import Path
 from typing import TypedDict
 import httpx
@@ -121,13 +122,43 @@ class Engine:
             # UTF-8 byte count is a conservative fallback; never optimistic chars/4.
             return len(json.dumps(safe,ensure_ascii=False).encode())+len(json.dumps(definitions or []).encode())+images*1200+512,'conservative estimate'
 
+    @asynccontextmanager
+    async def model_stream(self,body):
+        """Open the completion stream. If the model manager Luminaria started has exited, restart it once."""
+        from . import runtime
+        for attempt in (1,2):
+            stack=AsyncExitStack()
+            try:
+                response=await stack.enter_async_context(self.client.stream('POST',CONFIG['endpoint']+'/chat/completions',json=body))
+                break
+            except httpx.ConnectError:
+                await stack.aclose()
+                state=runtime.manager_state()
+                if attempt==1 and state['owned'] and not state['running']:
+                    self.broadcast({'type':'model_recovering','exit_code':state.get('exit_code')})
+                    await asyncio.to_thread(runtime.start_swap)
+                    self.client.headers['Authorization']='Bearer '+CONFIG.get('model_api_key','local-only')
+                    for _ in range(40):
+                        if runtime.listening(8098): break
+                        await asyncio.sleep(.25)
+                    continue
+                if state['owned'] and not state['running']:
+                    problem=runtime.diagnose()
+                    raise RuntimeError('The model manager stopped'+(f' (exit code {state["exit_code"]})' if state.get('exit_code') is not None else '')+'. '+(problem or 'Restart it from the Model library.'))
+                raise RuntimeError('Cannot reach the model server at '+CONFIG['endpoint']+'. Start the model manager from the Model library, or check the endpoint in Settings.')
+        async with stack:
+            yield response
+
     async def completion(self,messages,tools=None,run=None,max_tokens=None):
         body={'model':CONFIG['model'],'messages':messages,'stream':True,'stream_options':{'include_usage':True},'max_tokens':max_tokens or CONFIG['output_tokens'],'temperature':0.4,'chat_template_kwargs':{'enable_thinking':bool(run and run.get('reasoning'))}}
         if tools: body['tools']=tools; body['tool_choice']='auto'
         text=''; reasoning=''; calls={}; usage={}; started=time.monotonic(); first=None; finish=None
-        async with self.client.stream('POST',CONFIG['endpoint']+'/chat/completions',json=body) as response:
+        async with self.model_stream(body) as response:
             if response.status_code>=400:
-                raw=await response.aread(); raise RuntimeError(f'Model server {response.status_code}: {raw.decode()[:600]}')
+                raw=(await response.aread()).decode('utf-8','replace')[:600]
+                from .runtime import diagnose
+                problem=diagnose() if response.status_code>=500 else None
+                raise RuntimeError(f'{problem} Details: model server {response.status_code}: {raw}' if problem else f'Model server {response.status_code}: {raw}')
             async for line in response.aiter_lines():
                 if not line.startswith('data: '): continue
                 if line[6:]=='[DONE]': break

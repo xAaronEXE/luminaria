@@ -98,6 +98,21 @@ master-spec requirements remain in scope.
   validation and encrypted session storage. Restart recovery is not yet verified.
 - User confirmed real microphone recognition/Qwen spoken answer and interruption of
   spoken playback followed by a new answer. Full matrix remains unverified.
+- Chats in trash can now be deleted permanently, one at a time or with Empty trash,
+  after a confirmation. This erases their messages, summaries, tool records, run
+  snapshots and model checkpoints. Files saved in My files are kept. Route tests
+  cover this against a temporary data folder; not yet tried in the packaged app.
+- PDF and Word .docx files can be attached (up to 25 MB, 500 PDF pages). The original
+  is kept in My files/Attachments and its extracted text is given to the model.
+  Password-protected, scanned, damaged and legacy .doc files are refused with a
+  reason. Folders can be attached: up to 200 supported files and 100 MB are copied
+  to My files/Imports with their structure, and the model gets a contents list.
+  The plus menu no longer gets cut off by the composer. Tested with generated
+  files; not yet tried in the packaged app.
+- Models now have a quality check separate from speed: 12 fixed coding and reasoning
+  questions with exact answers. Code in the questions is read, never run. Results
+  are stored apart from speed history and shown per question. It has not been run
+  against a real model yet; tests use a simulated model server.
 - Source now includes a downloadable Standard/Abliterated catalog, one-at-a-time
   queue, resume, checksum checks, the 100 GB budget, and disk-space refusal.
   Unit tests cover those paths with a local file server. A packaged Windows
@@ -106,8 +121,42 @@ master-spec requirements remain in scope.
   private repository with a read-only token. The desktop app checks for updates
   through that Worker and verifies the installer's size and SHA-256 before it runs.
   The version comes from the VERSION file, and the installer leaves App\data and
-  App\models in place. The token secret and Worker deploy are still pending, and
-  0.2.5 has not been built or published. Installers are not code-signed.
+  App\models in place. The release token is set and the Worker is deployed. v0.2.5
+  is published, and the live channel returns it with a checksum that matches the
+  GitHub asset digest. An in-app upgrade from 0.2.5 to a later release has not been
+  run yet. Installers are not code-signed.
+- The 3D core has distinct idle, listening, thinking, speaking, interrupted and
+  error looks, driven by the real voice state. Checked in headless WebGL at 60 fps;
+  not yet watched in the packaged app.
+- Tools & integrations has real connections for GitHub (your own token), Linear and
+  Notion (browser sign-in), Slack (your own Slack app client ID) and Gmail, Drive
+  and Calendar (your own Google OAuth client). Read-only is offered where the
+  service supports it. Credentials are DPAPI-encrypted. A service shows as connected
+  only when its MCP tools loaded. Discord and databases have no official hosted
+  server and use the custom MCP connector, which now starts without a restart.
+  Tests run against a local MCP server with real OAuth; no real service has been
+  connected yet. Integration tools still need Computer and command tools or Full Access.
+- Skills: the original requested list was not available in this session, so the
+  21 installed skills were reconciled instead. Each is categorized in
+  skills/inventory.json with its real requirements, and the library shows Ready or
+  exactly what is missing. Tests fail if a skill is installed but not inventoried, or
+  the reverse. Send the original list to add any missing skills.
+- Panels show loading and retry states; form field borders meet 3:1 contrast in both
+  modes. Text colors were measured at 5:1 or higher.
+- Model failures are explained: the model manager log is read for out-of-memory,
+  damaged files, projector, port and load-timeout problems. A crashed manager that
+  Luminaria started is restarted once automatically; otherwise Models shows the
+  reason with a Restart button. Tested with simulated failures only.
+- The Activity tab can search tool actions across all chats and filter errors,
+  denials and interruptions, with links back to each chat.
+- Required sign-in is built but off. It can be turned on in Accounts only while
+  signed in and verified online. When on, the backend refuses everything except
+  sign-in until the account is verified, local profiles cannot be opened, and
+  automations wait. Offline use is allowed for 7 days after the last verification.
+  This is an access gate for this app, not protection against the Windows account
+  owner: removing require_sign_in from App\data\profiles.json turns it off.
+  Not yet tried with the real sign-in service.
+- Version 0.2.6 with release notes is prepared. See testing-0.2.6.md.
 - See verification-0.2.4.md for detailed historical evidence and remaining checks.
 
 ## Locations

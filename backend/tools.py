@@ -71,7 +71,7 @@ class Toolbox:
             raise ValueError('Computer and command tools are disabled. Enable them in Settings first.')
         if name=='list_skills':
             from .skills import catalog
-            return [s for s in catalog() if self.store.setting('skill:'+s['name'],True)]
+            return [{k:s[k] for k in ('name','description','category','missing')} for s in catalog(self.connectors) if self.store.setting('skill:'+s['name'],True)]
         if name=='load_skill':
             from .skills import load_skill
             if not self.store.setting('skill:'+a['name'],True): raise ValueError('This skill is disabled')

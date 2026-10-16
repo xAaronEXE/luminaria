@@ -1,5 +1,6 @@
 """Durable source history and versioned working summaries. No transcript truncation."""
 import json
+import shutil
 import sqlite3
 import time
 import uuid
@@ -47,6 +48,21 @@ class Store:
         folder.mkdir(parents=True,exist_ok=True); (folder/'artifacts').mkdir(exist_ok=True)
         with (folder/'conversation.jsonl').open('w',encoding='utf-8') as f:
             for msg in self.messages(run['chat']): f.write(json.dumps(msg,ensure_ascii=False)+'\n')
+    def purge_chat(self,chat):
+        """Erase a trashed chat's history and run records. Returns run ids for checkpoint cleanup."""
+        found=self.rows('SELECT archived FROM chats WHERE id=?',(chat,))
+        if not found: raise ValueError('Chat not found')
+        if found[0]['archived']!=2: raise ValueError('Move the chat to trash before deleting it permanently')
+        runs=[r['id'] for r in self.rows('SELECT id FROM runs WHERE chat=?',(chat,))]
+        with self.db:
+            for table in ('messages','summaries','actions','runs'): self.db.execute(f'DELETE FROM {table} WHERE chat=?',(chat,))
+            self.db.execute('DELETE FROM chats WHERE id=?',(chat,))
+        root=(self.data_directory/'runs').resolve()
+        for run in runs:
+            folder=(root/run).resolve()
+            if folder.parent==root and folder.is_dir(): shutil.rmtree(folder,ignore_errors=True)
+        return runs
+    def trashed(self): return [r['id'] for r in self.rows('SELECT id FROM chats WHERE archived=2')]
     def messages(self, chat, after=0):
         return [dict(id=r['id'],created=r['created'],**json.loads(r['payload'])) for r in self.rows('SELECT * FROM messages WHERE chat=? AND id>? ORDER BY id',(chat,after))]
     def summary(self, chat):
@@ -62,6 +78,22 @@ class Store:
     def set_setting(self,key,value): self.execute('INSERT OR REPLACE INTO settings VALUES(?,?)',(key,json.dumps(value)))
     def actions(self,chat):
         return [dict(r,args=json.loads(r['args']),result=json.loads(r['result']) if r['result'] else None) for r in self.rows('SELECT * FROM actions WHERE chat=? ORDER BY created',(chat,))]
+    def action_history(self,status='',query='',limit=200):
+        sql='SELECT a.id,a.chat,a.name,a.args,a.tier,a.status,a.result,a.created,c.title,c.archived FROM actions a JOIN chats c ON c.id=a.chat WHERE 1=1'
+        params=[]
+        if status=='problems':sql+=" AND a.status IN ('error','denied','interrupted')"
+        elif status:sql+=' AND a.status=?';params.append(status)
+        if query:
+            sql+=" AND (a.name LIKE ? ESCAPE '\\' OR a.args LIKE ? ESCAPE '\\' OR c.title LIKE ? ESCAPE '\\')"
+            like='%'+query.replace('\\','\\\\').replace('%','\\%').replace('_','\\_')+'%';params+=[like]*3
+        sql+=' ORDER BY a.created DESC LIMIT ?';params.append(max(1,min(int(limit),500)))
+        rows=[]
+        for r in self.rows(sql,tuple(params)):
+            result=json.loads(r['result']) if r['result'] else None
+            text=result.get('text') if isinstance(result,dict) and isinstance(result.get('text'),str) else (json.dumps(result)[:2000] if result is not None else '')
+            rows.append({'id':r['id'],'chat':r['chat'],'chat_title':r['title'],'chat_place':{1:'archived',2:'trash'}.get(r['archived'],'active'),
+                         'name':r['name'],'args':json.loads(r['args']),'tier':r['tier'],'status':r['status'],'created':r['created'],'output':text[:600],'truncated':len(text)>600})
+        return rows
     def recover_tool_pairs(self,chat_id=None):
         for chat in self.rows('SELECT id FROM chats WHERE id=?',(chat_id,)) if chat_id else self.rows('SELECT id FROM chats'):
             msgs=self.messages(chat['id']); answered={m.get('tool_call_id') for m in msgs if m['role']=='tool'}

@@ -17,29 +17,33 @@
  gl.attachShader(program,shader(gl.VERTEX_SHADER,`
  precision mediump float;
  attribute vec3 brain;attribute vec3 torus;attribute float cluster;
- uniform float time,morph,aspect,amplitude,bass,mid,high,reduced,entityScale;uniform vec2 pointer,dock,center;
- varying float depth;varying float zone;varying float travel;
+ uniform float time,morph,aspect,amplitude,bass,mid,high,reduced,entityScale,listen,think,speak,recoil,fault;uniform vec2 pointer,dock,center;
+ varying float depth;varying float zone;varying float travel;varying float ring;
  void main(){
  vec3 b=brain; b.x+=.025*sin(b.y*11.+b.z*7.);b.z+=.02*cos(b.x*17.);
  vec3 v=torus;float a=atan(v.z,v.x);
  v.xz*=1.+bass*.22*(1.-reduced);v.y*=1.+high*.7*(1.-reduced);
  v+=normalize(v)*sin(a*7.+time*2.5)*mid*.09*(1.-reduced);
+ float motion=1.-reduced;
+ v*=1.-listen*.035*sin(time*3.-length(v.xz)*7.)*motion;
+ v*=1.-recoil*.14;
  vec3 p=mix(b,v,morph);
- float rotation=time*.07*(1.-reduced)+pointer.x*.12*(1.-reduced);
+ float rotation=(time*.07*(1.+think*1.6)*(1.-fault*.8)+pointer.x*.12)*motion;
  p.xz=mat2(cos(rotation),-sin(rotation),sin(rotation),cos(rotation))*p.xz;
  float tilt=.28+pointer.y*.08*(1.-reduced);p.yz=mat2(cos(tilt),-sin(tilt),sin(tilt),cos(tilt))*p.yz;
  p*=mix(.18,entityScale,morph);p.z+=4.6;
  vec2 offset=mix(dock,center,morph);
  gl_Position=vec4(p.x*2.15/aspect+offset.x*p.z,p.y*2.15+offset.y*p.z,0.,p.z);
- depth=clamp(1.-(p.z-2.)/5.,.15,1.);zone=cluster;travel=brain.y*3.+brain.x*2.;
+ depth=clamp(1.-(p.z-2.)/5.,.15,1.);zone=cluster;travel=brain.y*3.+brain.x*2.;ring=a;
  gl_PointSize=mix(1.7,2.6,morph)+amplitude*2.*(1.-reduced);
  }`));
  gl.attachShader(program,shader(gl.FRAGMENT_SHADER,`
- precision mediump float;uniform vec3 tint;uniform float points,time,region,pulse,morph,amplitude;
- varying float depth;varying float zone;varying float travel;
+ precision mediump float;uniform vec3 tint;uniform float points,time,region,pulse,morph,amplitude,listen,think,speak,recoil,fault,reduced;
+ varying float depth;varying float zone;varying float travel;varying float ring;
  void main(){float shape=1.;if(points>.5){float d=length(gl_PointCoord-vec2(.5));if(d>.5)discard;shape=1.-smoothstep(.12,.5,d);}
  float zoneActive=1.-step(.4,abs(zone-region));float packet=pow(max(0.,sin(travel-time*4.)),18.)*zoneActive*pulse;
- float alpha=depth*mix(.32,.72,morph)*(points>.5?.86:.24)+packet*.6+amplitude*.08;
+ float orbit=pow(max(0.,sin(ring*3.-time*5.*(1.-reduced))),24.)*think*morph;
+ float alpha=(depth*mix(.32,.72,morph)*(points>.5?.86:.24)*(1.+speak*.25+listen*.1)+packet*.6+orbit*.55+amplitude*.08+recoil*.2)*(1.-fault*.45);
  gl_FragColor=vec4(tint,alpha*shape);
  }`));gl.linkProgram(program);if(!gl.getProgramParameter(program,gl.LINK_STATUS))throw Error(gl.getProgramInfoLog(program));gl.useProgram(program);
  // Deterministic anatomical lobes and neighboring synapses, each with a stable torus destination.
@@ -57,14 +61,16 @@
  for(let j=0;j<rings;j++)for(let i=0;i<steps;i++){const at=j*steps+i;links.push(...nodes[at],...nodes[j*steps+(i+1)%steps]);if(j<rings-1&&i%3===0)links.push(...nodes[at],...nodes[at+steps]);}
  const buffer=data=>{const b=gl.createBuffer();gl.bindBuffer(gl.ARRAY_BUFFER,b);gl.bufferData(gl.ARRAY_BUFFER,new Float32Array(data),gl.STATIC_DRAW);return b};
  const dots=buffer(nodes.flat()),lines=buffer(links),attrs=['brain','torus','cluster'].map(n=>gl.getAttribLocation(program,n));attrs.forEach(a=>gl.enableVertexAttribArray(a));
- const uniforms=Object.fromEntries(['time','morph','aspect','amplitude','bass','mid','high','reduced','pointer','tint','points','region','pulse','dock','center','entityScale'].map(n=>[n,gl.getUniformLocation(program,n)]));
+ const uniforms=Object.fromEntries(['time','morph','aspect','amplitude','bass','mid','high','reduced','pointer','tint','points','region','pulse','dock','center','entityScale','listen','think','speak','recoil','fault'].map(n=>[n,gl.getUniformLocation(program,n)]));
  gl.enable(gl.BLEND);gl.blendFuncSeparate(gl.SRC_ALPHA,gl.ONE_MINUS_SRC_ALPHA,gl.ONE,gl.ONE_MINUS_SRC_ALPHA);
  const label=()=>{button.textContent=reduce.matches?'System reduced motion':paused?'Resume background motion':'Pause background motion';button.disabled=reduce.matches;button.title=reduce.matches?'Your system preference disables spatial animation.':'';button.setAttribute('aria-pressed',String(paused))};
  const motionChanged=()=>{dirty=true;label();if(!failed)publish({...window.luminariaRenderStats,mode:'webgl',fps:paused?0:window.luminariaRenderStats?.fps||0,paused,reducedMotion:reduce.matches,width:canvas.width,height:canvas.height})};
  button.onclick=safe(async()=>{await savePrefs({motion:!studioPrefs.motion})});
  window.addEventListener('studio-preferences',e=>{paused=reduce.matches||!e.detail.motion;motionChanged()});
  window.addEventListener('studio-audio',e=>{const d=e.detail;if(d&&typeof d==='object'){if(d.source==='output')output=d;else microphone=d}else{microphone={rms:Number(d)||0,bass:0,mid:0,high:0};output={rms:0,bass:0,mid:0,high:0}}dirty=true});
- window.addEventListener('studio-voice-state',e=>{phase=e.detail;targetVoice=Number(document.body.dataset.voice==='conversation'&&!document.body.classList.contains('voice-review'));status.querySelector('strong').textContent=phase;dirty=true});
+ const moods={listen:0,think:0,speak:0,recoil:0,fault:0},moodTarget={...moods};let mood='idle';
+ const classify=text=>/fail|error/i.test(text)?'error':/interrupted/i.test(text)?'interrupted':/^speaking/i.test(text)?'speaking':/^(thinking|transcribing|preparing)/i.test(text)?'generating':/^listening/i.test(text)?'listening':'idle';
+ window.addEventListener('studio-voice-state',e=>{phase=e.detail;mood=classify(String(phase));Object.assign(moodTarget,{listen:+(mood==='listening'||mood==='interrupted'),think:+(mood==='generating'),speak:+(mood==='speaking'),fault:+(mood==='error')});if(mood==='interrupted')moods.recoil=1;document.body.dataset.voiceMood=mood;targetVoice=Number(document.body.dataset.voice==='conversation'&&!document.body.classList.contains('voice-review'));status.querySelector('strong').textContent=phase;dirty=true});
  window.addEventListener('studio-state',()=>{const r=state.run,action=(state.actions||[]).at(-1);region=-1;pulse=0;if(r&&!r.finished){phase=r.phase||'Working';region=/think|reason/i.test(phase)?0:/compact/i.test(phase)?1:3;pulse=.7;if(action&&['running','ready','pending'].includes(action.status)){region=/memory|history|remember/.test(action.name)?1:2;pulse=1}}dirty=true});
  window.addEventListener('mint-token',()=>{region=3;pulse=1;dirty=true});
  window.addEventListener('pointermove',e=>{px=e.clientX/innerWidth-.5;py=.5-e.clientY/innerHeight});
@@ -74,17 +80,17 @@
  window.addEventListener('resize',layoutStage);reduce.addEventListener('change',()=>{paused=reduce.matches||!studioPrefs.motion;motionChanged()});
  canvas.addEventListener('webglcontextlost',e=>{e.preventDefault();fallback('3D graphics stopped. Restart Luminaria to retry; voice and chat remain available.')});
  let sampleStart=performance.now(),sampleFrames=0;
- function frame(now){if(failed)return;requestAnimationFrame(frame);targetVoice=Number(document.body.dataset.voice==='conversation'&&!document.body.classList.contains('voice-review'));if(document.hidden){sampleStart=now;sampleFrames=0;return}const interval=targetVoice?1000/60:1000/30;if(now-last<interval||paused&&!dirty&&Math.abs(voice-targetVoice)<.001)return;const dt=Math.min((now-last)/1000,.05);last=now-(now-last)%interval;dirty=false;if(!paused)t+=dt;voice=paused?targetVoice:voice+(targetVoice-voice)*(1-Math.exp(-dt*6));pulse*=Math.exp(-dt*.25);
+ function frame(now){if(failed)return;requestAnimationFrame(frame);targetVoice=Number(document.body.dataset.voice==='conversation'&&!document.body.classList.contains('voice-review'));if(document.hidden){sampleStart=now;sampleFrames=0;return}const interval=targetVoice?1000/60:1000/30;if(now-last<interval||paused&&!dirty&&Math.abs(voice-targetVoice)<.001)return;const dt=Math.min((now-last)/1000,.05);last=now-(now-last)%interval;dirty=false;if(!paused)t+=dt;voice=paused?targetVoice:voice+(targetVoice-voice)*(1-Math.exp(-dt*6));pulse*=Math.exp(-dt*.25);for(const k of ['listen','think','speak','fault'])moods[k]=paused?moodTarget[k]:moods[k]+(moodTarget[k]-moods[k])*(1-Math.exp(-dt*4));moods.recoil*=paused?0:Math.exp(-dt*5);if(moods.recoil>.01)dirty=true;
  const ratio=Math.min(devicePixelRatio||1,1.5),w=Math.min(2560,Math.round(innerWidth*ratio)),h=Math.round(w*innerHeight/innerWidth);if(canvas.width!==w||canvas.height!==h){canvas.width=w;canvas.height=h;gl.viewport(0,0,w,h)}
  const styles=getComputedStyle(document.documentElement),color=styles.getPropertyValue('--glow').trim()||'#D4CEB8',rgb=color.slice(1).match(/../g).map(x=>parseInt(x,16)/255);gl.clearColor(0,0,0,0);gl.clear(gl.COLOR_BUFFER_BIT);gl.uniform3f(uniforms.tint,...rgb);
  const audio=envelope;for(const k of ['rms','bass','mid','high']){const target=Math.min(1,Math.max(microphone[k]||0,output[k]||0));envelope[k]=paused?target:envelope[k]+(target-envelope[k])*(1-Math.exp(-dt*(target>envelope[k]?18:7)))}
- for(const [k,v] of Object.entries({time:t,morph:voice,aspect:w/h,amplitude:audio.rms,bass:audio.bass,mid:audio.mid,high:audio.high,reduced:Number(paused),region,pulse}))gl.uniform1f(uniforms[k],v);
+ for(const [k,v] of Object.entries({time:t,morph:voice,aspect:w/h,amplitude:audio.rms,bass:audio.bass,mid:audio.mid,high:audio.high,reduced:Number(paused),region,pulse,...moods}))gl.uniform1f(uniforms[k],v);
  gl.uniform2f(uniforms.pointer,px,py);
  gl.uniform2f(uniforms.dock,(stage.x+stage.width-90)/innerWidth*2-1,1-(stage.top+90)/innerHeight*2);
  gl.uniform2f(uniforms.center,(stage.x+stage.width/2)/innerWidth*2-1,1-(stage.top+stage.height*.40)/innerHeight*2);
  gl.uniform1f(uniforms.entityScale,Math.min(stage.width*.66,stage.height*.75)/(innerHeight*.58));
  for(const [buf,count,mode,point] of [[lines,links.length/7,gl.LINES,0],[dots,nodes.length,gl.POINTS,1]]){gl.bindBuffer(gl.ARRAY_BUFFER,buf);gl.vertexAttribPointer(attrs[0],3,gl.FLOAT,false,28,0);gl.vertexAttribPointer(attrs[1],3,gl.FLOAT,false,28,12);gl.vertexAttribPointer(attrs[2],1,gl.FLOAT,false,28,24);gl.uniform1f(uniforms.points,point);gl.drawArrays(mode,0,count)}
- sampleFrames++;if(now-sampleStart>=2000){publish({mode:'webgl',fps:Math.round(sampleFrames*10000/(now-sampleStart))/10,paused,reducedMotion:reduce.matches,width:canvas.width,height:canvas.height});sampleStart=now;sampleFrames=0}
+ sampleFrames++;if(now-sampleStart>=2000){publish({mode:'webgl',state:mood,fps:Math.round(sampleFrames*10000/(now-sampleStart))/10,paused,reducedMotion:reduce.matches,width:canvas.width,height:canvas.height});sampleStart=now;sampleFrames=0}
  }motionChanged();requestAnimationFrame(frame);
  }catch(error){console.error('Luminaria renderer unavailable',error);fallback('3D graphics could not start. Voice and chat remain available.')}
 })();

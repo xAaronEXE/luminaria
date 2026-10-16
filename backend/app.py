@@ -22,7 +22,11 @@ async def scheduler():
     while True:
         await asyncio.sleep(10)
         if benchmarking: continue
-        for row in store.rows('SELECT * FROM schedules WHERE enabled=1 AND next_run<=?',(now(),)):
+        due=store.rows('SELECT * FROM schedules WHERE enabled=1 AND next_run<=?',(now(),))
+        if due:
+            from .identity import gate
+            if not (await gate())['unlocked']: continue
+        for row in due:
             chat=store.create_chat('Scheduled: '+row['title'])
             store.add(chat,{'role':'user','content':row['prompt']})
             store.execute('UPDATE schedules SET next_run=? WHERE id=?',(now()+row['interval'],row['id']))
@@ -59,7 +63,13 @@ async def local_only(request,call_next):
     if origin and origin not in {'http://'+h for h in hosts}: return JSONResponse({'error':'Foreign origin blocked'},403)
     if request.url.path.startswith('/api/') and request.url.path!='/api/bootstrap':
         if not secrets.compare_digest(request.headers.get('x-studio-token',''),TOKEN): return JSONResponse({'error':'Session token required'},403)
-    if request.headers.get('content-length') and int(request.headers['content-length'])>12_000_000: return JSONResponse({'error':'Request too large'},413)
+        from .identity import GATE_OPEN,gate,required
+        if required() and request.url.path not in GATE_OPEN and not (await gate())['unlocked']:
+            return JSONResponse({'error':'Sign in to use Luminaria','locked':True},423)
+    # Base64 adds a third, so a 25 MB document needs about 34 MB of request body.
+    path=request.url.path
+    limit=35_000_000 if path=='/api/attachments' or (path.startswith('/api/imports/') and path.endswith('/files')) else 12_000_000
+    if request.headers.get('content-length') and int(request.headers['content-length'])>limit: return JSONResponse({'error':'Request too large'},413)
     response=await call_next(request)
     response.headers['X-Content-Type-Options']='nosniff'
     response.headers['Referrer-Policy']='no-referrer'
@@ -131,6 +141,27 @@ async def organize_chat(id:str,request:Request):
     store.execute('UPDATE chats SET archived=? WHERE id=?',({'archive':1,'delete':2,'restore':0}[action],id))
     broadcast({'type':'changed'});return {'ok':True,'recoverable':True}
 
+async def purge(id):
+    require_chat(id)
+    if id in engine.tasks and not engine.tasks[id].done(): raise ValueError('Stop this chat before deleting it permanently')
+    runs=store.purge_chat(id)
+    engine.runs.pop(id,None); engine.tasks.pop(id,None)
+    for action,chat in list(engine.approvals.items()):
+        if chat==id: engine.approvals.pop(action,None)
+    checkpointer=getattr(engine.graph,'checkpointer',None)
+    for run in runs:
+        if checkpointer: await checkpointer.adelete_thread(run)
+
+@app.delete('/api/chats/{id}')
+async def delete_chat(id:str):
+    await purge(id); broadcast({'type':'changed'}); return {'ok':True}
+
+@app.post('/api/chats/trash/empty')
+async def empty_trash():
+    trashed=store.trashed()
+    for id in trashed: await purge(id)
+    broadcast({'type':'changed'}); return {'deleted':len(trashed)}
+
 @app.post('/api/chats/{id}/run')
 async def run_chat(id:str,request:Request):
     if benchmarking: raise ValueError('Wait for the model benchmark to finish')
@@ -195,9 +226,9 @@ async def upload(request:Request):
     from PIL import Image
     import io
     b=await request.json(); raw=base64.b64decode(b['data'],validate=True)
-    from .attachments import TEXT_EXTENSIONS,save_text
-    if Path(str(b.get('name',''))).suffix.lower() in TEXT_EXTENSIONS:
-        return save_text(str(b['name']),raw)
+    from .attachments import DOCUMENT_EXTENSIONS,TEXT_EXTENSIONS,save
+    if Path(str(b.get('name',''))).suffix.lower() in TEXT_EXTENSIONS|DOCUMENT_EXTENSIONS:
+        return await asyncio.to_thread(save,str(b['name']),raw)
     if len(raw)>8_000_000: raise ValueError('Image exceeds 8 MB')
     img=Image.open(io.BytesIO(raw)); img.verify()
     if img.format not in ('PNG','JPEG','WEBP'): raise ValueError('PNG, JPEG or WebP required')
@@ -205,6 +236,22 @@ async def upload(request:Request):
     ext={'PNG':'png','JPEG':'jpg','WEBP':'webp'}[img.format]; id=uid()+'.'+ext
     folder=DATA/'attachments'; folder.mkdir(exist_ok=True); (folder/id).write_bytes(raw)
     return {'id':id,'mime':'image/'+('jpeg' if ext=='jpg' else ext),'name':str(b.get('name','Image'))[:100]}
+
+@app.post('/api/imports')
+async def import_start(request:Request):
+    from .attachments import start_import
+    return start_import((await request.json()).get('name',''))
+
+@app.post('/api/imports/{id}/files')
+async def import_file(id:str,request:Request):
+    from .attachments import add_import_file
+    b=await request.json(); raw=base64.b64decode(b['data'],validate=True)
+    return await asyncio.to_thread(add_import_file,id,str(b.get('path','')),raw)
+
+@app.post('/api/imports/{id}/finish')
+async def import_finish(id:str,request:Request):
+    from .attachments import finish_import
+    return finish_import(id,int((await request.json()).get('skipped',0)))
 
 @app.get('/api/attachments/{id}')
 async def attachment(id:str):
@@ -226,6 +273,11 @@ async def download(path:str):
     p=workspace_path(path)
     if not p.is_file(): raise HTTPException(404)
     return FileResponse(p,filename=p.name)
+
+@app.get('/api/actions')
+async def action_history(status:str='',q:str='',limit:int=200):
+    if status not in ('','problems','done','error','denied','interrupted','pending','running'): raise ValueError('Unknown status filter')
+    return store.action_history(status,q[:200],limit)
 
 @app.get('/api/actions/{id}/output')
 async def output(id:str):
@@ -286,14 +338,26 @@ async def settings_save(request:Request):
 @app.get('/api/model/status')
 async def model_status():
     import httpx
+    from .runtime import diagnose,manager_state
     try:
         async with httpx.AsyncClient(timeout=3,trust_env=False,headers={'Authorization':'Bearer '+CONFIG.get('model_api_key','local-only')}) as client:
             r=await client.get(CONFIG['endpoint']+'/models'); r.raise_for_status()
             loaded=False
             try: loaded=(await client.get(CONFIG['tokenizer']+'/health')).status_code==200
             except httpx.HTTPError: pass
-        return {'connected':True,'loaded':loaded,'models':r.json().get('data',[]),'model':CONFIG['model']}
-    except Exception as e: return {'connected':False,'loaded':False,'error':str(e),'model':CONFIG['model']}
+        return {'connected':True,'loaded':loaded,'models':r.json().get('data',[]),'model':CONFIG['model'],'manager':manager_state()}
+    except Exception as e:
+        state=manager_state();problem=diagnose() if state['owned'] and not state['running'] else None
+        return {'connected':False,'loaded':False,'error':str(e),'model':CONFIG['model'],'manager':state,'problem':problem}
+
+@app.post('/api/model/restart')
+async def model_restart():
+    if any(not t.done() for t in engine.tasks.values()): raise ValueError('Stop running tasks before restarting the model manager')
+    from .runtime import stop_owned,start_swap
+    await asyncio.to_thread(stop_owned)
+    result=await asyncio.to_thread(start_swap)
+    engine.client.headers['Authorization']='Bearer '+CONFIG.get('model_api_key','local-only')
+    broadcast({'type':'changed'}); return result
 
 @app.post('/api/model/start')
 async def model_start():
@@ -323,12 +387,17 @@ async def update_install():
 @app.get('/api/skills')
 async def skills():
     from .skills import catalog
-    return [{**s,'enabled':store.setting('skill:'+s['name'],True)} for s in catalog()]
+    return [{**s,'enabled':store.setting('skill:'+s['name'],True)} for s in catalog(connectors)]
 
 @app.post('/api/skills')
 async def skill_import(request:Request):
     from .skills import save_skill
     b=await request.json(); return save_skill(b['name'],b['content'])
+
+@app.delete('/api/skills/{name}')
+async def skill_remove(name:str):
+    from .skills import remove_skill
+    return remove_skill(name)
 
 @app.get('/api/sessions')
 async def sessions(): return store.chats()
@@ -378,8 +447,53 @@ async def connector_save(request:Request):
     b=await request.json(); name=b.get('name','')
     if not re.fullmatch('[a-z][a-z0-9_]{0,30}',name): raise ValueError('Invalid connector name')
     if not isinstance(b.get('args'),list) or not all(isinstance(a,str) for a in b['args']): raise ValueError('Arguments must be a JSON array of strings')
+    from .integrations import PRESETS
+    if name in PRESETS: raise ValueError('That name is used by a built-in integration')
     configs=CONFIG.get('mcp',{}).copy(); configs[name]={'command':str(b['command']),'args':b['args'],'cwd':CONFIG['workspace']}
-    save_config({'mcp':configs});return {'restart_required':True}
+    save_config({'mcp':configs}); await restart_connector(name,configs[name]); return {'ok':True}
+
+@app.delete('/api/connectors/{name}')
+async def connector_remove(name:str):
+    from .integrations import PRESETS
+    configs=CONFIG.get('mcp',{}).copy()
+    if name in PRESETS or name in ('browser','windows') or name not in configs: raise HTTPException(404,'Unknown connector')
+    configs.pop(name); save_config({'mcp':configs}); await restart_connector(name,None); return {'ok':True}
+
+@app.get('/api/integrations')
+async def integrations_list():
+    from .integrations import catalog
+    return catalog(CONFIG.get('mcp',{}),connectors)
+
+async def restart_connector(name,config):
+    if name in connectors:
+        await connectors.pop(name).close()
+    if config:
+        c=Connector(name,config,broadcast); connectors[name]=c; c.start()
+    broadcast({'type':'connectors_changed','connector':name})
+
+@app.post('/api/integrations/{name}')
+async def integration_connect(name:str,request:Request):
+    from .integrations import config_for,write_secrets
+    config,secrets_=config_for(name,await request.json())
+    write_secrets(name,secrets_)
+    configs=CONFIG.get('mcp',{}).copy(); configs[name]=config; save_config({'mcp':configs})
+    await restart_connector(name,config)
+    return {'ok':True}
+
+@app.delete('/api/integrations/{name}')
+async def integration_disconnect(name:str):
+    from .integrations import PRESETS,forget
+    if name not in PRESETS: raise HTTPException(404,'Unknown integration')
+    configs=CONFIG.get('mcp',{}).copy(); configs.pop(name,None); save_config({'mcp':configs})
+    await restart_connector(name,None); forget(name)
+    return {'ok':True}
+
+@app.get('/oauth/callback')
+async def oauth_callback(request:Request):
+    from html import escape
+    from .integrations import complete
+    ok,message=complete(request.url.query)
+    return Response(f'<!doctype html><meta charset="utf-8"><title>Luminaria</title><body style="font:16px system-ui;background:#141A17;color:#EBF0E8;display:grid;place-items:center;height:90vh"><p>{escape(message)}</p></body>',media_type='text/html',status_code=200 if ok else 400)
 
 @app.post('/api/skills/{name}/toggle')
 async def skill_toggle(name:str,request:Request):
@@ -451,6 +565,17 @@ async def benchmark_model(id:str):
     try:
         from .benchmark import measure
         return await measure(id)
+    finally:
+        benchmarking=False
+
+@app.post('/api/models/{id}/evaluate')
+async def evaluate_model(id:str):
+    global benchmarking
+    if benchmarking or any(not r.get('finished') for r in engine.runs.values()): raise ValueError('Finish active tasks before running a quality check')
+    benchmarking=True
+    try:
+        from .quality import evaluate
+        return await evaluate(id)
     finally:
         benchmarking=False
 
@@ -528,6 +653,16 @@ async def identity_poll(request:Request):
     if any(not r.get('finished') for r in engine.runs.values()):raise ValueError('Finish or stop active tasks before completing sign-in')
     from .identity import poll
     return await identity_call(poll((await request.json()).get('flow_id','')))
+
+@app.get('/api/gate')
+async def gate_status(force:bool=False):
+    from .identity import gate
+    return await gate(force)
+
+@app.post('/api/identity/require')
+async def identity_require(request:Request):
+    from .identity import set_required
+    return await identity_call(set_required(bool((await request.json()).get('enabled'))))
 
 @app.post('/api/identity/logout')
 async def identity_logout():

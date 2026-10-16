@@ -1,4 +1,4 @@
-"""Each stdio MCP lifecycle stays in its owning asyncio task (AnyIO scope rule)."""
+"""Each MCP lifecycle (local stdio or hosted HTTP) stays in its owning asyncio task (AnyIO scope rule)."""
 import asyncio, os
 from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
@@ -11,10 +11,15 @@ class Connector:
     def changed(self):
         if self.on_change:self.on_change({'type':'connectors_changed','connector':self.name})
     def start(self): self.task=asyncio.create_task(self.worker())
+    def transport(self):
+        if self.config.get('url'):
+            from .integrations import transport
+            return transport(self)
+        p=StdioServerParameters(command=self.config['command'],args=self.config.get('args',[]),env={**os.environ,**self.config.get('env',{})},cwd=self.config.get('cwd'))
+        return stdio_client(p)
     async def worker(self):
         try:
-            p=StdioServerParameters(command=self.config['command'],args=self.config.get('args',[]),env={**os.environ,**self.config.get('env',{})},cwd=self.config.get('cwd'))
-            async with stdio_client(p) as (read,write):
+            async with self.transport() as (read,write):
                 async with ClientSession(read,write) as session:
                     await session.initialize()
                     result=await session.list_tools()
@@ -32,7 +37,8 @@ class Connector:
                             if not future.done(): future.set_exception(RuntimeError(str(e)))
         except asyncio.CancelledError: raise
         except BaseException as e:
-            self.status='unavailable: '+str(e)[:200]
+            while isinstance(e,BaseExceptionGroup) and e.exceptions: e=e.exceptions[0]
+            self.status='unavailable: '+(str(e) or type(e).__name__)[:200]
         finally:
             if self.status=='connected':self.status='stopped'
             self.tools=[];self.changed()

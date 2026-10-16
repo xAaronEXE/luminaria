@@ -234,7 +234,7 @@ def _active(ident, path):
 
 def library(store):
     load_state()
-    from .benchmark_store import history
+    from .benchmark_store import evaluations, history
     folder = models_folder()
     registry = models.registry()
     downloads = {job['id']: job for job in jobs_view()}
@@ -256,7 +256,7 @@ def library(store):
             quants.append({**quant, 'installed': installed, 'registered': bool(registered),
                            'registry_id': registered['id'] if registered else quant['id'],
                            'verified': verified, 'bytes_on_disk': path.stat().st_size if installed else None,
-                           'benchmarks': benchmarks, 'active': bool(registered) and _active(registered['id'], path),
+                           'benchmarks': benchmarks, 'evaluations': evaluations(registered['id']) if registered else [], 'active': bool(registered) and _active(registered['id'], path),
                            'job': downloads.get(quant['id']), 'downloadable': True, 'managed': True})
         entries.append({k: entry[k] for k in ('id', 'name', 'variant', 'parameters', 'purpose', 'description', 'strengths', 'context', 'vision', 'license', 'provenance', 'hardware', 'caveat')} |
                        {'key': 'catalog:' + entry['id'], 'local': False, 'quants': quants})
@@ -274,7 +274,7 @@ def library(store):
                         'hardware': item.get('hardware') or 'Not recorded', 'caveat': '', 'local': True,
                         'quants': [{'id': item['id'], 'label': item.get('quantization') or 'Unknown', 'filename': path.name, 'bytes': path.stat().st_size if installed else None,
                                     'memory': 'Measured only by what this file uses on disk', 'installed': installed, 'registered': True, 'registry_id': item['id'],
-                                    'verified': False, 'bytes_on_disk': path.stat().st_size if installed else None, 'benchmarks': benchmarks,
+                                    'verified': False, 'bytes_on_disk': path.stat().st_size if installed else None, 'benchmarks': benchmarks, 'evaluations': evaluations(item['id']),
                                     'active': _active(item['id'], path) if installed else CONFIG.get('model') == item['id'], 'job': None,
                                     'downloadable': False, 'managed': installed and _inside_models(path), 'sha256': ''}]})
     storage = models.model_storage(records)
