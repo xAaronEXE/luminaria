@@ -326,14 +326,26 @@ async def settings_save(request:Request):
 @app.get('/api/model/status')
 async def model_status():
     import httpx
+    from .runtime import diagnose,manager_state
     try:
         async with httpx.AsyncClient(timeout=3,trust_env=False,headers={'Authorization':'Bearer '+CONFIG.get('model_api_key','local-only')}) as client:
             r=await client.get(CONFIG['endpoint']+'/models'); r.raise_for_status()
             loaded=False
             try: loaded=(await client.get(CONFIG['tokenizer']+'/health')).status_code==200
             except httpx.HTTPError: pass
-        return {'connected':True,'loaded':loaded,'models':r.json().get('data',[]),'model':CONFIG['model']}
-    except Exception as e: return {'connected':False,'loaded':False,'error':str(e),'model':CONFIG['model']}
+        return {'connected':True,'loaded':loaded,'models':r.json().get('data',[]),'model':CONFIG['model'],'manager':manager_state()}
+    except Exception as e:
+        state=manager_state();problem=diagnose() if state['owned'] and not state['running'] else None
+        return {'connected':False,'loaded':False,'error':str(e),'model':CONFIG['model'],'manager':state,'problem':problem}
+
+@app.post('/api/model/restart')
+async def model_restart():
+    if any(not t.done() for t in engine.tasks.values()): raise ValueError('Stop running tasks before restarting the model manager')
+    from .runtime import stop_owned,start_swap
+    await asyncio.to_thread(stop_owned)
+    result=await asyncio.to_thread(start_swap)
+    engine.client.headers['Authorization']='Bearer '+CONFIG.get('model_api_key','local-only')
+    broadcast({'type':'changed'}); return result
 
 @app.post('/api/model/start')
 async def model_start():

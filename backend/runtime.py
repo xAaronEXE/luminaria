@@ -3,6 +3,42 @@ import json, os, subprocess, socket
 from .config import CONFIG,DATA,ROOT
 
 swap_process=None
+START_MARKER='=== Luminaria started the model manager ==='
+PROBLEMS=[
+ (r'out of memory|cudaMalloc failed|failed to allocate|unable to allocate|ErrorOutOfDeviceMemory|not enough memory',
+  'Not enough GPU memory to load this model. Choose a smaller quantization, lower the context size, or close other GPU apps.'),
+ (r'invalid magic|failed to read magic|unknown model architecture|error loading model|failed to load model|gguf_init_from_file',
+  'The model file could not be loaded. It may be incomplete, damaged or unsupported. Check it in the Model library, or download it again.'),
+ (r'mmproj|clip_model_load|failed to load (vision|projector)',
+  'The vision projector could not be loaded. Check that it matches this model.'),
+ (r'address already in use|bind.*failed|only one usage of each socket',
+  'A model port is already in use by another program. Close the other model server, then restart the model manager.'),
+ (r'health check timed out|timed out waiting|did not become healthy',
+  'The model took too long to load. Try again, or choose a smaller model.'),
+]
+
+def log_tail(limit=65536):
+    path=DATA/'llama-swap.log'
+    if not path.is_file(): return ''
+    with open(path,'rb') as f:
+        f.seek(max(0,path.stat().st_size-limit)); text=f.read().decode('utf-8','replace')
+    return text.rsplit(START_MARKER,1)[-1]
+
+def diagnose(text=None):
+    """Plain explanation of the most recent model-manager failure, or None."""
+    import re
+    text=log_tail() if text is None else text
+    lines=text.splitlines()[-300:]
+    for line in reversed(lines):
+        for pattern,message in PROBLEMS:
+            if re.search(pattern,line,re.I): return message
+    return None
+
+def manager_state():
+    if swap_process is None: return {'owned':False,'running':listening(8098)}
+    code=swap_process.poll()
+    return {'owned':True,'running':code is None,'exit_code':code}
+
 def listening(port):
     try:
         with socket.create_connection(('127.0.0.1',port),timeout=1): return True
@@ -32,12 +68,21 @@ def start_swap():
     path=DATA/'llama-swap.yaml'; path.write_text(json.dumps(config,indent=2),encoding='utf-8')
     runtime=ROOT/'runtime'/'llama-swap.exe'
     with open(DATA/'llama-swap.log','ab') as log:
+        log.write(START_MARKER.encode()+b'\n');log.flush()
         swap_process=subprocess.Popen([str(runtime),'-config',str(path),'-listen','127.0.0.1:8098'],stdout=log,stderr=log,creationflags=subprocess.CREATE_NO_WINDOW if os.name=='nt' else 0)
     (DATA/'llama-swap.pid').write_text(str(swap_process.pid))
     return {'started':True,'pid':swap_process.pid,'message':'Model loads on first request; unloads after 30 idle minutes'}
 
 def stop_owned():
     global swap_process
+    owned=swap_process is not None
     if swap_process and swap_process.poll() is None:
         if os.name=='nt': subprocess.run(['taskkill','/PID',str(swap_process.pid),'/T','/F'],capture_output=True,creationflags=subprocess.CREATE_NO_WINDOW)
         else: swap_process.terminate()
+        try: swap_process.wait(timeout=10)
+        except subprocess.TimeoutExpired: pass
+    swap_process=None
+    import time
+    for _ in range(20 if owned else 0):
+        if not listening(8098) and not listening(8097): break
+        time.sleep(.25)
