@@ -60,7 +60,8 @@ async def local_only(request,call_next):
     if request.url.path.startswith('/api/') and request.url.path!='/api/bootstrap':
         if not secrets.compare_digest(request.headers.get('x-studio-token',''),TOKEN): return JSONResponse({'error':'Session token required'},403)
     # Base64 adds a third, so a 25 MB document needs about 34 MB of request body.
-    limit=35_000_000 if request.url.path=='/api/attachments' else 12_000_000
+    path=request.url.path
+    limit=35_000_000 if path=='/api/attachments' or (path.startswith('/api/imports/') and path.endswith('/files')) else 12_000_000
     if request.headers.get('content-length') and int(request.headers['content-length'])>limit: return JSONResponse({'error':'Request too large'},413)
     response=await call_next(request)
     response.headers['X-Content-Type-Options']='nosniff'
@@ -228,6 +229,22 @@ async def upload(request:Request):
     ext={'PNG':'png','JPEG':'jpg','WEBP':'webp'}[img.format]; id=uid()+'.'+ext
     folder=DATA/'attachments'; folder.mkdir(exist_ok=True); (folder/id).write_bytes(raw)
     return {'id':id,'mime':'image/'+('jpeg' if ext=='jpg' else ext),'name':str(b.get('name','Image'))[:100]}
+
+@app.post('/api/imports')
+async def import_start(request:Request):
+    from .attachments import start_import
+    return start_import((await request.json()).get('name',''))
+
+@app.post('/api/imports/{id}/files')
+async def import_file(id:str,request:Request):
+    from .attachments import add_import_file
+    b=await request.json(); raw=base64.b64decode(b['data'],validate=True)
+    return await asyncio.to_thread(add_import_file,id,str(b.get('path','')),raw)
+
+@app.post('/api/imports/{id}/finish')
+async def import_finish(id:str,request:Request):
+    from .attachments import finish_import
+    return finish_import(id,int((await request.json()).get('skipped',0)))
 
 @app.get('/api/attachments/{id}')
 async def attachment(id:str):

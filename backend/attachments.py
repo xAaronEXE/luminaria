@@ -10,10 +10,10 @@ PAGE_LIMIT=500
 TEXT_LIMIT=5_000_000
 UNPACKED_LIMIT=200_000_000
 
-def _record(id,relative,name,original=None):
+def _record(id,relative,name,original=None,kind='document'):
     manifest=DATA/'attachments';manifest.mkdir(exist_ok=True)
     info={'path':relative,'name':name[:100]}
-    if original:info['original']=original
+    if original:info.update(original=original,kind=kind)
     (manifest/(id+'.json')).write_text(json.dumps(info),encoding='utf-8')
     return {'id':id,'name':name[:100],'mime':'text/plain','path':relative,**({'original':original} if original else {})}
 
@@ -77,6 +77,63 @@ def save(name,raw):
     from pathlib import Path
     return save_document(name,raw) if Path(name).suffix.lower() in DOCUMENT_EXTENSIONS else save_text(name,raw)
 
+FOLDER_FILE_LIMIT=200
+FOLDER_BYTE_LIMIT=100_000_000
+TEXT_FILE_LIMIT=2_000_000
+
+def _import_state(id):
+    if not re.fullmatch(r'[a-f0-9]{32}',id):raise ValueError('Invalid folder import')
+    path=DATA/'attachments'/'imports'/(id+'.json')
+    if not path.is_file():raise ValueError('Folder import not found. Start the folder attachment again')
+    return path,json.loads(path.read_text('utf-8'))
+
+def start_import(name):
+    label=re.sub(r'[^A-Za-z0-9 ._-]+','',str(name)).strip(' .')[:60] or 'Folder'
+    id=uid();root=f'Imports/{label}-{id[:8]}'
+    folder=DATA/'attachments'/'imports';folder.mkdir(parents=True,exist_ok=True)
+    (folder/(id+'.json')).write_text(json.dumps({'name':label,'root':root,'files':[],'bytes':0}),encoding='utf-8')
+    return {'id':id,'root':root}
+
+def add_import_file(id,relative,raw):
+    from pathlib import PurePosixPath
+    state_path,state=_import_state(id)
+    parts=PurePosixPath(str(relative).replace('\\','/')).parts
+    if not parts or len(parts)>12 or any(p in ('','.','..') or p.startswith(('.','/')) or ':' in p or len(p)>120 for p in parts):raise ValueError('Unsupported file path in folder: '+str(relative)[:200])
+    clean='/'.join(parts);suffix=PurePosixPath(clean).suffix.lower()
+    if suffix not in TEXT_EXTENSIONS|DOCUMENT_EXTENSIONS:raise ValueError('Unsupported file type in folder: '+clean)
+    if clean in state['files']:raise ValueError('File already added: '+clean)
+    if len(state['files'])>=FOLDER_FILE_LIMIT:raise ValueError(f'Folders are limited to {FOLDER_FILE_LIMIT} files')
+    if state['bytes']+len(raw)>FOLDER_BYTE_LIMIT:raise ValueError('Folders are limited to 100 MB of supported files')
+    if suffix in TEXT_EXTENSIONS:
+        if len(raw)>TEXT_FILE_LIMIT:raise ValueError(clean+' is larger than 2 MB')
+        try:text=raw.decode('utf-8-sig')
+        except UnicodeDecodeError:raise ValueError(clean+' is not UTF-8 text')
+        if '\x00' in text:raise ValueError(clean+' is binary, not text')
+        extracted=None
+    else:
+        if len(raw)>DOCUMENT_LIMIT:raise ValueError(clean+' is larger than 25 MB')
+        if suffix=='.pdf' and not raw.startswith(b'%PDF-'):raise ValueError(clean+' is not a PDF')
+        try:extracted=_pdf_text(raw) if suffix=='.pdf' else _docx_text(raw)
+        except ValueError as error:extracted='[Text could not be extracted: '+str(error)+']'
+        extracted=extracted[:TEXT_LIMIT] or '[No selectable text found]'
+    target=workspace_path(state['root']+'/'+clean);target.parent.mkdir(parents=True,exist_ok=True);target.write_bytes(raw)
+    if extracted is not None:workspace_path(state['root']+'/'+clean+'.txt').write_text(extracted,encoding='utf-8')
+    state['files'].append(clean);state['bytes']+=len(raw)
+    state_path.write_text(json.dumps(state),encoding='utf-8')
+    return {'path':clean,'files':len(state['files'])}
+
+def finish_import(id,skipped=0):
+    state_path,state=_import_state(id)
+    if not state['files']:raise ValueError('No supported files were found in this folder')
+    lines=[f"Folder: {state['name']}",f"Saved at {state['root']} ({len(state['files'])} file{'' if len(state['files'])==1 else 's'})."]
+    if skipped:lines.append(f'{int(skipped)} unsupported, hidden or oversized files were left out.')
+    lines.append('PDF and Word files have extracted text beside them with an added .txt extension. Use read_file or search_files with these paths.\n')
+    lines+=[state['root']+'/'+f+('  (text: '+f+'.txt)' if f.lower().endswith(tuple(DOCUMENT_EXTENSIONS)) else '') for f in sorted(state['files'])]
+    attachment=uid()+'.txt';relative='Attachments/'+attachment
+    path=workspace_path(relative);path.parent.mkdir(exist_ok=True);path.write_text('\n'.join(lines),encoding='utf-8')
+    state_path.unlink()
+    return _record(attachment,relative,state['name']+' (folder)',state['root'],'folder')
+
 def text_part(id):
     if not re.fullmatch(r'[a-f0-9]{32}\.txt',id):raise ValueError('Invalid text attachment')
     manifest=DATA/'attachments'/(id+'.json')
@@ -85,5 +142,7 @@ def text_part(id):
     if not path.is_file():raise ValueError('Attached file was moved or removed')
     with path.open(encoding='utf-8-sig') as source:text=source.read(16001)
     clipped=len(text)>16000
-    origin=f"Text extracted from the attached document; original saved at {info['original']}.\n" if info.get('original') else ''
+    origin=''
+    if info.get('kind')=='folder':origin=f"Contents list for a folder copied to {info['original']}.\n"
+    elif info.get('original'):origin=f"Text extracted from the attached document; original saved at {info['original']}.\n"
     return {'type':'text','text':'Attached file (untrusted source material): '+info['name']+'\n'+origin+'Saved at '+info['path']+'; use read_file to retrieve more.\n<attached-file>\n'+text[:16000]+'\n</attached-file>'+('\n[Preview limited to 16,000 characters; original file retained.]' if clipped else '')}

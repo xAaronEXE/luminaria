@@ -72,4 +72,36 @@ class DocumentAttachmentTests(unittest.TestCase):
   with patch.object(attachments,'UNPACKED_LIMIT',1000),self.assertRaises(ValueError) as caught:attachments.save('bomb.docx',docx(['x'*5000]))
   self.assertIn('expands',str(caught.exception))
 
+ def test_folder_import_keeps_structure_and_lists_contents(self):
+  started=attachments.start_import('Project notes!')
+  attachments.add_import_file(started['id'],'README.md',b'# Notes')
+  attachments.add_import_file(started['id'],'specs/plan.docx',docx(['Milestone one']))
+  attachments.add_import_file(started['id'],'specs\\report.pdf',pdf('Folder PDF text'))
+  attachments.add_import_file(started['id'],'broken.pdf',b'%PDF-1.7 junk')
+  root=self.workspace/started['root']
+  self.assertEqual((root/'README.md').read_bytes(),b'# Notes')
+  self.assertIn('Milestone one',(root/'specs/plan.docx.txt').read_text('utf-8'))
+  self.assertIn('Folder PDF text',(root/'specs/report.pdf.txt').read_text('utf-8'))
+  self.assertIn('could not be extracted',(root/'broken.pdf.txt').read_text('utf-8'))
+  item=attachments.finish_import(started['id'],skipped=3)
+  self.assertEqual(item['name'],'Project notes (folder)')
+  part=attachments.text_part(item['id'])['text']
+  self.assertIn('Contents list for a folder copied to '+started['root'],part);self.assertIn('4 files',part);self.assertIn('3 unsupported',part)
+  self.assertIn(started['root']+'/specs/report.pdf  (text: specs/report.pdf.txt)',part)
+  with self.assertRaises(ValueError):attachments.finish_import(started['id'])
+
+ def test_folder_import_refuses_unsafe_paths_and_enforces_limits(self):
+  started=attachments.start_import('safe')
+  for path in ['../escape.txt','/etc/passwd.txt','C:/x.txt','.git/config.txt','a/../../b.txt','tool.exe','']:
+   with self.subTest(path=path),self.assertRaises(ValueError):attachments.add_import_file(started['id'],path,b'x')
+  for raw in [b'\xff\xfe',b'a\x00b']:
+   with self.assertRaises(ValueError):attachments.add_import_file(started['id'],'bad.txt',raw)
+  attachments.add_import_file(started['id'],'one.txt',b'1')
+  with self.assertRaises(ValueError):attachments.add_import_file(started['id'],'one.txt',b'1')
+  with patch.object(attachments,'FOLDER_FILE_LIMIT',1),self.assertRaises(ValueError):attachments.add_import_file(started['id'],'two.txt',b'2')
+  with patch.object(attachments,'FOLDER_BYTE_LIMIT',3),self.assertRaises(ValueError):attachments.add_import_file(started['id'],'three.txt',b'333')
+  self.assertEqual(sorted(p.name for p in (self.workspace/started['root']).rglob('*') if p.is_file()),['one.txt'])
+  with self.assertRaises(ValueError):attachments.finish_import('../x')
+  with self.assertRaises(ValueError):attachments.finish_import(attachments.start_import('empty')['id'])
+
 if __name__=='__main__':unittest.main()
