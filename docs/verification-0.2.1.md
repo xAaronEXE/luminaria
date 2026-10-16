@@ -66,3 +66,12 @@ A long astronomy response was cancelled while streaming. The packaged backend re
 
 ## Confirmed active-generation spoken interruption
 The follow-up star-evolution test (run 7d92dbb261d34f1a8261fac35832543c) retained a partial assistant answer with interrupted=true. The physical microphone captured "Stop. Answer only ready." The replacement run 20ab45bf47334487bdca0f4dd570eb94 completed with the exact answer "ready". This verifies recognized spoken interruption of active generation and successful continuation in the same chat. The earlier unrecognized-noise capture remains a separate sensitivity concern.
+
+## Phase A focused pass
+- User directed completion of Phase A, then Phase B; model-library expansion and context controls are deferred. Their source work is retained in archive/deferred-model-controls and excluded from the active source/build. Downloads were stopped; partial cache files may remain under App/models/.cache. No new model was registered.
+- End voice removed the call bar and returned the torus to its compact neural state in native desktop observation. This verifies UI exit, not an independent OS microphone-handle audit.
+- Pause motion persisted motion=false through the backend; motion=true was restored afterward.
+- The focused renderer refinement adds folded bilateral lobes and exponential attack/release smoothing for actual audio band/RMS inputs. It adds no synthetic model measurements.
+- Remaining acceptance work includes explicit system reduced-motion testing, GPU/frame-rate measurement, WebGL fallback and approvals during voice. Do not label those tests passed.
+
+The focused Phase A installer built successfully, installed with exit code 0, and reopened in the native desktop. Installed core/settings assets matched source hashes, including exclusion of deferred model controls. The refined neural form rendered after restart. Data and the existing conversation remained present.

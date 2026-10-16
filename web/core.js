@@ -7,6 +7,7 @@
  if(!gl){canvas.remove();button.remove();document.body.classList.add('entity-fallback');window.addEventListener('studio-voice-state',e=>status.querySelector('strong').textContent=e.detail);return}
  let voice=0,targetVoice=0,t=0,last=0,dirty=true,paused=false,px=0,py=0,region=-1,pulse=0,phase='idle';
  let microphone={rms:0,bass:0,mid:0,high:0},output={rms:0,bass:0,mid:0,high:0};
+ const envelope={rms:0,bass:0,mid:0,high:0};
  function shader(type,code){const s=gl.createShader(type);gl.shaderSource(s,code);gl.compileShader(s);if(!gl.getShaderParameter(s,gl.COMPILE_STATUS))throw Error(gl.getShaderInfoLog(s));return s}
  try{
  const program=gl.createProgram();
@@ -42,8 +43,9 @@
  const nodes=[],links=[],rings=42,steps=60;
  for(let j=0;j<rings;j++)for(let i=0;i<steps;i++){
   const u=i/steps*Math.PI*2,v=(j+.5)/rings*Math.PI,side=Math.cos(u)<0?-1:1;
-  const fold=1+.045*Math.sin(u*15)*Math.sin(v*13);
-  const b=[side*.12+Math.sin(v)*Math.cos(u)*.88*fold,Math.cos(v)*1.12,Math.sin(v)*Math.sin(u)*.76*fold];
+  const fold=1+.085*Math.sin(u*11+Math.sin(v*5))*Math.sin(v*9);
+  const cleft=.07+.17*Math.pow(Math.abs(Math.cos(u)),.5);
+  const b=[side*cleft+Math.sin(v)*Math.cos(u)*.82*fold,Math.cos(v)*.88,Math.sin(v)*Math.sin(u)*1.06*fold];
   const a=i/steps*Math.PI*2,c=j/rings*Math.PI*2,r=.98+.26*Math.cos(c);
   const tor=[r*Math.cos(a),.26*Math.sin(c),r*Math.sin(a)];
   const zone=b[1]>.35?0:b[0]<0?1:b[2]>0?2:3;
@@ -70,7 +72,7 @@
  function frame(now){requestAnimationFrame(frame);targetVoice=Number(document.body.dataset.voice==='conversation'&&!document.body.classList.contains('voice-review'));if(document.hidden)return;const interval=targetVoice?1000/60:1000/30;if(now-last<interval||paused&&!dirty&&Math.abs(voice-targetVoice)<.001)return;const dt=Math.min((now-last)/1000,.05);last=now;dirty=false;if(!paused)t+=dt;voice=paused?targetVoice:voice+(targetVoice-voice)*(1-Math.exp(-dt*6));pulse*=Math.exp(-dt*.25);
  const ratio=Math.min(devicePixelRatio||1,1.5),w=Math.min(2560,Math.round(innerWidth*ratio)),h=Math.round(w*innerHeight/innerWidth);if(canvas.width!==w||canvas.height!==h){canvas.width=w;canvas.height=h;gl.viewport(0,0,w,h)}
  const styles=getComputedStyle(document.documentElement),color=styles.getPropertyValue('--glow').trim()||'#D4CEB8',rgb=color.slice(1).match(/../g).map(x=>parseInt(x,16)/255);gl.clearColor(0,0,0,0);gl.clear(gl.COLOR_BUFFER_BIT);gl.uniform3f(uniforms.tint,...rgb);
- const audio={};for(const k of ['rms','bass','mid','high'])audio[k]=Math.min(1,Math.max(microphone[k]||0,output[k]||0));
+ const audio=envelope;for(const k of ['rms','bass','mid','high']){const target=Math.min(1,Math.max(microphone[k]||0,output[k]||0));envelope[k]=paused?target:envelope[k]+(target-envelope[k])*(1-Math.exp(-dt*(target>envelope[k]?18:7)))}
  for(const [k,v] of Object.entries({time:t,morph:voice,aspect:w/h,amplitude:audio.rms,bass:audio.bass,mid:audio.mid,high:audio.high,reduced:Number(paused),region,pulse}))gl.uniform1f(uniforms[k],v);
  gl.uniform2f(uniforms.pointer,px,py);
  gl.uniform2f(uniforms.dock,(stage.x+stage.width-90)/innerWidth*2-1,1-(stage.top+90)/innerHeight*2);
