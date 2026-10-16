@@ -110,8 +110,10 @@ master-spec requirements remain in scope.
   private repository with a read-only token. The desktop app checks for updates
   through that Worker and verifies the installer's size and SHA-256 before it runs.
   The version comes from the VERSION file, and the installer leaves App\data and
-  App\models in place. The token secret and Worker deploy are still pending, and
-  0.2.5 has not been built or published. Installers are not code-signed.
+  App\models in place. The release token is set and the Worker is deployed. v0.2.5
+  is published, and the live channel returns it with a checksum that matches the
+  GitHub asset digest. An in-app upgrade from 0.2.5 to a later release has not been
+  run yet. Installers are not code-signed.
 - See verification-0.2.4.md for detailed historical evidence and remaining checks.
 
 ## Locations
