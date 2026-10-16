@@ -106,6 +106,34 @@ Open **Tools & integrations → Integrations**.
       thinking, speaking, when you interrupt it, and on an error (for example, with the
       model server stopped).
 
+### Model problems
+
+- [ ] With a model loaded, close the model manager process (Task Manager → end
+      `llama-swap.exe`), then send a message. A notice says it is restarting, and the
+      reply still arrives.
+- [ ] Register a model with a very large context (Models → Add a local GGUF model,
+      context 1000000), select it and send a message. The error explains the cause,
+      such as not enough GPU memory, rather than only showing a server code.
+
+### Activity history
+
+- [ ] In the right panel, open **Activity → All chats**. Actions from every chat appear,
+      newest first. Choose **Errors, denials and interruptions** to see only problems.
+      Search for a file name you used. Click a chat name to open that chat.
+
+### Required sign-in (optional, last)
+
+Only do this after sign-in itself works and you are online.
+
+- [ ] Sign in with GitHub in **Settings → Accounts**, then close and reopen Luminaria.
+- [ ] Turn on **Require sign-in on this PC**. Close and reopen. Luminaria opens normally.
+- [ ] Click **Sign out**. The sign-in screen covers the app, and nothing else works.
+      Sign in again, then close and reopen. You are back in.
+- [ ] Turn it off again in Accounts. If you are ever locked out, close Luminaria, open
+      `C:\Users\desse\Desktop\Luminaria\App\data\profiles.json` in Notepad,
+      delete the `"require_sign_in": true` line (and the comma before it), save, and
+      reopen.
+
 ### Panels
 
 - [ ] Stop the model server and open each sidebar panel. Each shows Loading…, then
@@ -121,3 +149,5 @@ the first real evidence:
 - A quality check against a real model.
 - PDF, Word and folder attachments in the installed app.
 - The in-app update from 0.2.5 to 0.2.6.
+- Model crash recovery and load-failure explanations with a real model.
+- Required sign-in with the real sign-in service.

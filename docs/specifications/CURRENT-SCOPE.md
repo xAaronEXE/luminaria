@@ -143,6 +143,19 @@ master-spec requirements remain in scope.
   the reverse. Send the original list to add any missing skills.
 - Panels show loading and retry states; form field borders meet 3:1 contrast in both
   modes. Text colors were measured at 5:1 or higher.
+- Model failures are explained: the model manager log is read for out-of-memory,
+  damaged files, projector, port and load-timeout problems. A crashed manager that
+  Luminaria started is restarted once automatically; otherwise Models shows the
+  reason with a Restart button. Tested with simulated failures only.
+- The Activity tab can search tool actions across all chats and filter errors,
+  denials and interruptions, with links back to each chat.
+- Required sign-in is built but off. It can be turned on in Accounts only while
+  signed in and verified online. When on, the backend refuses everything except
+  sign-in until the account is verified, local profiles cannot be opened, and
+  automations wait. Offline use is allowed for 7 days after the last verification.
+  This is an access gate for this app, not protection against the Windows account
+  owner: removing require_sign_in from App\data\profiles.json turns it off.
+  Not yet tried with the real sign-in service.
 - Version 0.2.6 with release notes is prepared. See testing-0.2.6.md.
 - See verification-0.2.4.md for detailed historical evidence and remaining checks.
 
