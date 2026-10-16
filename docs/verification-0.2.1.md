@@ -18,8 +18,8 @@
 - JavaScript syntax and Git whitespace checks passed.
 
 ## Pending: do not describe as passed
-- Native microphone permission is awaiting the user. Physical microphone capture, acoustic echo, spoken interruption and the full native voice-stage interaction are not yet verified for this revision.
-- Final blending/contrast and RMS refinements are in installed files and the installer; the currently open window awaits reload after the microphone prompt is handled.
+- Physical microphone capture passed: the user spoke "What is six times seven?", Whisper produced "What is 6 times 7?", and Qwen answered "42." The user explicitly confirmed hearing the spoken answer. Acoustic echo and spoken interruption remain unverified.
+- Final blending/contrast and RMS refinements are in installed files and the installer. The desktop was restarted to load them; light-mode persistence and removal of obsolete canvas controls were observed.
 - Hosted sign-in, provider integrations, public signed releases and the remaining master-spec phases are separate unfinished work.
 
 ## Scope amendment
