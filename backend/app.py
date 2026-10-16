@@ -421,6 +421,42 @@ async def connector_save(request:Request):
     configs=CONFIG.get('mcp',{}).copy(); configs[name]={'command':str(b['command']),'args':b['args'],'cwd':CONFIG['workspace']}
     save_config({'mcp':configs});return {'restart_required':True}
 
+@app.get('/api/integrations')
+async def integrations_list():
+    from .integrations import catalog
+    return catalog(CONFIG.get('mcp',{}),connectors)
+
+async def restart_connector(name,config):
+    if name in connectors:
+        await connectors.pop(name).close()
+    if config:
+        c=Connector(name,config,broadcast); connectors[name]=c; c.start()
+    broadcast({'type':'connectors_changed','connector':name})
+
+@app.post('/api/integrations/{name}')
+async def integration_connect(name:str,request:Request):
+    from .integrations import config_for,write_secrets
+    config,secrets_=config_for(name,await request.json())
+    write_secrets(name,secrets_)
+    configs=CONFIG.get('mcp',{}).copy(); configs[name]=config; save_config({'mcp':configs})
+    await restart_connector(name,config)
+    return {'ok':True}
+
+@app.delete('/api/integrations/{name}')
+async def integration_disconnect(name:str):
+    from .integrations import PRESETS,forget
+    if name not in PRESETS: raise HTTPException(404,'Unknown integration')
+    configs=CONFIG.get('mcp',{}).copy(); configs.pop(name,None); save_config({'mcp':configs})
+    await restart_connector(name,None); forget(name)
+    return {'ok':True}
+
+@app.get('/oauth/callback')
+async def oauth_callback(request:Request):
+    from html import escape
+    from .integrations import complete
+    ok,message=complete(request.url.query)
+    return Response(f'<!doctype html><meta charset="utf-8"><title>Luminaria</title><body style="font:16px system-ui;background:#141A17;color:#EBF0E8;display:grid;place-items:center;height:90vh"><p>{escape(message)}</p></body>',media_type='text/html',status_code=200 if ok else 400)
+
 @app.post('/api/skills/{name}/toggle')
 async def skill_toggle(name:str,request:Request):
     b=await request.json();store.set_setting('skill:'+name,bool(b['enabled']));return {'ok':True}
