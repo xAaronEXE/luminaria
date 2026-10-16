@@ -131,6 +131,27 @@ async def organize_chat(id:str,request:Request):
     store.execute('UPDATE chats SET archived=? WHERE id=?',({'archive':1,'delete':2,'restore':0}[action],id))
     broadcast({'type':'changed'});return {'ok':True,'recoverable':True}
 
+async def purge(id):
+    require_chat(id)
+    if id in engine.tasks and not engine.tasks[id].done(): raise ValueError('Stop this chat before deleting it permanently')
+    runs=store.purge_chat(id)
+    engine.runs.pop(id,None); engine.tasks.pop(id,None)
+    for action,chat in list(engine.approvals.items()):
+        if chat==id: engine.approvals.pop(action,None)
+    checkpointer=getattr(engine.graph,'checkpointer',None)
+    for run in runs:
+        if checkpointer: await checkpointer.adelete_thread(run)
+
+@app.delete('/api/chats/{id}')
+async def delete_chat(id:str):
+    await purge(id); broadcast({'type':'changed'}); return {'ok':True}
+
+@app.post('/api/chats/trash/empty')
+async def empty_trash():
+    trashed=store.trashed()
+    for id in trashed: await purge(id)
+    broadcast({'type':'changed'}); return {'deleted':len(trashed)}
+
 @app.post('/api/chats/{id}/run')
 async def run_chat(id:str,request:Request):
     if benchmarking: raise ValueError('Wait for the model benchmark to finish')

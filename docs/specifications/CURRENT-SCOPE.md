@@ -98,6 +98,10 @@ master-spec requirements remain in scope.
   validation and encrypted session storage. Restart recovery is not yet verified.
 - User confirmed real microphone recognition/Qwen spoken answer and interruption of
   spoken playback followed by a new answer. Full matrix remains unverified.
+- Chats in trash can now be deleted permanently, one at a time or with Empty trash,
+  after a confirmation. This erases their messages, summaries, tool records, run
+  snapshots and model checkpoints. Files saved in My files are kept. Route tests
+  cover this against a temporary data folder; not yet tried in the packaged app.
 - Source now includes a downloadable Standard/Abliterated catalog, one-at-a-time
   queue, resume, checksum checks, the 100 GB budget, and disk-space refusal.
   Unit tests cover those paths with a local file server. A packaged Windows

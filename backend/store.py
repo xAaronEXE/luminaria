@@ -1,5 +1,6 @@
 """Durable source history and versioned working summaries. No transcript truncation."""
 import json
+import shutil
 import sqlite3
 import time
 import uuid
@@ -47,6 +48,21 @@ class Store:
         folder.mkdir(parents=True,exist_ok=True); (folder/'artifacts').mkdir(exist_ok=True)
         with (folder/'conversation.jsonl').open('w',encoding='utf-8') as f:
             for msg in self.messages(run['chat']): f.write(json.dumps(msg,ensure_ascii=False)+'\n')
+    def purge_chat(self,chat):
+        """Erase a trashed chat's history and run records. Returns run ids for checkpoint cleanup."""
+        found=self.rows('SELECT archived FROM chats WHERE id=?',(chat,))
+        if not found: raise ValueError('Chat not found')
+        if found[0]['archived']!=2: raise ValueError('Move the chat to trash before deleting it permanently')
+        runs=[r['id'] for r in self.rows('SELECT id FROM runs WHERE chat=?',(chat,))]
+        with self.db:
+            for table in ('messages','summaries','actions','runs'): self.db.execute(f'DELETE FROM {table} WHERE chat=?',(chat,))
+            self.db.execute('DELETE FROM chats WHERE id=?',(chat,))
+        root=(self.data_directory/'runs').resolve()
+        for run in runs:
+            folder=(root/run).resolve()
+            if folder.parent==root and folder.is_dir(): shutil.rmtree(folder,ignore_errors=True)
+        return runs
+    def trashed(self): return [r['id'] for r in self.rows('SELECT id FROM chats WHERE archived=2')]
     def messages(self, chat, after=0):
         return [dict(id=r['id'],created=r['created'],**json.loads(r['payload'])) for r in self.rows('SELECT * FROM messages WHERE chat=? AND id>? ORDER BY id',(chat,after))]
     def summary(self, chat):
