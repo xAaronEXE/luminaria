@@ -130,4 +130,10 @@ class IntegrationConfigTests(unittest.TestCase):
   self.assertTrue(rows['notion']['configured']);self.assertFalse(rows['notion']['connected']);self.assertEqual(rows['notion']['status'],'not connected')
   self.assertIn('/oauth/callback',integrations.catalog({},{})['redirect_uri'])
 
+ def test_catalog_says_credentials_are_saved_without_revealing_them(self):
+  integrations.write_secrets('github',{'token':'github_pat_hidden'});integrations.write_secrets('gmail',{'client_id':'123-abc.apps','client_secret':'very-secret'})
+  data=integrations.catalog({},{});rows={r['id']:r for r in data['integrations']}
+  self.assertTrue(rows['github']['saved_token']);self.assertTrue(rows['gmail']['saved_client_secret']);self.assertEqual(rows['gmail']['client_id'],'123-abc.apps')
+  self.assertNotIn('github_pat_hidden',json.dumps(data));self.assertNotIn('very-secret',json.dumps(data))
+
 if __name__=='__main__':unittest.main()

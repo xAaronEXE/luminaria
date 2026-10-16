@@ -418,8 +418,17 @@ async def connector_save(request:Request):
     b=await request.json(); name=b.get('name','')
     if not re.fullmatch('[a-z][a-z0-9_]{0,30}',name): raise ValueError('Invalid connector name')
     if not isinstance(b.get('args'),list) or not all(isinstance(a,str) for a in b['args']): raise ValueError('Arguments must be a JSON array of strings')
+    from .integrations import PRESETS
+    if name in PRESETS: raise ValueError('That name is used by a built-in integration')
     configs=CONFIG.get('mcp',{}).copy(); configs[name]={'command':str(b['command']),'args':b['args'],'cwd':CONFIG['workspace']}
-    save_config({'mcp':configs});return {'restart_required':True}
+    save_config({'mcp':configs}); await restart_connector(name,configs[name]); return {'ok':True}
+
+@app.delete('/api/connectors/{name}')
+async def connector_remove(name:str):
+    from .integrations import PRESETS
+    configs=CONFIG.get('mcp',{}).copy()
+    if name in PRESETS or name in ('browser','windows') or name not in configs: raise HTTPException(404,'Unknown connector')
+    configs.pop(name); save_config({'mcp':configs}); await restart_connector(name,None); return {'ok':True}
 
 @app.get('/api/integrations')
 async def integrations_list():
