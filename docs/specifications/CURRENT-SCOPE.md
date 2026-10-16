@@ -125,6 +125,25 @@ master-spec requirements remain in scope.
   is published, and the live channel returns it with a checksum that matches the
   GitHub asset digest. An in-app upgrade from 0.2.5 to a later release has not been
   run yet. Installers are not code-signed.
+- The 3D core has distinct idle, listening, thinking, speaking, interrupted and
+  error looks, driven by the real voice state. Checked in headless WebGL at 60 fps;
+  not yet watched in the packaged app.
+- Tools & integrations has real connections for GitHub (your own token), Linear and
+  Notion (browser sign-in), Slack (your own Slack app client ID) and Gmail, Drive
+  and Calendar (your own Google OAuth client). Read-only is offered where the
+  service supports it. Credentials are DPAPI-encrypted. A service shows as connected
+  only when its MCP tools loaded. Discord and databases have no official hosted
+  server and use the custom MCP connector, which now starts without a restart.
+  Tests run against a local MCP server with real OAuth; no real service has been
+  connected yet. Integration tools still need Computer and command tools or Full Access.
+- Skills: the original requested list was not available in this session, so the
+  21 installed skills were reconciled instead. Each is categorized in
+  skills/inventory.json with its real requirements, and the library shows Ready or
+  exactly what is missing. Tests fail if a skill is installed but not inventoried, or
+  the reverse. Send the original list to add any missing skills.
+- Panels show loading and retry states; form field borders meet 3:1 contrast in both
+  modes. Text colors were measured at 5:1 or higher.
+- Version 0.2.6 with release notes is prepared. See testing-0.2.6.md.
 - See verification-0.2.4.md for detailed historical evidence and remaining checks.
 
 ## Locations
