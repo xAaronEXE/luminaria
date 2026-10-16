@@ -1,7 +1,12 @@
+#ifndef AppVersion
+  #error Build with build.ps1 so the version comes from VERSION
+#endif
+
 [Setup]
 AppId={{C1DD4A29-1B64-433C-A69E-352D1DB9E575}
 AppName=Luminaria
-AppVersion=0.2.4
+AppVersion={#AppVersion}
+VersionInfoVersion={#AppVersion}
 AppPublisher=Luminaria Project
 DefaultDirName={userdesktop}\Luminaria\App
 UsePreviousAppDir=no
@@ -10,7 +15,7 @@ PrivilegesRequired=lowest
 ArchitecturesAllowed=x64compatible
 ArchitecturesInstallIn64BitMode=x64compatible
 OutputDir=release
-OutputBaseFilename=Luminaria-0.2.4-Setup
+OutputBaseFilename=Luminaria-{#AppVersion}-Setup
 SetupIconFile=web\brand\luminaria.ico
 UninstallDisplayIcon={app}\LocalAIStudio.exe
 Compression=lzma2/fast

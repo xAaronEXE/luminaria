@@ -4,11 +4,12 @@ from pathlib import Path
 
 def main():
     import argparse
+    from backend.config import VERSION
     parser=argparse.ArgumentParser(description='Luminaria local AI desktop. Agent tools are enabled by default; the saved permission mode controls execution.')
     parser.add_argument('--agent',action='store_true',default=True,help='Enable agent tools (already enabled by default)')
     parser.add_argument('--server',action='store_true',help='Run the local backend without the desktop window')
     parser.add_argument('--safe-graphics',action='store_true',help='Disable WebGL and use the static voice interface for this launch')
-    parser.add_argument('--version',action='version',version='Luminaria 0.2.4')
+    parser.add_argument('--version',action='version',version='Luminaria '+VERSION)
     options=parser.parse_args()
     if options.safe_graphics:
         os.environ['WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS']=(os.environ.get('WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS','')+' --disable-webgl').strip()

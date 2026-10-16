@@ -281,7 +281,6 @@ async def settings_save(request:Request):
     if 'output_tokens' in changes: changes['output_tokens']=max(256,min(8192,int(changes['output_tokens'])))
     if 'compact_ratio' in changes: changes['compact_ratio']=max(.4,min(.85,float(changes['compact_ratio'])))
     if 'workspace' in changes: Path(changes['workspace']).mkdir(parents=True,exist_ok=True)
-    if changes.get('release_repo') and not re.fullmatch(r'[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+',changes['release_repo']): raise ValueError('Use owner/repository for GitHub releases')
     save_config(changes); broadcast({'type':'changed'}); return {'ok':True}
 
 @app.get('/api/model/status')
