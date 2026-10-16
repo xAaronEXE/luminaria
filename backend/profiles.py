@@ -11,7 +11,7 @@ def save(data):
 
 def status():
     data=registry()
-    return {**data,'active':PROFILE_ID,'google':{'available':False,'message':'Google sign-in is not configured in this build.'}}
+    return {**data,'active':PROFILE_ID}
 
 def create(name):
     name=str(name).strip()
@@ -25,4 +25,12 @@ def select(id):
     data=registry()
     if not any(p['id']==id for p in data['profiles']): raise ValueError('Profile not found')
     data['selected']=id; save(data)
-    return {'restart_required':True,'message':'Close all Studio windows and reopen to use this profile.'}
+    return {'restart_required':True,'message':'Close all Luminaria windows and reopen to use this profile.'}
+
+def identity_profile(user):
+    data=registry()
+    for item in data['profiles']:
+        if item.get('identity_id')==user['id'] and item.get('provider')==user['provider']:return item
+    if len(data['profiles'])>=20:raise ValueError('Profile limit reached')
+    item={'id':uuid.uuid4().hex,'name':user['name'][:60],'provider':user['provider'],'identity_id':user['id']}
+    data['profiles'].append(item);save(data);return item

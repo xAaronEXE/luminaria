@@ -3,9 +3,10 @@
 Deployed on the owner's personal Cloudflare account, separately from ACT resources.
 Service: https://luminaria-identity.johnnycox4431836.workers.dev
 
-This service is identity infrastructure, not a completed desktop login feature.
-All three providers currently report unconfigured. The desktop is not yet wired
-to device pairing or mandatory sign-in; development access remains available.
+All three providers currently report unconfigured. Desktop 0.2.4 includes the
+pairing client, server session validation, protected Windows session storage and
+separate account profiles. Real provider login and mandatory release sign-in
+remain unverified/incomplete; development access remains available.
 
 ## Provider registration
 
@@ -19,8 +20,8 @@ Store each provider's client ID and secret through Wrangler secrets, never in
 source, desktop assets, chat messages or configuration checked into Git:
 `GITHUB_CLIENT_ID`, `GITHUB_CLIENT_SECRET`, `GOOGLE_CLIENT_ID`,
 `GOOGLE_CLIENT_SECRET`, `DISCORD_CLIENT_ID`, `DISCORD_CLIENT_SECRET`.
-Provider registration, real sign-in, production consent setup and desktop token
-storage/enforcement remain acceptance work. Do not enable mandatory sign-in
+Provider registration, real sign-in, production consent setup and desktop
+enforcement remain acceptance work. Do not enable mandatory sign-in
 before those pass.
 
 ## Contract

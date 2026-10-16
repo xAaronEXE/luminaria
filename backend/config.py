@@ -16,12 +16,12 @@ DEFAULT={
  'workspace':str((Path(sys.executable).parent if getattr(sys,'frozen',False) else DATA)/'Files'/PROFILE_ID),
  'endpoint':'http://127.0.0.1:8098/v1', 'tokenizer':'http://127.0.0.1:8097',
  'model':'local-qwen','context':32768,'output_tokens':4096,'compact_ratio':0.80,
- 'release_repo':'','version':'0.2.3', 'python':'python','node':'node','mcp':{},'external_tools':False,'ask_reads':False
+ 'release_repo':'','version':'0.2.4', 'python':'python','node':'node','mcp':{},'external_tools':False,'ask_reads':False
 }
 device=json.loads((BASE_DATA/'config.json').read_text('utf-8')) if (BASE_DATA/'config.json').exists() else {}
 shared={k:v for k,v in device.items() if k in ('endpoint','tokenizer','model','context','model_file','projector_file','model_api_key','llama_executable','python','node','release_repo')}
 CONFIG=DEFAULT | shared | (json.loads(CONFIG_PATH.read_text('utf-8')) if CONFIG_PATH.exists() else {})
-CONFIG['version']='0.2.3'
+CONFIG['version']='0.2.4'
 # Permission mode is latched at process startup. Saving it never changes a live run.
 FULL_ACCESS = CONFIG.get('access_mode', 'review') == 'full'
 CONFIG['access_mode'] = 'full' if FULL_ACCESS else 'review'

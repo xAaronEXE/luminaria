@@ -464,7 +464,34 @@ async def preferences_save(request:Request):
 @app.get('/api/accounts')
 async def accounts():
     from .profiles import status
-    return status()
+    from .identity import status as identity_status
+    return {**status(),'identity':await identity_status()}
+
+@app.post('/api/identity/start')
+async def identity_start(request:Request):
+    from .identity import start
+    return await identity_call(start((await request.json()).get('provider')))
+
+async def identity_call(operation):
+    import httpx
+    try:return await operation
+    except httpx.HTTPError:raise HTTPException(503,'Sign-in service is unavailable. Check your connection and try again.') from None
+
+@app.post('/api/identity/poll')
+async def identity_poll(request:Request):
+    if any(not r.get('finished') for r in engine.runs.values()):raise ValueError('Finish or stop active tasks before completing sign-in')
+    from .identity import poll
+    return await identity_call(poll((await request.json()).get('flow_id','')))
+
+@app.post('/api/identity/logout')
+async def identity_logout():
+    from .identity import logout
+    return await identity_call(logout())
+
+@app.post('/api/identity/cancel')
+async def identity_cancel(request:Request):
+    from .identity import cancel
+    return cancel((await request.json()).get('flow_id',''))
 
 @app.post('/api/accounts')
 async def account_create(request:Request):

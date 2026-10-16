@@ -1,0 +1,24 @@
+/* Identity login is distinct from service connectors and local profile storage. */
+async function renderAccounts(body){
+ const loading=document.createElement('div');loading.innerHTML='<h3 class="settings-page-title">Accounts</h3><p class="note" role="status">Checking account status…</p>';body.replaceChildren(loading);
+ const a=await api('/accounts');if(!loading.isConnected)return;const identity=a.identity||{},names={google:'Google',github:'GitHub',discord:'Discord'};
+ body.innerHTML=`<h3 class="settings-page-title">Accounts</h3><p class="settings-intro">Your account identifies you. Chats, files and memory stay in separate profiles on this PC.</p><h3 class="section-heading">Sign-in</h3><p class="note">${esc(identity.message||'Sign-in is unavailable.')}</p>${identity.signed_in?`<div class="setting-row"><div><h3>${esc(identity.user.name)}</h3><p>Verified with ${esc(names[identity.user.provider])}</p></div><button class="btn" id="identity-logout">Sign out</button></div>`:''}${Object.entries(names).map(([id,name])=>{const ready=identity.providers?.some(p=>p.id===id&&p.configured);return `<div class="setting-row"><div><h3>${name}</h3><p>${ready?'Continue securely in your browser':'Publisher setup pending'}</p></div><button class="btn" data-signin="${id}" ${ready?'':'disabled'}>Sign in with ${name}</button></div>`}).join('')}<div id="identity-progress" role="status"></div><p class="small-note">Sign-in does not connect email, repositories, Drive or cloud sync. Development access remains available until release sign-in is configured and verified.</p><h3 class="section-heading">Local profiles</h3>${a.profiles.map(x=>`<div class="setting-row"><div><h3>${esc(x.name)}</h3><p>${esc(names[x.provider]||'Local')}${x.id===a.active?' · Current profile':x.id===a.selected?' · Selected for next launch':''}</p></div><button class="btn" data-profile="${esc(x.id)}" ${x.id===a.selected?'disabled':''}>Use profile</button></div>`).join('')}<form>${field('New local profile name','name','')}<button class="btn" type="submit">Create profile</button></form><p class="small-note">Profiles separate app data, not Windows-user permissions. Changing profiles requires a restart.</p>`;
+ body.querySelector('form').onsubmit=safe(async e=>{e.preventDefault();await api('/accounts','POST',Object.fromEntries(new FormData(e.target)));await renderAccounts(body)});
+ body.querySelectorAll('[data-profile]').forEach(b=>b.onclick=safe(async()=>{const r=await api('/accounts/'+b.dataset.profile+'/select','POST',{});toast(r.message);await renderAccounts(body)}));
+ body.querySelector('#identity-logout')?.addEventListener('click',safe(async()=>{await api('/identity/logout','POST',{});await renderAccounts(body)}));
+ body.querySelectorAll('[data-signin]').forEach(b=>b.onclick=safe(async()=>{
+  const out=body.querySelector('#identity-progress');delete out.dataset.cancelled;let flow;body.querySelectorAll('[data-signin]').forEach(x=>x.disabled=true);
+  try{
+   out.textContent='Starting secure sign-in…';flow=await api('/identity/start','POST',{provider:b.dataset.signin});if(!out.isConnected)return;
+   out.innerHTML=`<p>Finish signing in with ${esc(names[b.dataset.signin])}.</p><a class="btn" href="${esc(flow.url)}" target="_blank" rel="noopener noreferrer">Continue in browser</a> <button type="button" class="btn" id="cancel-signin">Cancel sign-in</button><p class="small-note">This request expires in ten minutes. Keep this screen open.</p>`;
+   out.querySelector('#cancel-signin').onclick=safe(async()=>{out.dataset.cancelled='true';await api('/identity/cancel','POST',{flow_id:flow.flow_id});out.textContent='Sign-in cancelled.'});
+   const deadline=Date.now()+flow.expires_in*1000;
+   while(out.isConnected&&!out.dataset.cancelled&&Date.now()<deadline){
+    await new Promise(resolve=>setTimeout(resolve,flow.interval*1000));if(!out.isConnected||out.dataset.cancelled)return;
+    const r=await api('/identity/poll','POST',{flow_id:flow.flow_id});if(r.status==='complete'){if(out.isConnected)await renderAccounts(body);toast(r.message);return}
+   }
+   if(out.isConnected&&!out.dataset.cancelled)out.textContent='Sign-in expired. Start again.';
+  }catch(error){if(out.isConnected)out.textContent=error.message}
+  finally{if(flow)api('/identity/cancel','POST',{flow_id:flow.flow_id}).catch(()=>{});if(out.isConnected)body.querySelectorAll('[data-signin]').forEach(x=>x.disabled=!identity.providers?.some(p=>p.id===x.dataset.signin&&p.configured))}
+ }));
+}

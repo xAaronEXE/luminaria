@@ -5,6 +5,6 @@ $python=if($env:STUDIO_BUILD_PYTHON){$env:STUDIO_BUILD_PYTHON}elseif(Test-Path "
 if($LASTEXITCODE){throw 'Executable build failed'}
 & "$PSScriptRoot\runtime\inno\ISCC.exe" installer.iss
 if($LASTEXITCODE){throw 'Installer build failed'}
-$asset=Get-Item release/Luminaria-0.2.3-Setup.exe
+$asset=Get-Item release/Luminaria-0.2.4-Setup.exe
 $hash=(Get-FileHash $asset.FullName -Algorithm SHA256).Hash.ToLower()
 "$hash  $($asset.Name)" | Set-Content release/SHA256SUMS.txt -Encoding ascii
