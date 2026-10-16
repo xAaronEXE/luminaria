@@ -11,6 +11,8 @@ All /api routes except GET /api/bootstrap require X-Studio-Token returned by boo
 - GET /api/events: SSE `data` objects. ready, changed, delta {chat,text}, reasoning {chat,text}, approval, compacted. Re-fetch /state on non-delta events. Reconnect and refresh on disconnection.
 - GET /api/approvals; POST /api/approvals/ID/decision {decision:"allow"|"deny",scope:"once"|"always"}. Always scope only for eligible approve-tier tools.
 - GET/POST /api/models; POST /api/models/ID/select. Selection blocked while a run is unfinished.
+- GET /api/model-library: storage, download budget, jobs and catalog entries. Entries carry configured and supported context, estimated context-cache bytes, pinned source and an optional shared vision projector.
+- POST /api/model-library/ID/download|cancel|discard|use|remove. ID is a quantization or projector id. Remove needs {confirm:true}; active models and projectors are protected. Use restarts the model manager when the model or its projector is new to it.
 - GET/POST /api/settings; GET /api/tools; GET/POST /api/skills.
 - GET /api/voice/status: readiness, recognition/speech labels, local/audio_saved flags.
 - POST /api/voice/install: explicit model download for first-use setup.
