@@ -1,8 +1,28 @@
-import json,re
+import json,re,shutil
 from pathlib import Path
 from .config import CONFIG,DATA,BASE_DATA,save_config
 
 PATH=BASE_DATA/'models.json'
+
+def model_storage(models):
+    """Report the actual target volume, counting each installed weight once."""
+    folder=BASE_DATA.parent/'models'
+    probe=folder
+    while not probe.exists() and probe.parent!=probe: probe=probe.parent
+    usage=shutil.disk_usage(probe)
+    seen=set(); model_bytes=0
+    for model in models:
+        for key in ('model_file','projector_file'):
+            raw=model.get(key)
+            if not raw: continue
+            path=Path(raw).resolve()
+            if path in seen: continue
+            seen.add(path)
+            try:
+                if path.is_file(): model_bytes+=path.stat().st_size
+            except OSError: pass
+    return {'path':str(folder),'drive':probe.resolve().anchor,'total':usage.total,
+            'used':usage.used,'free':usage.free,'model_bytes':model_bytes}
 def registry():
     return json.loads(PATH.read_text('utf-8')) if PATH.exists() else []
 def save(models): PATH.write_text(json.dumps(models,indent=2),encoding='utf-8')
@@ -12,7 +32,7 @@ def public_models(store):
     for m in registry():
         p=Path(m.get('model_file',''))
         result.append({**m,'benchmarks':history(m['id'],m.get('benchmarks',[])),'installed':p.is_file(),'bytes':p.stat().st_size if p.is_file() else None,'vision':bool(m.get('projector_file') and Path(m['projector_file']).is_file()),'latest_run':store.setting('model_metrics:'+m['id'])})
-    return {'active':CONFIG['model'],'context':CONFIG['context'],'models':result}
+    return {'active':CONFIG['model'],'context':CONFIG['context'],'models':result,'storage':model_storage(result)}
 def add_model(body):
     id=body.get('id','')
     if not re.fullmatch('[a-zA-Z0-9_-]{1,60}',id): raise ValueError('Use a short model ID containing letters, numbers, hyphens or underscores')
