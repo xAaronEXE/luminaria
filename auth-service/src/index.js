@@ -24,19 +24,80 @@ async function limited(env,request){
  const row=await env.DB.prepare('INSERT INTO rate_limits(key,count,expires) VALUES(?,1,?) ON CONFLICT(key) DO UPDATE SET count=count+1 RETURNING count').bind(key,now()+7200).first();
  return row.count>600;
 }
+// Upstream bodies are bounded to protect the Worker from unexpected payloads.
+async function boundedText(response,limit){
+ const reader=response.body.getReader();let size=0,chunks=[];
+ while(true){const {done,value}=await reader.read();if(done)break;size+=value.length;if(size>limit){await reader.cancel();throw new Error('Upstream response too large');}chunks.push(value);}
+ const result=new Uint8Array(size);let offset=0;for(const chunk of chunks){result.set(chunk,offset);offset+=chunk.length;}
+ return new TextDecoder().decode(result);
+}
 async function providerJson(url,options){
  const response=await fetch(url,{...options,signal:AbortSignal.timeout(15000)});
  if(!response.ok)throw new Error('Provider request failed');
- // Provider bodies are bounded to protect the Worker from unexpected payloads.
- const reader=response.body.getReader();let size=0,chunks=[];
- while(true){const {done,value}=await reader.read();if(done)break;size+=value.length;if(size>131072){await reader.cancel();throw new Error('Provider response too large');}chunks.push(value);}
- const result=new Uint8Array(size);let offset=0;for(const chunk of chunks){result.set(chunk,offset);offset+=chunk.length;}
- return JSON.parse(new TextDecoder().decode(result));
+ return JSON.parse(await boundedText(response,131072));
+}
+// Release channel: the source repository is private, so a read-only token stays here.
+const installerName=/^Luminaria-(\d+\.\d+\.\d+)-Setup\.exe$/;
+const releaseTag=/^v(\d+\.\d+\.\d+)$/;
+function releasesConfigured(env){return /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(env.RELEASE_REPO||'')&&Boolean(env.GITHUB_RELEASES_TOKEN);}
+function github(env,path,accept='application/vnd.github+json',timeout=true){
+ return fetch('https://api.github.com/repos/'+env.RELEASE_REPO+path,{headers:{Authorization:'Bearer '+env.GITHUB_RELEASES_TOKEN,Accept:accept,'User-Agent':'Luminaria-Updates','X-GitHub-Api-Version':'2022-11-28'},redirect:'manual',...(timeout?{signal:AbortSignal.timeout(20000)}:{})});
+}
+async function assetResponse(env,asset,timeout=true){
+ const first=await github(env,'/releases/assets/'+asset.id,'application/octet-stream',timeout);
+ if(first.status===200)return first;
+ const location=[301,302,303,307,308].includes(first.status)&&first.headers.get('location');
+ if(!location)throw new Error('Release asset unavailable');
+ const host=new URL(location).hostname;
+ if(new URL(location).protocol!=='https:'||!(host.endsWith('.githubusercontent.com')||host==='github.com'))throw new Error('Unexpected release asset host');
+ const response=await fetch(location,timeout?{signal:AbortSignal.timeout(20000)}:{});
+ if(!response.ok)throw new Error('Release asset unavailable');
+ return response;
+}
+async function releaseManifest(env,origin){
+ const response=await github(env,'/releases/latest');
+ if(response.status===404)return {status:404};
+ if(!response.ok)throw new Error('Release lookup failed');
+ const release=JSON.parse(await boundedText(response,1048576));
+ const version=String(release.tag_name||'').match(releaseTag)?.[1];
+ const installer=(release.assets||[]).find(asset=>installerName.test(asset.name));
+ const sums=(release.assets||[]).find(asset=>asset.name==='SHA256SUMS.txt');
+ if(!version||!installer||!sums||installer.name.match(installerName)[1]!==version)return {status:409};
+ const lines=(await boundedText(await assetResponse(env,sums),65536)).split(/\r?\n/).map(line=>line.trim().split(/\s+/));
+ const sha256=lines.find(parts=>parts.length===2&&parts[1].replace(/^\*/,'')===installer.name)?.[0]?.toLowerCase();
+ if(!/^[a-f0-9]{64}$/.test(sha256||''))return {status:409};
+ return {status:200,body:{version,tag:release.tag_name,name:String(release.name||'Luminaria '+version).slice(0,200),notes:String(release.body||'').slice(0,12000),published_at:release.published_at,
+  installer:{name:installer.name,size:installer.size,sha256,url:origin+'/releases/download/'+release.tag_name+'/'+installer.name}}};
+}
+async function releaseDownload(env,tag,name){
+ if(!releaseTag.test(tag)||!installerName.test(name)||name.match(installerName)[1]!==tag.slice(1))return json({error:'Not found'},404);
+ const response=await github(env,'/releases/tags/'+tag);
+ if(response.status===404)return json({error:'Not found'},404);
+ if(!response.ok)throw new Error('Release lookup failed');
+ const release=JSON.parse(await boundedText(response,1048576));
+ const asset=(release.assets||[]).find(item=>item.name===name);
+ if(!asset||release.draft)return json({error:'Not found'},404);
+ const upstream=await assetResponse(env,asset,false);
+ const headers={'Content-Type':'application/octet-stream','Content-Disposition':'attachment; filename="'+name+'"','Cache-Control':'no-store','X-Content-Type-Options':'nosniff'};
+ if(upstream.headers.get('content-length'))headers['Content-Length']=upstream.headers.get('content-length');
+ return new Response(upstream.body,{headers});
 }
 async function route(request,env){
  const url=new URL(request.url),path=url.pathname,time=now();
  if(path==='/health'&&request.method==='GET')return json({service:'Luminaria identity',providers:Object.keys(providers).map(id=>({id,configured:configured(env,id)}))});
  if(await limited(env,request))return json({error:'Too many requests'},429);
+ if(path.startsWith('/releases/')&&request.method==='GET'){
+  if(!releasesConfigured(env))return json({error:'Release channel is not configured'},503);
+  if(path==='/releases/latest'){
+   const manifest=await releaseManifest(env,url.origin);
+   if(manifest.status===404)return json({error:'No release has been published'},404);
+   if(manifest.status===409)return json({error:'Latest release is missing its installer or checksum'},409);
+   return json(manifest.body);
+  }
+  const parts=path.split('/');
+  if(parts.length===5&&parts[2]==='download')return releaseDownload(env,parts[3],parts[4]);
+  return json({error:'Not found'},404);
+ }
  if(path==='/device/start'&&request.method==='POST'){
   const input=await body(request),provider=input.provider;
   if(!configured(env,provider))return json({error:'Sign-in provider is not configured'},503);
@@ -101,6 +162,9 @@ async function route(request,env){
  return json({error:'Not found'},404);
 }
 export default {
- async fetch(request,env){try{return await route(request,env);}catch(error){console.error(JSON.stringify({event:'auth_request_failed',kind:error.name}));return json({error:'Sign-in could not be completed. Please start again.'},400);}},
+ async fetch(request,env){try{return await route(request,env);}catch(error){
+  const release=new URL(request.url).pathname.startsWith('/releases/');
+  console.error(JSON.stringify({event:release?'release_request_failed':'auth_request_failed',kind:error.name}));
+  return release?json({error:'The update service could not read the release. Try again later.'},502):json({error:'Sign-in could not be completed. Please start again.'},400);}},
  async scheduled(controller,env){await env.DB.batch(['devices','oauth_states','sessions','rate_limits'].map(table=>env.DB.prepare(`DELETE FROM ${table} WHERE expires<?`).bind(now())));}
 };

@@ -53,6 +53,28 @@ Hourly cleanup removes expired flow/session/rate-limit records. Identities remai
 until an account deletion feature is implemented. Rate limits are 600 requests
 per hashed client IP per hour. Shared network users share that limit.
 
+## Release channel
+
+The desktop app checks for updates here, so the repository stays private and no
+token is shipped to the desktop. `RELEASE_REPO` in `wrangler.jsonc` names the
+repository. `GITHUB_RELEASES_TOKEN` is a fine-grained token scoped to that one
+repository with Contents read-only access, stored only as a Wrangler secret:
+
+```
+npx wrangler secret put GITHUB_RELEASES_TOKEN
+npx wrangler deploy
+```
+
+- `GET /releases/latest`: `{version, tag, name, notes, published_at, installer}`
+  where `installer` is `{name, size, sha256, url}`. Returns 503 when the channel is
+  not configured, 404 when no release exists, and 409 when the release lacks
+  `Luminaria-X.Y.Z-Setup.exe` or a matching line in `SHA256SUMS.txt`.
+- `GET /releases/download/vX.Y.Z/Luminaria-X.Y.Z-Setup.exe`: streams that asset.
+
+The desktop app requires the installer URL to be this service's download route,
+then verifies the size and SHA-256 before it launches the installer. Publish with
+`build.ps1` and then `publish-release.ps1` from the project root.
+
 ## Validation and development
 
 `npm ci` then `npm test` runs a local workerd/D1 identity-flow test with intercepted
