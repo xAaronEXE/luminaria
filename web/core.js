@@ -13,7 +13,7 @@
  gl.attachShader(program,shader(gl.VERTEX_SHADER,`
  precision mediump float;
  attribute vec3 brain;attribute vec3 torus;attribute float cluster;
- uniform float time,morph,aspect,amplitude,bass,mid,high,reduced;uniform vec2 pointer;
+ uniform float time,morph,aspect,amplitude,bass,mid,high,reduced,entityScale;uniform vec2 pointer,dock,center;
  varying float depth;varying float zone;varying float travel;
  void main(){
  vec3 b=brain; b.x+=.025*sin(b.y*11.+b.z*7.);b.z+=.02*cos(b.x*17.);
@@ -24,8 +24,8 @@
  float rotation=time*.07*(1.-reduced)+pointer.x*.12*(1.-reduced);
  p.xz=mat2(cos(rotation),-sin(rotation),sin(rotation),cos(rotation))*p.xz;
  float tilt=.28+pointer.y*.08*(1.-reduced);p.yz=mat2(cos(tilt),-sin(tilt),sin(tilt),cos(tilt))*p.yz;
- p*=mix(.23,1.15,morph);p.z+=4.6;
- vec2 offset=mix(vec2(.34,.50),vec2(0.,.12),morph);
+ p*=mix(.18,entityScale,morph);p.z+=4.6;
+ vec2 offset=mix(dock,center,morph);
  gl_Position=vec4(p.x*2.15/aspect+offset.x*p.z,p.y*2.15+offset.y*p.z,0.,p.z);
  depth=clamp(1.-(p.z-2.)/5.,.15,1.);zone=cluster;travel=brain.y*3.+brain.x*2.;
  gl_PointSize=mix(1.7,2.6,morph)+amplitude*2.*(1.-reduced);
@@ -52,7 +52,7 @@
  for(let j=0;j<rings;j++)for(let i=0;i<steps;i++){const at=j*steps+i;links.push(...nodes[at],...nodes[j*steps+(i+1)%steps]);if(j<rings-1&&i%3===0)links.push(...nodes[at],...nodes[at+steps]);}
  const buffer=data=>{const b=gl.createBuffer();gl.bindBuffer(gl.ARRAY_BUFFER,b);gl.bufferData(gl.ARRAY_BUFFER,new Float32Array(data),gl.STATIC_DRAW);return b};
  const dots=buffer(nodes.flat()),lines=buffer(links),attrs=['brain','torus','cluster'].map(n=>gl.getAttribLocation(program,n));attrs.forEach(a=>gl.enableVertexAttribArray(a));
- const uniforms=Object.fromEntries(['time','morph','aspect','amplitude','bass','mid','high','reduced','pointer','tint','points','region','pulse'].map(n=>[n,gl.getUniformLocation(program,n)]));
+ const uniforms=Object.fromEntries(['time','morph','aspect','amplitude','bass','mid','high','reduced','pointer','tint','points','region','pulse','dock','center','entityScale'].map(n=>[n,gl.getUniformLocation(program,n)]));
  gl.enable(gl.BLEND);gl.blendFuncSeparate(gl.SRC_ALPHA,gl.ONE_MINUS_SRC_ALPHA,gl.ONE,gl.ONE_MINUS_SRC_ALPHA);
  const label=()=>{button.textContent=paused?'Resume background motion':'Pause background motion';button.setAttribute('aria-pressed',String(paused))};
  button.onclick=safe(async()=>{await savePrefs({motion:!studioPrefs.motion})});
@@ -62,7 +62,10 @@
  window.addEventListener('studio-state',()=>{const r=state.run,action=(state.actions||[]).at(-1);region=-1;pulse=0;if(r&&!r.finished){phase=r.phase||'Working';region=/think|reason/i.test(phase)?0:/compact/i.test(phase)?1:3;pulse=.7;if(action&&['running','ready','pending'].includes(action.status)){region=/memory|history|remember/.test(action.name)?1:2;pulse=1}}dirty=true});
  window.addEventListener('mint-token',()=>{region=3;pulse=1;dirty=true});
  window.addEventListener('pointermove',e=>{px=e.clientX/innerWidth-.5;py=.5-e.clientY/innerHeight});
- window.addEventListener('resize',()=>dirty=true);reduce.addEventListener('change',()=>{paused=reduce.matches||!studioPrefs.motion;dirty=true;label()});
+ let stage;
+ function layoutStage(){const main=document.querySelector('.main').getBoundingClientRect(),top=document.querySelector('.topbar').getBoundingClientRect().bottom,bottom=document.querySelector('.composer-area').getBoundingClientRect().top;stage={x:main.x,width:main.width,top,height:Math.max(120,bottom-top)};status.style.left=(stage.x+stage.width/2)+'px';status.style.top=(stage.top+stage.height*.76)+'px';status.style.maxWidth=Math.max(240,stage.width-48)+'px';document.body.classList.toggle('voice-compact',stage.height<300);dirty=true}
+ new ResizeObserver(layoutStage).observe(document.querySelector('.main'));new ResizeObserver(layoutStage).observe(document.querySelector('.composer-area'));layoutStage();
+ window.addEventListener('resize',layoutStage);reduce.addEventListener('change',()=>{paused=reduce.matches||!studioPrefs.motion;dirty=true;label()});
  canvas.addEventListener('webglcontextlost',e=>{e.preventDefault();canvas.hidden=true;document.body.classList.add('entity-fallback')});
  function frame(now){requestAnimationFrame(frame);targetVoice=Number(document.body.dataset.voice==='conversation'&&!document.body.classList.contains('voice-review'));if(document.hidden)return;const interval=targetVoice?1000/60:1000/30;if(now-last<interval||paused&&!dirty&&Math.abs(voice-targetVoice)<.001)return;const dt=Math.min((now-last)/1000,.05);last=now;dirty=false;if(!paused)t+=dt;voice=paused?targetVoice:voice+(targetVoice-voice)*(1-Math.exp(-dt*6));pulse*=Math.exp(-dt*.25);
  const ratio=Math.min(devicePixelRatio||1,1.5),w=Math.min(2560,Math.round(innerWidth*ratio)),h=Math.round(w*innerHeight/innerWidth);if(canvas.width!==w||canvas.height!==h){canvas.width=w;canvas.height=h;gl.viewport(0,0,w,h)}
@@ -70,6 +73,9 @@
  const audio={};for(const k of ['rms','bass','mid','high'])audio[k]=Math.min(1,Math.max(microphone[k]||0,output[k]||0));
  for(const [k,v] of Object.entries({time:t,morph:voice,aspect:w/h,amplitude:audio.rms,bass:audio.bass,mid:audio.mid,high:audio.high,reduced:Number(paused),region,pulse}))gl.uniform1f(uniforms[k],v);
  gl.uniform2f(uniforms.pointer,px,py);
+ gl.uniform2f(uniforms.dock,(stage.x+stage.width-90)/innerWidth*2-1,1-(stage.top+90)/innerHeight*2);
+ gl.uniform2f(uniforms.center,(stage.x+stage.width/2)/innerWidth*2-1,1-(stage.top+stage.height*.40)/innerHeight*2);
+ gl.uniform1f(uniforms.entityScale,Math.min(stage.width*.66,stage.height*.75)/(innerHeight*.58));
  for(const [buf,count,mode,point] of [[lines,links.length/7,gl.LINES,0],[dots,nodes.length,gl.POINTS,1]]){gl.bindBuffer(gl.ARRAY_BUFFER,buf);gl.vertexAttribPointer(attrs[0],3,gl.FLOAT,false,28,0);gl.vertexAttribPointer(attrs[1],3,gl.FLOAT,false,28,12);gl.vertexAttribPointer(attrs[2],1,gl.FLOAT,false,28,24);gl.uniform1f(uniforms.points,point);gl.drawArrays(mode,0,count)}
  }label();requestAnimationFrame(frame);
  }catch(error){console.error('Luminaria renderer unavailable',error);canvas.remove();button.remove();document.body.classList.add('entity-fallback');window.addEventListener('studio-voice-state',e=>status.querySelector('strong').textContent=e.detail)}

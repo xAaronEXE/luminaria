@@ -77,13 +77,14 @@
    const r=await fetch('/api/voice/speak',{method:'POST',headers:{'X-Studio-Token':token,'Content-Type':'application/json'},body:JSON.stringify({text:queue.shift(),voice_id:studioPrefs.voice_id||'lessac'}),signal:fetchController.signal});
    if(!r.ok)throw Error('Local speech synthesis failed');const blob=await r.blob();if(!enabled||current!==epoch)break;
    const url=URL.createObjectURL(blob),player=new Audio(url);player.playbackRate=studioPrefs.voice_rate||1;audio=player;
-   const analyser=context.createAnalyser();analyser.fftSize=1024;const media=context.createMediaElementSource(player);media.connect(analyser);analyser.connect(context.destination);const bins=new Uint8Array(analyser.frequencyBinCount);const pulse=()=>{if(audio!==player||player.paused)return;analyser.getByteFrequencyData(bins);window.dispatchEvent(new CustomEvent('studio-audio',{detail:audioFrame(analyser,'output')}));requestAnimationFrame(pulse)};player.addEventListener('playing',pulse); label('Speaking · talk to interrupt');
-   try{await new Promise((resolve,reject)=>{player.onended=resolve;player.onerror=()=>reject(Error('Audio playback failed'));player.onpause=resolve;player.play().catch(reject)})}finally{media.disconnect();analyser.disconnect();window.dispatchEvent(new CustomEvent('studio-audio',{detail:{source:'output',rms:0,bass:0,mid:0,high:0}}));URL.revokeObjectURL(url)}
-  }}catch(e){if(e.name!=='AbortError')toast(e.message,true)}finally{if(current===epoch){speaking=false;audio=null;if(enabled)label('Listening · speak naturally')}}
+   const analyser=context.createAnalyser();analyser.fftSize=1024;const media=context.createMediaElementSource(player);media.connect(analyser);analyser.connect(context.destination);const bins=new Uint8Array(analyser.frequencyBinCount);const pulse=()=>{if(audio!==player||player.paused)return;analyser.getByteFrequencyData(bins);window.dispatchEvent(new CustomEvent('studio-audio',{detail:audioFrame(analyser,'output')}));requestAnimationFrame(pulse)};player.addEventListener('playing',()=>{if(current!==epoch)return;pulse();label('Speaking · talk to interrupt')});
+   try{await new Promise((resolve,reject)=>{player.onended=resolve;player.onerror=()=>current!==epoch?resolve():reject(Error('Audio playback failed'));player.onpause=resolve;player.play().catch(reject)})}finally{media.disconnect();analyser.disconnect();window.dispatchEvent(new CustomEvent('studio-audio',{detail:{source:'output',rms:0,bass:0,mid:0,high:0}}));URL.revokeObjectURL(url)}
+  }}catch(e){if(current===epoch&&e.name!=='AbortError')toast(e.message,true)}finally{if(current===epoch){speaking=false;audio=null;if(enabled)label('Listening · speak naturally')}}
  }
  window.addEventListener('studio-state',()=>{
-  if(!enabled||mode==='dictation')return;if(state.run?.phase==='Error'){clearSpeech();label('Reply failed � see chat for details')}if(chat!==voiceChat){end();return}
+  if(!enabled||mode==='dictation')return;if(state.run?.phase==='Error'){clearSpeech();label('Reply failed · see chat for details')}if(chat!==voiceChat){end();return}
   document.body.classList.toggle('voice-review',state.run?.phase==='Waiting for approval');if(state.run?.phase==='Waiting for approval'){label('Review the tool approval on screen');return}
+  if(active()&&!speaking&&!talking&&!transcribing)label((state.run.phase||'Working')+' - you can interrupt');
   for(const m of state.messages||[]){
    if(seen.has(m.id))continue;seen.add(m.id);
    if(m.role!=='assistant'||m.tool_calls?.length||m.interrupted||!m.content)continue;

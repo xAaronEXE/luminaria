@@ -44,3 +44,10 @@ body[data-voice=conversation]:not(.voice-review) #ambient-field{opacity:1}body[d
 .chat-rename{width:min(360px,45vw);padding:7px 10px;border:1px solid var(--accent);border-radius:6px;background:var(--panel);color:var(--text)}
 
 .toast{background:var(--raised);color:var(--text);border-color:var(--line)}.toast.error{background:var(--panel);color:var(--danger);border-color:var(--danger)}.profile-symbol{background:var(--raised);color:var(--text)}.approval{background:var(--panel);border-color:var(--accent)}.approval-footer{border-color:var(--line)}.model-option.selected{border-color:var(--accent)}
+
+/* Fit the voice stage to the conversation viewport above its controls. */
+.entity-caption{top:auto;left:auto;max-width:calc(100vw - 48px)}
+.entity-caption>span{display:none}.entity-caption strong{font-size:clamp(17px,1.8vw,24px);margin:0 0 5px;line-height:1.3}.entity-caption small{font-size:12px}
+.voice-bar{box-shadow:none;gap:14px}.voice-bar #voice-status{min-width:0;line-height:1.4}.voice-bar button{flex-shrink:0}
+body.voice-compact .entity-caption{display:none}
+body[data-voice=conversation]:not(.voice-review) .inspector-content,body[data-voice=conversation]:not(.voice-review) .files-explanation{opacity:.4}
