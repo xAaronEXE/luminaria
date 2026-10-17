@@ -25,3 +25,7 @@ The final design review cleared compact overlap, scene framing, recorded-node la
 Aaron must perform docs/testing-0.2.8.md against the packaged Windows candidate. Native WebView2 rendering, real model/tool event execution and history recovery, microphone/speaker interruption, entity motion during real concurrent voice/task activity, installation/update behavior and measured native performance remain unverified in this change. Prior-version voice results do not establish these outcomes for 0.2.8.
 
 Do not publish, tag or merge as an accepted release until that acceptance passes. Model-provided plans/reasoning remain labeled; the scene does not expose otherwise unavailable internal model computation.
+
+## Build result
+
+The local build.ps1 completed successfully and produced release/Luminaria-0.2.8-Setup.exe (178967755 bytes). Its SHA-256 matches release/SHA256SUMS.txt: 423120c392d9931b2a86d346921f6343c13d44d87d0a0095916a5e0be1906c63. The bundled VERSION is 0.2.8. Build log: data/build-0.2.8-delivery.log (local ignored file). The installer was not launched, published or claimed signed. Build completion is not Windows acceptance.
