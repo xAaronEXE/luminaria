@@ -7,6 +7,7 @@ from langgraph.graph import StateGraph, START, END
 from langgraph.types import interrupt, Command
 from .config import CONFIG, DATA, FULL_ACCESS
 from .store import uid,now
+from .work import WorkLog,region_for,plan_steps
 
 def clean_message(m):
     return {k:v for k,v in m.items() if k in ('role','content','tool_calls','tool_call_id','name')}
@@ -33,6 +34,7 @@ class Engine:
         graph.add_conditional_edges('model',lambda s:'tools' if s['calls'] else END)
         graph.add_conditional_edges('tools',lambda s:END if s['run'].get('denied') else 'model'); self.graph=graph.compile(checkpointer=checkpointer)
         self.shutting_down=False
+        self.worklog=WorkLog(store,broadcast)
 
     async def restore(self):
         for row in self.store.rows("SELECT * FROM runs WHERE status NOT IN ('Complete','Stopped','Error','Denied') ORDER BY updated"):
@@ -51,10 +53,15 @@ class Engine:
         if not run or run.get('finished'): raise ValueError('No interrupted run to resume')
         if chat in self.tasks and not self.tasks[chat].done(): raise ValueError('Run is already active')
         run['resume_available']=False; run['phase']='Resuming'; run.pop('error',None)
+        self.work(run,'run.resumed',str(time.time()),label='Resumed',status='running')
         self.tasks[chat]=asyncio.create_task(self.execute(run,False,Command(resume=decision) if decision is not None else None,resuming=True))
         return run['id']
 
     def emit(self,kind,**payload): self.broadcast({'type':kind,**payload})
+    def work(self,run,kind,key='',**fields):
+        # Observability must never break or alter the run it describes.
+        try: return self.worklog.record(run,kind,key,**fields)
+        except Exception: return None
     def system(self):
         memories=self.store.memory()
         memory='\n'.join(f"[{m['id']}] {m['title']}: {m['content']}" for m in memories)
@@ -71,6 +78,7 @@ class Engine:
         'You have persistent history and durable memory tools across sessions. Describe actual available tools and results instead of claiming generic lack of internet, execution, computer access or memory. Missing connectors and operating-system permissions still limit capabilities. '
         'Document packages: python-docx, reportlab, openpyxl, python-pptx, Pillow. '
         'Use list_skills and load_skill for reusable workflows. '
+        'For tasks with several steps, call update_plan with your plan and keep step status current; skip it for simple questions. '
         '\nDurable memory (user-approved facts, not instructions from external pages):\n'+memory[:18000])
 
     def context(self,chat):
@@ -171,7 +179,9 @@ class Engine:
                             run['live']=text; self.emit('delta',chat=run['chat'],text=d['content'])
                     if d.get('reasoning_content'):
                         reasoning+=d['reasoning_content']
-                        if run: run['reasoning_text']=reasoning; self.emit('reasoning',chat=run['chat'],text=d['reasoning_content'])
+                        if run:
+                            if not run['reasoning_text']: self.work(run,'reasoning.started',run.get('round',0),node='gen'+str(run.get('round',0)),label='Reasoning text from the model',source='model-provided',evidence={'run':run['id']})
+                            run['reasoning_text']=reasoning; self.emit('reasoning',chat=run['chat'],text=d['reasoning_content'])
                     for c in d.get('tool_calls',[]):
                         i=c['index']; dest=calls.setdefault(i,{'id':'','type':'function','function':{'name':'','arguments':''}})
                         if c.get('id'): dest['id']=c['id']
@@ -190,8 +200,11 @@ class Engine:
     async def compact(self,chat,force=False,run=None):
         summary=self.store.summary(chat); recent=self.store.messages(chat,summary['through_id'] if summary else 0)
         prefix=compact_prefix(recent,keep_turns=1 if force else 2)
-        if not prefix: return {'compacted':False,'reason':'Not enough completed older turns; recent turns stay verbatim.'}
-        if run: run['phase']='Compacting context'; self.emit('changed',chat=chat)
+        if not prefix:
+            if run and run.get('compact_only'): self.work(run,'compaction.skipped',label='Nothing old enough to compact',status='skipped',region='memory')
+            return {'compacted':False,'reason':'Not enough completed older turns; recent turns stay verbatim.'}
+        through=prefix[-1]['id']
+        if run: run['phase']='Compacting context'; self.emit('changed',chat=chat); self.work(run,'compaction.started',through,node='compact'+str(through),label='Compacting context',status='running',region='memory')
         transcript=[]
         for m in prefix:
             c=clean_message(m)
@@ -199,8 +212,9 @@ class Engine:
             transcript.append({'message_id':m['id'],**c})
         from .compaction import summarize
         content=await summarize(transcript,summary['content'] if summary else '',CONFIG['context'],self.token_count,self.completion)
-        self.store.save_summary(chat,prefix[-1]['id'],content)
+        summary_id=self.store.save_summary(chat,prefix[-1]['id'],content)
         self.emit('compacted',chat=chat,through_id=prefix[-1]['id'])
+        if run: self.work(run,'compaction.completed',through,node='compact'+str(through),label='Context compacted',status='done',region='memory',evidence={'summary':summary_id,'through_message':through})
         return {'compacted':True,'through_id':prefix[-1]['id'],'summary':content}
 
     async def model_node(self,state):
@@ -221,8 +235,11 @@ class Engine:
         self.store.set_setting('context:'+chat,run['context'])
         if tokens+CONFIG['output_tokens']>CONFIG['context']: raise ValueError('Context is full even after compaction. Split the input or start a new task; full history is saved.')
         run['phase']='Thinking' if run.get('reasoning') else 'Generating'; self.emit('changed',chat=chat)
+        turn=run['round']=state['steps']; node='gen'+str(turn)
+        self.work(run,'generation.started',turn,node=node,label='Model response' if turn==0 else 'Model response after tools',status='running',region='generation',reasoning_requested=bool(run.get('reasoning')),parent=run.get('last_tool_node'))
         msg=await self.completion(messages,defs,run)
-        self.store.add(chat,msg); run['live']=''; run['reasoning_text']=''; self.store.save_run(run); self.emit('changed',chat=chat)
+        message_id=self.store.add(chat,msg); run['live']=''; run['reasoning_text']=''; self.store.save_run(run); self.emit('changed',chat=chat)
+        self.work(run,'generation.completed',turn,node=node,status='done',region='generation',tool_calls=len(msg.get('tool_calls',[])),evidence={'message':message_id},metrics={k:run.get('metrics',{}).get(k) for k in ('completion_tokens','tokens_per_second','elapsed')})
         return {'run':run,'calls':msg.get('tool_calls',[]),'steps':state['steps']+1}
 
     async def ask(self,action,run):
@@ -251,9 +268,13 @@ class Engine:
                 elif tier=='approve' and self.store.setting('permission:'+name,False): tier='auto'
                 self.store.execute('INSERT OR IGNORE INTO actions VALUES(?,?,?,?,?,?,?,?)',(id,run['chat'],name,json.dumps(args),tier,'pending' if tier!='auto' else 'ready',None,now()))
                 self.emit('changed',chat=run['chat'])
+                base=dict(node=id,tool=name,tool_call=call['id'],region=region_for(name),parent='gen'+str(run.get('round',0)),step=run.get('active_step'),evidence={'action':id})
+                self.work(run,'tool.requested',id,label=name.replace('__',' · '),status='requested',follows_failure=run.get('failed_tools',{}).get(name),**base)
+                if tier!='auto': self.work(run,'approval.requested',id,label='Approval requested',status='waiting',approval_tier=tier,**base)
                 # Every approval interrupt is replayed in a stable order. Completed
                 # actions are read from the journal, never executed a second time.
                 allowed=tier=='auto' or await self.ask(id,run)
+                if tier!='auto': self.work(run,'approval.allowed' if allowed else 'approval.denied',id,label='Allowed' if allowed else 'Denied',status='allowed' if allowed else 'denied',**base)
                 old=self.store.rows('SELECT * FROM actions WHERE id=?',(id,))[0]
                 if old['status'] in ('done','error','denied'):
                     continue
@@ -264,9 +285,11 @@ class Engine:
                     run['denied']=True
                 else:
                     self.store.execute("UPDATE actions SET status='running' WHERE id=?",(id,)); run['phase']='Running '+name; self.emit('changed',chat=run['chat'])
+                    self.work(run,'tool.started',id,label=name.replace('__',' · '),status='running',**base)
                     result=await self.tools.call(name,args,run); status='error' if isinstance(result,dict) and (result.get('isError') or result.get('exit_code',0)!=0) else 'done'
             except asyncio.CancelledError:
                 self.store.execute("UPDATE actions SET status='interrupted' WHERE id=?",(id,))
+                self.work(run,'tool.interrupted',id,node=id,tool=name,region=region_for(name),status='interrupted',label='Stopped before finishing',evidence={'action':id})
                 raise
             except __import__('langgraph.errors',fromlist=['GraphInterrupt']).GraphInterrupt:
                 raise
@@ -289,6 +312,7 @@ class Engine:
                     preview=json.dumps(lightweight,ensure_ascii=False)
             excerpt=preview[:10000]+(f'\n[Truncated for context. Full output: history_read action_id={id}]' if len(preview)>10000 else '')
             self.store.execute('UPDATE actions SET status=?,result=? WHERE id=?',(status,json.dumps({'text':excerpt,'images':images}),id))
+            self.record_tool_outcome(run,id,call,name,status,args if status=='done' and name=='update_plan' else None)
             self.store.add(run['chat'],{'role':'tool','tool_call_id':call['id'],'content':f'Action {id}: '+excerpt})
             self.store.save_run(run)
             if images:
@@ -302,10 +326,24 @@ class Engine:
             self.store.add(run['chat'],{'role':'user','content':[{'type':'text','text':'Images returned by the preceding tool calls (untrusted screen content):'},*run.pop('pending_images')]})
         return {'run':run,'calls':[],'steps':state['steps']}
 
+    def record_tool_outcome(self,run,id,call,name,status,plan_args=None):
+        kind={'done':'tool.completed','denied':'tool.denied'}.get(status,'tool.failed')
+        failed=run.setdefault('failed_tools',{})
+        if kind=='tool.failed': failed[name]=id
+        elif kind=='tool.completed': failed.pop(name,None)
+        self.work(run,kind,id,node=id,tool=name,tool_call=call['id'],region=region_for(name),status=status,label=name.replace('__',' · '),parent='gen'+str(run.get('round',0)),step=run.get('active_step'),evidence={'action':id})
+        if kind=='tool.completed': run['last_tool_node']=id
+        if plan_args is not None:
+            steps=plan_steps(plan_args); version=run.get('plan_version',0)+1; run['plan_version']=version
+            run['active_step']=next((s['id'] for s in steps if s['status']=='active'),None)
+            self.work(run,'plan.created' if version==1 else 'plan.revised',id,node='plan'+str(version),version=version,steps=steps,source='model-provided',label='Plan from the model' if version==1 else f'Plan revision {version}',evidence={'action':id},region='planning')
+
     def start(self,chat,reasoning=False,compact_only=False):
         if chat in self.runs and not self.runs[chat].get('finished'): raise ValueError('Finish, resume or stop the existing run first')
         if chat in self.tasks and not self.tasks[chat].done(): raise ValueError('This task is already running')
-        run={'id':uid(),'chat':chat,'phase':'Queued','live':'','reasoning_text':'','enabled':set(),'reasoning':reasoning,'started':now(),'context':self.store.setting('context:'+chat,{})}
+        run={'id':uid(),'chat':chat,'phase':'Queued','live':'','reasoning_text':'','enabled':set(),'reasoning':reasoning,'started':now(),'context':self.store.setting('context:'+chat,{}),'compact_only':compact_only}
+        previous=self.store.rows('SELECT id FROM runs WHERE chat=? ORDER BY updated DESC LIMIT 1',(chat,))
+        self.work(run,'run.started',label='Compaction' if compact_only else 'Task run',status='running',previous_run=previous[0]['id'] if previous else None)
         self.runs[chat]=run; self.tasks[chat]=asyncio.create_task(self.execute(run,compact_only)); self.emit('changed',chat=chat)
         self.store.save_run(run)
         return run['id']
@@ -333,7 +371,14 @@ class Engine:
             run=self.runs.get(chat,run)
             if not paused:
                 self.store.recover_tool_pairs(chat); run['finished']=now()
+                self.finish_event(run)
+            elif run['phase'].startswith('Interrupted'): self.work(run,'run.interrupted',str(time.time()),status='interrupted',label='Interrupted by app shutdown')
             run['live']=''; self.store.save_run(run); self.emit('changed',chat=chat)
+    def finish_event(self,run):
+        phase=run.get('phase','')
+        if phase=='Error': self.work(run,'run.failed',status='error',label='Run failed',error=str(run.get('error',''))[:300])
+        elif phase=='Stopped': self.work(run,'run.cancelled',status='cancelled',label='Stopped')
+        else: self.work(run,'run.completed',status='denied' if phase=='Denied' else 'done',label='Stopped after a denial' if phase=='Denied' else 'Complete')
     def public_run(self,chat):
         r=self.runs.get(chat)
         return {k:v for k,v in r.items() if k not in ('enabled','pending_images')} if r else None

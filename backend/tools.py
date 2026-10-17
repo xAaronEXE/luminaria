@@ -22,6 +22,7 @@ BUILTINS=[
  schema('memory_search','Search durable cross-chat memory and full saved conversation text by literal query.',{'query':S},['query'],'auto','memory'),
  schema('history_read','Retrieve saved message or complete tool output by ID. Original history remains after compaction.',{'message_id':I,'action_id':S},[],'auto','memory'),
  schema('remember','Save an explicit durable fact, preference or project decision with provenance. Requires approval.',{'title':S,'content':S},['title','content'],'approve','memory'),
+ schema('update_plan','Share or revise your plan for a multi-step task. The user sees it as your stated plan, separate from executed actions. Mark one step active while you work on it; list depends_on only for real dependencies.',{'steps':{'type':'array','minItems':1,'maxItems':24,'items':{'type':'object','properties':{'id':S,'title':S,'status':{'type':'string','enum':['pending','active','done','blocked','skipped']},'depends_on':{'type':'array','items':S}},'required':['id','title','status'],'additionalProperties':False}}},['steps'],'auto','planning'),
  schema('create_schedule','Schedule a recurring prompt while Studio is running. Every side effect still needs its normal approval. Minimum interval 5 minutes.',{'title':S,'prompt':S,'interval_minutes':I},['title','prompt','interval_minutes'],'approve','automation'),
 ]
 
@@ -38,7 +39,7 @@ class Toolbox:
         result=[dict(t) for t in BUILTINS if external_tools_enabled() or t['group']!='execution']
         if CONFIG.get('ask_reads',False):
             for t in result:
-                if t['tier']=='auto': t['tier']='approve'
+                if t['tier']=='auto' and t['group']!='planning': t['tier']='approve'
         for group,c in self.connectors.items():
             if not external_tools_enabled(): continue
             for t in c.tools:
@@ -69,6 +70,10 @@ class Toolbox:
     async def call(self,name,a,run):
         if (name in ('run_command','run_code') or '__' in name) and not external_tools_enabled():
             raise ValueError('Computer and command tools are disabled. Enable them in Settings first.')
+        if name=='update_plan':
+            from .work import plan_steps
+            steps=plan_steps(a)
+            return {'recorded':len(steps),'active':next((x['id'] for x in steps if x['status']=='active'),None)}
         if name=='list_skills':
             from .skills import catalog
             return [{k:s[k] for k in ('name','description','category','missing')} for s in catalog(self.connectors) if self.store.setting('skill:'+s['name'],True)]

@@ -168,6 +168,36 @@ master-spec requirements remain in scope.
 - Version 0.2.7 adds the expanded model library. See testing-0.2.7.md.
 - See verification-0.2.4.md for detailed historical evidence and remaining checks.
 
+## Spatial workspace and appearance (in progress, branch cursor/neural-workspace-11de)
+
+Done and verified only at the stated layer:
+- Structured work events are recorded per run in the run_events table and sent on the
+  existing event stream (see API.md). Verified by engine tests with a mocked model
+  stream: ordering, plan/tool/generation events, failure follow-ups, cancellation,
+  approval resume without duplicates. Not yet seen in the packaged app.
+- Optional model-provided update_plan tool. Whether local models use it well is unverified.
+- Appearance: black on white by default, white on black in dark mode, follow system,
+  an optional accent color (picker, no presets) shared across modes with an optional
+  per-mode accent, and every surface, text, state and spatial color editable per mode.
+  Contrast warnings, live application, save status, reset current mode, reset all
+  (confirmed). Applied before first paint from a local cache, then from the profile.
+  Legacy Acid Mint colors removed from style.css. Verified in a browser preview with
+  mocked APIs (screenshots) and by preference validation tests; not yet in the desktop app.
+  The pre-paint cache is shared by all profiles on the PC, so switching profile can
+  briefly show the previous profile's colors.
+
+Remaining:
+- Frontend scene store fed by work events (dedupe by id, order by seq, rebuild from
+  /api/chats/ID/work on reconnect and chat switch).
+- Renderer rewrite: entity (particle organism, deforming mesh, toroidal energy) plus a
+  neural lattice with functional regions, curved pathways, node clusters for long runs,
+  entity travel to the active node, adaptive quality and instancing. core.js still draws
+  the older brain-to-torus form; it now takes its color from the entity token.
+- Node inspection, two-way link with the Activity inspector, follow/overview/focus/
+  return controls, keyboard navigation and a non-3D activity view.
+- Continued typing during a run (queued messages); voice barge-in already cancels the run.
+- Version bump, release notes, packaged desktop acceptance on Windows.
+
 ## Locations
 
 - Project root: C:\Users\desse\Desktop\Luminaria
