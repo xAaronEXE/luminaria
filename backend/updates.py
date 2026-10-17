@@ -77,6 +77,7 @@ async def install():
         raise ValueError('The installer download was interrupted. Nothing was opened. Try again.') from None
     finally:
         if partial.exists(): partial.unlink()
-    subprocess.Popen([str(target)], creationflags=subprocess.CREATE_NO_WINDOW if os.name == 'nt' else 0)
+    from .update_handoff import launch
+    closing=launch(target)
     return {'launched': True, 'version': info['version'],
-            'message': 'Verified installer opened. Let it close Luminaria when asked. Profiles, chats, files and models stay in place.'}
+            'closing':closing,'message': 'Update verified. Luminaria is closing before Setup starts.' if closing else 'Verified installer opened. Close Luminaria before continuing Setup.'}
