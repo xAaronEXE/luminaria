@@ -13,8 +13,9 @@ before this update pass. Check the live channel again for current release status
   dependencies and pending/active/done/blocked/skipped statuses. The engine prompts
   the model to use it for multi-step work; this is model behavior, not a guarantee.
   Run a real Qwen task and inspect plan revisions, executed tools and recovery.
-- An explicit user-selectable planning-only mode is separate from this existing
-  tool. It has not been added or claimed implemented.
+- Plan only (0.2.11) is a composer toggle limited to read-only tools plus update_plan,
+  followed by Carry out plan. Verify it with a real model: the plan quality and that
+  carrying it out follows the recorded steps are model behaviour, not guaranteed.
 - Run docs/testing-0.2.8.md. Until native acceptance, distinguish publication for
   testing from an accepted release.
 
@@ -64,7 +65,8 @@ before this update pass. Check the live channel again for current release status
 
 - Real GitHub login was historically confirmed; restart/session recovery, logout,
   revoked/expired sessions, denied consent and offline behavior remain to verify.
-- Google and Discord publisher setup and live login flows remain to complete.
+- Google and Discord service flows are implemented (0.2.11). Registering their
+  publisher applications and a real login with each remain.
 - Keep mandatory sign-in disabled until explicitly requested and accepted; local
   profiles and hosted identity are separate from service integration permissions.
 - Exercise real Google Workspace, GitHub, messaging, database and other connector

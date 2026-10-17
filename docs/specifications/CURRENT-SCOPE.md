@@ -8,7 +8,8 @@ master-spec requirements remain in scope.
 
 - Permanent identity: Luminaria; use existing approved logo and sharing imagery.
 - Plain HTML/CSS/JavaScript, locally bundled assets, Python backend, Windows desktop.
-- Graphite/Ivory dark and light modes only. No custom color editor or palette engine.
+- Black-on-white light mode by default, inverse dark mode and Follow system. Every color,
+  including the accent, is user-customizable with pickers; no presets.
 - All app-owned binaries, runtime, models and saved data live beneath the consolidated
   Luminaria folder on the owner's Desktop. No model weights or user data in Git.
 - Agent operation enabled by default; explicit Review and restart-latched Full Access modes.
@@ -168,7 +169,7 @@ master-spec requirements remain in scope.
 - Version 0.2.7 adds the expanded model library. See testing-0.2.7.md.
 - See verification-0.2.4.md for detailed historical evidence and remaining checks.
 
-## Spatial workspace and appearance (0.2.8 candidate; unpublished)
+## Spatial workspace and appearance (0.2.8 onward; testing releases)
 
 The persistent conversational entity and neural lattice coexist. The entity moves
 through recorded task nodes during text or voice work. The lattice is an execution

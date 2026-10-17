@@ -3,7 +3,8 @@
 Deployed on the owner's personal Cloudflare account, separately from ACT resources.
 Service: https://luminaria-identity.johnnycox4431836.workers.dev
 
-GitHub is configured; Google and Discord remain unconfigured. Desktop 0.2.4 includes the
+GitHub is configured. Google and Discord flows are implemented and tested with mocked
+provider responses; each needs its OAuth application and secrets (steps below). Desktop 0.2.4 includes the
 pairing client, server session validation, protected Windows session storage and
 separate account profiles. Real provider login and mandatory release sign-in
 remain unverified/incomplete; development access remains available.
@@ -24,6 +25,39 @@ Register separate OAuth applications for Luminaria. Exact callback URLs:
 - GitHub: `https://luminaria-identity.johnnycox4431836.workers.dev/callback/github`
 - Google: `https://luminaria-identity.johnnycox4431836.workers.dev/callback/google`
 - Discord: `https://luminaria-identity.johnnycox4431836.workers.dev/callback/discord`
+
+### Google
+
+1. Google Cloud console → create or pick a project → APIs & Services → OAuth consent
+   screen (Google Auth Platform → Branding/Audience). User type External, app name
+   Luminaria, support and developer email. Scopes: `openid` and `.../auth/userinfo.profile`
+   only; these are non-sensitive, so no verification review is required.
+2. Audience → Publish app (In production). While in Testing, only listed test users
+   can sign in and sessions are refused for everyone else.
+3. Clients → Create client → Web application. Authorized redirect URI: the exact
+   Google callback above. No JavaScript origins are needed.
+4. Copy the client ID and secret straight into `wrangler secret put` (below).
+
+### Discord
+
+1. Discord Developer Portal → New Application → name Luminaria.
+2. OAuth2 → Redirects → add the exact Discord callback above and save.
+3. Copy the Client ID; Reset Secret and copy the Client Secret into Wrangler.
+   Only the `identify` scope is requested (username and ID, no email or servers).
+
+### Storing secrets
+
+```
+npx wrangler secret put GOOGLE_CLIENT_ID
+npx wrangler secret put GOOGLE_CLIENT_SECRET
+npx wrangler secret put DISCORD_CLIENT_ID
+npx wrangler secret put DISCORD_CLIENT_SECRET
+npx wrangler deploy
+```
+
+`GET /health` then reports `configured:true` for each provider and the desktop
+Accounts page enables its button. Cancelling or denying consent in the browser
+shows a cancellation page and the desktop stops waiting immediately.
 
 Store each provider's client ID and secret through Wrangler secrets, never in
 source, desktop assets, chat messages or configuration checked into Git:

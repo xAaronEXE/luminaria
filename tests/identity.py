@@ -53,6 +53,14 @@ class IdentityFlowTests(unittest.IsolatedAsyncioTestCase):
    flow=await identity.start('github');self.user['provider']='discord'
    with self.assertRaisesRegex(ValueError,'did not match'):await identity.poll(flow['flow_id'])
    self.assertTrue(self.revoked);self.assertFalse(profiles.PATH.exists())
+ async def test_browser_cancellation_stops_waiting_without_a_profile(self):
+  original=self.transport
+  self.transport=lambda request:httpx.Response(403,json={'error':'cancelled'}) if request.url.path=='/device/poll' else original(request)
+  with self.clients():
+   flow=await identity.start('google')
+   with self.assertRaisesRegex(ValueError,'cancelled or permission was denied'):await identity.poll(flow['flow_id'])
+   self.assertNotIn(flow['flow_id'],identity.pending);self.assertFalse(profiles.PATH.exists())
+   self.assertNotIn('/session',[path for path,_ in self.sent])
  async def test_same_server_identity_reuses_profile_without_email_linking(self):
   first=profiles.identity_profile(self.user);second=profiles.identity_profile(self.user)
   self.assertEqual(first['id'],second['id'])
