@@ -65,3 +65,15 @@ from the user's app/profile on port 3210. Through its actual UI:
 
 Use testing-0.2.17.md for the required installed-app results. The current local candidate
 is suitable for review and further acceptance, not a claim that the full plan is released.
+
+## Branch and PR handoff
+
+Local stacked branches: fix/0.2.17-desktop-acceptance (0.2.18 candidate),
+feature/0.2.19-hardware-tuning, feature/0.2.20-file-workflows. Planning-mode and repeated
+tuning-stop corrections were backported to their respective earlier candidates; rebasing
+changed only release documentation relative to the tested integrated source tree.
+
+GitHub inspection found existing open PR #19, “Docs: full scope of work in detail (all
+requirements, status, remaining)”. It was left untouched. No additional PR was opened and
+no implementation branch was pushed, preserving the one-open-PR requirement. Sequential
+PR creation follows resolution of that existing PR. User still owns build/publish steps.

@@ -71,6 +71,12 @@ as a side effect. Keep provider secrets in the Worker and never print release to
 
 ## Verification record for this change
 
+This section records the initial acceptance repair. Subsequent local implementation
+through 0.2.20 and its 174-test Python verification are recorded in
+`verification-0.2.20.md`; findings above remain the pre-change audit, not a claim that
+every listed gap is still present. The full approved scope remains in
+`remaining-scope-2026-10-17.md`.
+
 - `python -m unittest tests.checkpoint_continuation`: 8 passed, including command/
   integration effects, interrupted/errored mutations and continuation skips.
 - `python -m unittest tests.retrieval_reliability`: 10 passed (isolated tests).
