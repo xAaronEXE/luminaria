@@ -489,7 +489,7 @@ def _remove_projector(projector):
         if projector['id'] in _queue: _queue.remove(projector['id'])
         _persist_locked()
     _attach_projector(projector['id'], '')
-    return {'deleted': deleted, 'unregistered': False, 'message': 'Vision projector removed.' if deleted else 'No projector file was found.'}
+    return {'deleted': deleted, 'unregistered': False, 'message': 'Vision projector uninstalled.' if deleted else 'No projector file was found.'}
 
 def remove(ident, confirm):
     load_state()
@@ -526,4 +526,4 @@ def remove(ident, confirm):
         if path and _same_file(Path(item.get('model_file', '')), path): continue
         keep.append(item)
     models.save(keep)
-    return {'deleted': deleted, 'unregistered': True, 'message': 'Model file removed.' if deleted else 'Model removed from the library.'}
+    return {'deleted': deleted, 'unregistered': True, 'message': 'Model uninstalled.' if deleted else 'Model removed from the library.'}
