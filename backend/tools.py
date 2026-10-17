@@ -23,6 +23,7 @@ BUILTINS=[
  schema('history_read','Retrieve saved message or complete tool output by ID. Original history remains after compaction.',{'message_id':I,'action_id':S},[],'auto','memory'),
  schema('remember','Save an explicit durable fact, preference or project decision with provenance. Requires approval.',{'title':S,'content':S},['title','content'],'approve','memory'),
  schema('update_plan','Share or revise your plan for a multi-step task. The user sees it as your stated plan, separate from executed actions, and it is saved with the chat. Send the full plan each time. Mark one step active while you work on it; list depends_on only for real dependencies.',{'goal':{'type':'string','description':'One sentence: what the finished work achieves.'},'steps':{'type':'array','minItems':1,'maxItems':24,'items':{'type':'object','properties':{'id':S,'title':S,'detail':{'type':'string','description':'What will be done and how it will be checked.'},'status':{'type':'string','enum':['pending','active','done','blocked','skipped']},'depends_on':{'type':'array','items':S}},'required':['id','title','status'],'additionalProperties':False}}},['steps'],'auto','planning'),
+ schema('update_brief','Propose changes to the pinned working brief for this chat when the user states a goal, constraint, decision, pending item or reference to keep. The user sees and can edit it. You cannot add permissions or change entries the user wrote. Never copy passwords, keys or tokens; record where they are kept instead.',{'changes':{'type':'array','minItems':1,'maxItems':8,'items':{'type':'object','properties':{'op':{'type':'string','enum':['add','replace','remove']},'id':{'type':'string','description':'Entry id for replace or remove.'},'section':{'type':'string','enum':['goals','constraints','decisions','pending','references']},'text':{'type':'string','description':'One short sentence, under 300 characters.'}},'required':['op'],'additionalProperties':False}}},['changes'],'auto','planning'),
  schema('create_schedule','Schedule a recurring prompt while Studio is running. Every side effect still needs its normal approval. Minimum interval 5 minutes.',{'title':S,'prompt':S,'interval_minutes':I},['title','prompt','interval_minutes'],'approve','automation'),
 ]
 
@@ -100,6 +101,9 @@ class Toolbox:
             from .work import plan_steps
             steps=plan_steps(a)
             return {'recorded':len(steps),'active':next((x['id'] for x in steps if x['status']=='active'),None)}
+        if name=='update_brief':
+            from .brief import tool_update
+            return tool_update(self.store,run['chat'],a)
         if name=='list_skills':
             from .skills import catalog
             return [{k:s[k] for k in ('name','description','category','missing')} for s in catalog(self.connectors) if self.store.setting('skill:'+s['name'],True)]

@@ -13,7 +13,7 @@ import statistics
 from datetime import datetime, timedelta, timezone
 from .store import now, uid
 
-KINDS = ('generation', 'tool', 'task', 'skill')
+KINDS = ('generation', 'tool', 'task', 'skill', 'compaction')
 SYNC_KEYS = ('tokens_in', 'tokens_out', 'tokens_cached', 'generations', 'runs', 'active_seconds', 'wait_seconds',
              'tool_ok', 'tool_failed', 'reasoning_generations', 'skills_invoked')
 FAST_MIN_TOKENS = 32
@@ -216,6 +216,21 @@ class Usage:
             if g['data'].get('tps') and (g['data'].get('completion_tokens') or 0) >= FAST_MIN_TOKENS: entry['speeds'].append(g['data']['tps'])
         result['models'] = sorted(({**{k: v for k, v in m.items() if k != 'speeds'}, 'median_tps': round(statistics.median(m['speeds']), 1) if m['speeds'] else None} for m in models.values()), key=lambda m: -m['generations'])
         return result
+
+    def compaction(self, recent=8):
+        """Compaction health: duration, tokens before and after, summary size, validations and history lookups."""
+        runs = self.rows('compaction')
+        done = [r for r in runs if r['status'] == 'done']
+        lookups = self.store.rows("SELECT COUNT(*) AS n FROM usage_events WHERE kind='tool' AND name IN ('history_read','memory_search')")[0]['n']
+        avg = lambda key: round(statistics.mean(r['data'][key] for r in done if r['data'].get(key) is not None), 1) if any(r['data'].get(key) is not None for r in done) else None
+        saved = [1 - r['data']['tokens_after'] / r['data']['tokens_before'] for r in done if r['data'].get('tokens_before') and r['data'].get('tokens_after') is not None]
+        return {'runs': len(runs), 'completed': len(done), 'failed': len(runs) - len(done),
+                'failed_validations': sum(r['data'].get('failed_validations', 0) for r in runs),
+                'restored_references': sum(r['data'].get('restored', 0) for r in done),
+                'average_seconds': avg('seconds'), 'average_summary_tokens': avg('summary_tokens'),
+                'average_reduction': round(100 * statistics.mean(saved)) if saved else None,
+                'history_lookups': lookups,
+                'recent': [{'created': r['created'], 'status': r['status'], **{k: r['data'].get(k) for k in ('seconds', 'tokens_before', 'tokens_after', 'summary_tokens', 'chunks', 'failed_validations', 'restored', 'forced', 'reason')}} for r in runs[-recent:]][::-1]}
 
     def export(self, tz_name=''):
         tz, used = zone(tz_name)

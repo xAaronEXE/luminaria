@@ -91,7 +91,7 @@ async def bootstrap(): return {'token':TOKEN,'version':CONFIG['version'],'name':
 @app.get('/api/state')
 async def state(chat:str=''):
     if chat: require_chat(chat)
-    return {'chats':store.chats(),'chat':chat,'messages':store.messages(chat) if chat else [],'actions':store.actions(chat) if chat else [],'summary':store.summary(chat) if chat else None,'summaries':store.rows('SELECT id,through_id,created FROM summaries WHERE chat=? ORDER BY id',(chat,)) if chat else [],'run':engine.public_run(chat),'context':store.setting('context:'+chat,{}),'plan':store.setting('plan:'+chat,None) if chat else None,'orchestration':{'router':CONFIG.get('orchestrator_model',''),'enabled':bool(CONFIG.get('orchestrator_model')) and CONFIG.get('orchestration_enabled',True)},'memories':store.memory(),'schedules':store.rows('SELECT * FROM schedules ORDER BY next_run'),'workspace':CONFIG['workspace'],'model':CONFIG['model'],'context_limit':CONFIG['context'],'connectors':{n:{'status':c.status,'tools':len(c.tools)} for n,c in connectors.items()},'tool_count':len(engine.tools.catalog()),'active_runs':[{'chat':k,'phase':v['phase']} for k,v in engine.runs.items() if not v.get('finished')]}
+    return {'chats':store.chats(),'chat':chat,'messages':store.messages(chat) if chat else [],'actions':store.actions(chat) if chat else [],'summary':store.summary(chat) if chat else None,'summaries':store.rows('SELECT id,through_id,created FROM summaries WHERE chat=? ORDER BY id',(chat,)) if chat else [],'run':engine.public_run(chat),'context':store.setting('context:'+chat,{}),'plan':store.setting('plan:'+chat,None) if chat else None,'brief':brief_summary(chat) if chat else None,'orchestration':{'router':CONFIG.get('orchestrator_model',''),'enabled':bool(CONFIG.get('orchestrator_model')) and CONFIG.get('orchestration_enabled',True)},'memories':store.memory(),'schedules':store.rows('SELECT * FROM schedules ORDER BY next_run'),'workspace':CONFIG['workspace'],'model':CONFIG['model'],'context_limit':CONFIG['context'],'connectors':{n:{'status':c.status,'tools':len(c.tools)} for n,c in connectors.items()},'tool_count':len(engine.tools.catalog()),'active_runs':[{'chat':k,'phase':v['phase']} for k,v in engine.runs.items() if not v.get('finished')]}
 
 @app.get('/api/chats/{id}/work')
 async def work_events(id:str,runs:int=12):
@@ -478,6 +478,23 @@ async def session(id:str): return await state(id)
 async def delete_session(id:str):
     await stop_chat(id); store.execute('UPDATE chats SET archived=1 WHERE id=?',(id,));return {'archived':True,'history_preserved':True}
 
+def brief_summary(chat):
+    from .brief import load
+    entries=load(store,chat)['entries']
+    return {'entries':len(entries),'pinned':sum(1 for e in entries if e.get('pinned',True))}
+
+@app.get('/api/chats/{id}/brief')
+async def chat_brief(id:str):
+    from .brief import load,SECTIONS,MAX_ENTRIES,MAX_TEXT
+    require_chat(id); return {'brief':load(store,id),'sections':SECTIONS,'max_entries':MAX_ENTRIES,'max_text':MAX_TEXT}
+
+@app.post('/api/chats/{id}/brief')
+async def chat_brief_change(id:str,request:Request):
+    from .brief import apply
+    require_chat(id); b=await request.json()
+    brief=apply(store,id,b.get('op'),'user',b.get('id'),b.get('section'),b.get('text'),b.get('pinned'))
+    broadcast({'type':'changed','chat':id}); return {'brief':brief}
+
 @app.get('/api/chats/{id}/plan')
 async def chat_plan(id:str):
     require_chat(id); return {'plan':store.setting('plan:'+id,None)}
@@ -829,6 +846,9 @@ def insights_sync_public():
     from .usage import sync_state
     state=sync_state(store)
     return {k:state.get(k) for k in ('enabled','last_sync','last_error','days_sent')}|{'enabled':bool(state.get('enabled'))}
+
+@app.get('/api/compaction/metrics')
+async def compaction_metrics(): return usage.compaction()
 
 @app.get('/api/insights')
 async def insights():

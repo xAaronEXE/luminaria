@@ -36,7 +36,7 @@ class CompactionTests(unittest.IsolatedAsyncioTestCase):
   async def count(messages):return sum(len(m['content']) for m in messages), 'test byte budget'
   async def complete(messages,max_tokens):
    payload=json.loads(messages[1]['content']);consumed.append(payload['transcript_fragment'])
-   return {'content':'Verified goals, constraints and pending tasks remain preserved.'}
+   return {'content':'Goal: verified goals kept.\nOpen work: pending tasks remain preserved.'}
   transcript=[{'message_id':1,'role':'user','content':'A'*18000+'END_SENTINEL'}]
   result=await summarize(transcript,'',4096,count,complete)
   self.assertEqual(''.join(consumed),json.dumps(transcript[0],ensure_ascii=False))
