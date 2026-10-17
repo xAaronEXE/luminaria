@@ -5,6 +5,9 @@ const providers = {
  discord:{authorize:'https://discord.com/oauth2/authorize',token:'https://discord.com/api/oauth2/token',user:'https://discord.com/api/users/@me',scope:'identify',pkce:false}
 };
 const now=()=>Math.floor(Date.now()/1000);
+// A remembered device stays signed in for 30 days after its last use, and never longer than 90 days in total.
+const SESSION_IDLE=30*86400,SESSION_MAX=90*86400;
+const deviceLabel=value=>typeof value==='string'?value.replace(/[^\p{L}\p{N} ._'()-]/gu,'').trim().slice(0,60)||null:null;
 const random=()=>Array.from(crypto.getRandomValues(new Uint8Array(32)),x=>x.toString(16).padStart(2,'0')).join('');
 const bytes=value=>new TextEncoder().encode(value);
 async function hash(value){return Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256',bytes(value))),x=>x.toString(16).padStart(2,'0')).join('');}
@@ -173,11 +176,11 @@ async function route(request,env){
    await env.DB.prepare('INSERT OR IGNORE INTO account_members VALUES(?,?,?)').bind(parent.id,parent.id,parent.provider).run();
    statements.push(env.DB.prepare('UPDATE account_members SET account_id=(SELECT account_id FROM account_members WHERE identity_id=?) WHERE account_id=(SELECT account_id FROM account_members WHERE identity_id=?) AND EXISTS(SELECT 1 FROM sessions WHERE token_hash=? AND expires>?)').bind(parent.id,device.identity_id,link.session_hash,time));
   }
-  const token=random(),tokenHash=await hash(token),expires=time+7*86400;
+  const token=random(),tokenHash=await hash(token),expires=time+SESSION_IDLE,label=deviceLabel(input.label);
   // Insertion and deletion share a transaction. Only one poll can obtain a session.
   const sessionIndex=statements.length;let results;
   try{results=await env.DB.batch([...statements,
-   env.DB.prepare('INSERT INTO sessions SELECT ?,identity_id,? FROM devices WHERE id=? AND secret_hash=? AND expires>? AND identity_id IS NOT NULL AND identity_id<>? AND (? IS NULL OR EXISTS(SELECT 1 FROM sessions WHERE token_hash=? AND expires>?))').bind(tokenHash,expires,input.device_id,digest,time,DENIED,link?.session_hash||null,link?.session_hash||null,time),
+   env.DB.prepare('INSERT INTO sessions(token_hash,identity_id,expires,created,last_seen,label) SELECT ?,identity_id,?,?,?,? FROM devices WHERE id=? AND secret_hash=? AND expires>? AND identity_id IS NOT NULL AND identity_id<>? AND (? IS NULL OR EXISTS(SELECT 1 FROM sessions WHERE token_hash=? AND expires>?))').bind(tokenHash,expires,time,time,label,input.device_id,digest,time,DENIED,link?.session_hash||null,link?.session_hash||null,time),
    env.DB.prepare('DELETE FROM devices WHERE id=? AND secret_hash=? AND identity_id IS NOT NULL').bind(input.device_id,digest),
    env.DB.prepare('DELETE FROM device_links WHERE device_id=?').bind(input.device_id)
   ]);}catch{return json({error:'Account already has a different identity for this provider. No account was changed.'},409);}
@@ -189,12 +192,39 @@ async function route(request,env){
   if(!token)return json({error:'Sign-in required'},401);
   const digest=await hash(token);
   if(path==='/logout'){await env.DB.prepare('DELETE FROM sessions WHERE token_hash=?').bind(digest).run();return json({signed_out:true});}
-  const user=await env.DB.prepare('SELECT i.id,i.provider,i.name,s.expires FROM sessions s JOIN identities i ON i.id=s.identity_id WHERE s.token_hash=? AND s.expires>?').bind(digest,time).first();
+  const user=await env.DB.prepare('SELECT i.id,i.provider,i.name,s.expires,s.created,s.last_seen FROM sessions s JOIN identities i ON i.id=s.identity_id WHERE s.token_hash=? AND s.expires>?').bind(digest,time).first();
   if(!user)return json({error:'Session expired or revoked'},401);
+  const started=user.created||time;
+  if(!user.last_seen||time-user.last_seen>3600||user.expires-time<SESSION_IDLE-86400){
+   user.expires=Math.max(user.expires,Math.min(time+SESSION_IDLE,started+SESSION_MAX));
+   await env.DB.prepare('UPDATE sessions SET expires=?,last_seen=?,created=COALESCE(created,?) WHERE token_hash=?').bind(user.expires,time,started,digest).run();
+  }
+  delete user.created;delete user.last_seen;
   await env.DB.prepare('INSERT OR IGNORE INTO account_members VALUES(?,?,?)').bind(user.id,user.id,user.provider).run();
   const account=await env.DB.prepare('SELECT i.id,i.name FROM account_members m JOIN identities i ON i.id=m.account_id WHERE m.identity_id=?').bind(user.id).first();
   const connections=await env.DB.prepare('SELECT i.id,i.provider,i.name FROM identities i JOIN account_members m ON m.identity_id=i.id WHERE m.account_id=? ORDER BY i.created,i.id').bind(account.id).all();
   return json({user,account,connections:connections.results});
+ }
+ if(path==='/sessions'&&request.method==='GET'||path==='/sessions/revoke'&&request.method==='POST'){
+  const token=request.headers.get('Authorization')?.match(/^Bearer ([a-f0-9]{64})$/)?.[1];
+  if(!token)return json({error:'Sign-in required'},401);
+  const digest=await hash(token);
+  const me=await env.DB.prepare('SELECT m.account_id FROM sessions s JOIN account_members m ON m.identity_id=s.identity_id WHERE s.token_hash=? AND s.expires>?').bind(digest,time).first();
+  if(!me)return json({error:'Session expired or revoked'},401);
+  const scope='FROM sessions s JOIN account_members m ON m.identity_id=s.identity_id JOIN identities i ON i.id=s.identity_id WHERE m.account_id=? AND s.expires>?';
+  if(path==='/sessions'){
+   const rows=await env.DB.prepare(`SELECT substr(s.token_hash,1,16) AS id,s.token_hash=? AS current,i.provider,s.label,s.created,s.last_seen,s.expires ${scope} ORDER BY s.last_seen DESC`).bind(digest,me.account_id,time).all();
+   return json({devices:rows.results.map(r=>({...r,current:Boolean(r.current)})),idle_days:SESSION_IDLE/86400,max_days:SESSION_MAX/86400});
+  }
+  const input=await body(request);
+  if(input.others===true){
+   const done=await env.DB.prepare(`DELETE FROM sessions WHERE token_hash IN (SELECT s.token_hash ${scope}) AND token_hash<>?`).bind(me.account_id,time,digest).run();
+   return json({revoked:done.meta.changes});
+  }
+  if(typeof input.id!=='string'||!/^[a-f0-9]{16}$/.test(input.id))return json({error:'Invalid device'},400);
+  const done=await env.DB.prepare(`DELETE FROM sessions WHERE token_hash IN (SELECT s.token_hash ${scope} AND substr(s.token_hash,1,16)=?)`).bind(me.account_id,time,input.id).run();
+  if(!done.meta.changes)return json({error:'That device is not signed in to your account'},404);
+  return json({revoked:done.meta.changes,current:digest.startsWith(input.id)});
  }
  return json({error:'Not found'},404);
 }

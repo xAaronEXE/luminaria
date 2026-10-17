@@ -11,7 +11,8 @@ CREATE TABLE IF NOT EXISTS oauth_states (
  provider TEXT NOT NULL, verifier TEXT NOT NULL, expires INTEGER NOT NULL
 );
 CREATE TABLE IF NOT EXISTS sessions (
- token_hash TEXT PRIMARY KEY, identity_id TEXT NOT NULL, expires INTEGER NOT NULL
+ token_hash TEXT PRIMARY KEY, identity_id TEXT NOT NULL, expires INTEGER NOT NULL,
+ created INTEGER, last_seen INTEGER, label TEXT
 );
 CREATE TABLE IF NOT EXISTS rate_limits (
  key TEXT PRIMARY KEY, count INTEGER NOT NULL, expires INTEGER NOT NULL
