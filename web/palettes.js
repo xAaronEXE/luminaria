@@ -21,7 +21,9 @@ async function renderPaletteSettings(body,p){
  function showWarnings(t){const out=body.querySelector('#contrast-warnings'),list=A.warnings(t);out.innerHTML=list.length?`<div class="contrast-warning"><strong>Low contrast</strong><ul>${list.map(w=>`<li>${esc(w.what)}: ${w.ratio}:1, needs ${w.min}:1</li>`).join('')}</ul></div>`:''}
  function change(persistNow){
   const r=A.apply(draft);showWarnings(r.tokens);status('Saving…');clearTimeout(timer);
-  timer=setTimeout(()=>{const value=JSON.parse(JSON.stringify(draft));saving=saving.then(async()=>{try{await api('/preferences','POST',{appearance:value});studioPrefs.appearance=value;studioPrefs.theme_mode=value.mode;status('Saved')}catch(e){status('Not saved: '+e.message+'. Change any color to retry.',true)}})},persistNow?0:450)
+  const value=JSON.parse(JSON.stringify(draft));
+  // Start persistence immediately: a desktop close can discard a debounce timer.
+  saving=saving.then(async()=>{try{await api('/preferences','POST',{appearance:value});studioPrefs.appearance=value;studioPrefs.theme_mode=value.mode;status('Saved')}catch(e){status('Not saved: '+e.message+'. Change any color to retry.',true)}})
  }
  function bind(){
   const $b=s=>body.querySelector(s),own=()=>draft.modes[A.tokens(draft).mode];

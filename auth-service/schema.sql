@@ -16,3 +16,10 @@ CREATE TABLE IF NOT EXISTS sessions (
 CREATE TABLE IF NOT EXISTS rate_limits (
  key TEXT PRIMARY KEY, count INTEGER NOT NULL, expires INTEGER NOT NULL
 );
+CREATE TABLE IF NOT EXISTS account_members (
+ identity_id TEXT PRIMARY KEY, account_id TEXT NOT NULL, provider TEXT NOT NULL,
+ UNIQUE(account_id,provider)
+);
+CREATE TABLE IF NOT EXISTS device_links (
+ device_id TEXT PRIMARY KEY, session_hash TEXT NOT NULL, expires INTEGER NOT NULL
+);

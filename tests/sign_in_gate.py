@@ -43,10 +43,11 @@ class GateTests(unittest.IsolatedAsyncioTestCase):
  async def test_not_required_is_always_unlocked(self):
   self.assertEqual(await identity.gate(),{'required':False,'unlocked':True})
 
- async def test_local_profile_is_locked_when_required(self):
+ async def test_local_data_container_requires_a_valid_session(self):
   data=profiles.registry();data['require_sign_in']=True;profiles.save(data)
-  result=await self.check(ok,profile_id='local')
+  result=await self.check(ok,profile_id='local',token=None)
   self.assertFalse(result['unlocked']);self.assertIn('Sign in',result['reason'])
+  self.assertTrue((await self.check(ok,profile_id='local'))['unlocked'])
 
  async def test_verified_account_unlocks_and_records_the_check(self):
   self.account_profile()

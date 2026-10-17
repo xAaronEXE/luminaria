@@ -17,7 +17,7 @@ class IdentityFlowTests(unittest.IsolatedAsyncioTestCase):
   identity.pending.clear();self.temp=tempfile.TemporaryDirectory();self.root=Path(self.temp.name)
   self.user={'id':'12345678-1234-4234-8234-123456789012','provider':'github','name':'Fixture Account','expires':9999999999}
   self.device='a'*64;self.secret='b'*64;self.token='c'*64;self.revoked=False;self.sent=[]
-  self.patches=[patch.object(identity,'BASE_DATA',self.root),patch.object(identity,'SESSION',self.root/'current.bin'),patch.object(profiles,'PATH',self.root/'profiles.json')]
+  self.patches=[patch.object(identity,'BASE_DATA',self.root),patch.object(identity,'DATA',self.root),patch.object(identity,'SESSION',self.root/'current.bin'),patch.object(profiles,'PATH',self.root/'profiles.json')]
   for p in self.patches:p.start()
  async def asyncTearDown(self):
   for p in reversed(self.patches):p.stop()
@@ -33,21 +33,32 @@ class IdentityFlowTests(unittest.IsolatedAsyncioTestCase):
  def clients(self):
   constructor=httpx.AsyncClient
   return patch.object(identity.httpx,'AsyncClient',side_effect=lambda **kwargs:constructor(transport=httpx.MockTransport(self.transport),**kwargs))
- async def test_pairing_never_returns_secrets_and_validates_before_profile_selection(self):
+ async def test_pairing_preserves_current_profile_and_encrypts_provider_session(self):
   with self.clients():
    flow=await identity.start('github');self.assertNotIn(self.secret,json.dumps(flow))
-   result=await identity.poll(flow['flow_id']);self.assertTrue(result['restart_required']);self.assertNotIn(self.token,json.dumps(result))
-   profile=result['profile'];self.assertNotEqual(profile['id'],'local')
-   path=self.root/'profiles'/profile['id']/'identity-session.bin';self.assertEqual(identity.read_session(path),self.token)
-   self.assertEqual(profiles.registry()['selected'],profile['id'])
-   with patch.object(identity,'SESSION',path):
-    self.assertTrue((await identity.status())['signed_in']);await identity.logout();self.assertFalse(path.exists())
-   self.assertTrue(self.revoked)
+   result=await identity.poll(flow['flow_id']);self.assertFalse(result['restart_required']);self.assertNotIn(self.token,json.dumps(result))
+   path=self.root/'identity-github.bin';self.assertEqual(identity.read_session(path),self.token)
+   self.assertFalse(profiles.PATH.exists())
+   status=await identity.status();self.assertTrue(status['signed_in']);self.assertEqual(status['connections'][0]['provider'],'github')
+   await identity.logout();self.assertFalse(path.exists());self.assertTrue(self.revoked)
  async def test_revoked_session_cannot_create_an_account_profile(self):
   with self.clients():
    flow=await identity.start('github');self.revoked=True
    with self.assertRaises(httpx.HTTPStatusError):await identity.poll(flow['flow_id'])
    self.assertFalse(profiles.PATH.exists());self.assertFalse(list(self.root.glob('profiles/*/identity-session.bin')))
+ async def test_multiple_provider_sessions_are_verified_together(self):
+  identity.save_session(self.root/'identity-github.bin','1'*64)
+  identity.save_session(self.root/'identity-discord.bin','2'*64)
+  def transport(request):
+   if request.url.path=='/session':
+    provider='github' if request.headers['Authorization'].endswith('1'*64) else 'discord'
+    return httpx.Response(200,json={'user':{**self.user,'provider':provider}})
+   return self.transport(request)
+  constructor=httpx.AsyncClient
+  with patch.object(identity.httpx,'AsyncClient',side_effect=lambda **kwargs:constructor(transport=httpx.MockTransport(transport),**kwargs)):
+   result=await identity.status()
+  self.assertEqual({u['provider'] for u in result['connections']},{'github','discord'})
+  self.assertFalse(profiles.PATH.exists())
  async def test_provider_mismatch_fails_and_revokes_issued_session(self):
   with self.clients():
    flow=await identity.start('github');self.user['provider']='discord'

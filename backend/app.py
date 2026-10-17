@@ -330,11 +330,19 @@ async def settings():
     public['access_status']=access_status()
     public['data_directory']=str(DATA); public['mcp_configured']=list(CONFIG.get('mcp',{})); return public
 
+@app.post('/api/workspace/browse')
+async def browse_workspace():
+    from .folder_picker import pick
+    return await asyncio.to_thread(pick,CONFIG['workspace'])
+
 @app.post('/api/settings')
 async def settings_save(request:Request):
     if any(not r.get('finished') for r in engine.runs.values()): raise ValueError('Finish or stop active tasks before changing settings')
     b=await request.json(); allowed={'workspace','endpoint','tokenizer','model','context','output_tokens','compact_ratio','python','node','llama_executable','model_file','projector_file','external_tools','ask_reads'}
-    allowed.add('access_mode')
+    allowed.update({'access_mode','orchestrator_model','compact_keep_turns'})
+    if b.get('orchestrator_model'):
+        from .models import registry
+        if not any(m['id']==b['orchestrator_model'] and Path(m['model_file']).is_file() for m in registry()):raise ValueError('Choose an installed orchestration model')
     if 'access_mode' in b and b['access_mode'] not in ('review','full'): raise ValueError('Choose review or full access')
     changes={k:v for k,v in b.items() if k in allowed}
     for key in ('external_tools','ask_reads'):
@@ -344,6 +352,9 @@ async def settings_save(request:Request):
     if 'context' in changes: changes['context']=max(4096,min(262144,int(changes['context'])))
     if 'output_tokens' in changes: changes['output_tokens']=max(256,min(8192,int(changes['output_tokens'])))
     if 'compact_ratio' in changes: changes['compact_ratio']=max(.4,min(.85,float(changes['compact_ratio'])))
+    if 'compact_keep_turns' in changes:
+        value=changes['compact_keep_turns']
+        if isinstance(value,bool) or not isinstance(value,int) or not 1<=value<=12:raise ValueError('Keep between 1 and 12 recent turns')
     if 'workspace' in changes: Path(changes['workspace']).mkdir(parents=True,exist_ok=True)
     save_config(changes); broadcast({'type':'changed'}); return {'ok':True}
 
@@ -410,6 +421,11 @@ async def skills():
 async def skill_import(request:Request):
     from .skills import save_skill
     b=await request.json(); return save_skill(b['name'],b['content'])
+
+@app.get('/api/skills/{name}')
+async def skill_instructions(name:str):
+    from .skills import load_skill
+    return load_skill(name)
 
 @app.delete('/api/skills/{name}')
 async def skill_remove(name:str):
@@ -571,8 +587,11 @@ async def voice_install_choice(id:str):
 
 @app.get('/api/preferences')
 async def preferences():
-    from .preferences import DEFAULTS,migrate
-    return DEFAULTS | migrate(store.setting('preferences',{}))
+    from .preferences import DEFAULTS,migrate,load_shared_appearance
+    result=DEFAULTS | migrate(store.setting('preferences',{}))
+    shared=load_shared_appearance()
+    if shared is not None:result.update(appearance=shared,theme_mode=shared['mode'])
+    return result
 
 @app.post('/api/models/{id}/benchmark')
 async def benchmark_model(id:str):
@@ -584,6 +603,27 @@ async def benchmark_model(id:str):
         return await measure(id)
     finally:
         benchmarking=False
+
+@app.post('/api/models/{id}/context')
+async def model_context(id:str,request:Request):
+    global benchmarking
+    if benchmarking or any(not r.get('finished') for r in engine.runs.values()):
+        raise ValueError('Finish active tasks and benchmarks before changing context')
+    from .models import set_context
+    from .runtime import stop_owned,start_swap,manager_state
+    body=await request.json()
+    manager=manager_state()
+    if manager.get('running') and not manager.get('owned'):
+        raise ValueError('The model manager belongs to another Luminaria process. Close that app and start the manager here before changing context.')
+    # Serializes concurrent model-management operations while the manager restarts.
+    benchmarking=True
+    try:
+        model=set_context(id,body.get('context'))
+        await asyncio.to_thread(stop_owned)
+        await asyncio.to_thread(start_swap)
+        broadcast({'type':'changed'})
+        return {'context':model['context'],'message':'Context saved. The model reloads on its next request.'}
+    finally:benchmarking=False
 
 @app.post('/api/models/{id}/evaluate')
 async def evaluate_model(id:str):
@@ -646,9 +686,11 @@ async def model_remove(id:str, request:Request):
 
 @app.post('/api/preferences')
 async def preferences_save(request:Request):
-    from .preferences import validate
+    from .preferences import validate,save_shared_appearance
     values=validate(await request.json())
-    if 'appearance' in values: values['theme_mode']=values['appearance']['mode']
+    if 'appearance' in values:
+        save_shared_appearance(values['appearance'])
+        values['theme_mode']=values['appearance']['mode']
     values=store.setting('preferences',{}) | values
     store.set_setting('preferences',values); return {'ok':True}
 

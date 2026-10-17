@@ -1,5 +1,21 @@
 """Validated, profile-local presentation and voice preferences."""
 import re
+import json
+from pathlib import Path
+
+def shared_appearance_path():
+    from .config import BASE_DATA
+    return BASE_DATA/'appearance.json'
+
+def load_shared_appearance():
+    path=shared_appearance_path()
+    if not path.exists():return None
+    return appearance(json.loads(path.read_text(encoding='utf-8')))
+
+def save_shared_appearance(value):
+    value=appearance(value)
+    path=shared_appearance_path();path.parent.mkdir(parents=True,exist_ok=True)
+    tmp=path.with_suffix('.tmp');tmp.write_text(json.dumps(value),encoding='utf-8');tmp.replace(path)
 
 COLOR_KEYS = {'bg','sidebar','panel','raised','hover','line','text','muted','dim','accent','accent-dark','glow','warning','danger'}
 DEFAULTS = {'theme_mode': 'light', 'theme': 'Graphite & Ivory', 'background': '#141A17', 'accent': '#EAE6D9', 'colors': {},

@@ -3,6 +3,7 @@ from contextlib import AsyncExitStack,asynccontextmanager
 from pathlib import Path
 from typing import TypedDict
 import httpx
+from contextvars import ContextVar
 from langgraph.graph import StateGraph, START, END
 from langgraph.types import interrupt, Command
 from .config import CONFIG, DATA, FULL_ACCESS
@@ -33,6 +34,7 @@ class Engine:
     def __init__(self,store,toolbox,broadcast,checkpointer=None):
         self.store=store; self.tools=toolbox; self.broadcast=broadcast
         self.runs={}; self.tasks={}; self.approvals={}; self.gpu=asyncio.Lock()
+        self.inference=ContextVar('inference',default=None)
         self.client=httpx.AsyncClient(timeout=httpx.Timeout(240,connect=10),trust_env=False,headers={'Authorization':'Bearer '+CONFIG.get('model_api_key','local-only')})
         graph=StateGraph(GraphState)
         graph.add_node('model',self.model_node); graph.add_node('tools',self.tool_node)
@@ -64,6 +66,8 @@ class Engine:
         return run['id']
 
     def emit(self,kind,**payload): self.broadcast({'type':kind,**payload})
+    def model_id(self):return (self.inference.get() or {}).get('id',CONFIG['model'])
+    def context_limit(self):return (self.inference.get() or {}).get('context',CONFIG['context'])
     def work(self,run,kind,key='',**fields):
         # Observability must never break or alter the run it describes.
         try: return self.worklog.record(run,kind,key,**fields)
@@ -90,8 +94,10 @@ class Engine:
     def context(self,chat,run=None):
         summary=self.store.summary(chat)
         messages=[{'role':'system','content':self.system()}]
-        if run and run.get('plan_only'): messages.append({'role':'system','content':PLAN_ONLY_PROMPT})
-        if summary: messages.append({'role':'system','content':'Working summary of prior conversation. Original messages are retrievable by ID.\n'+summary['content']})
+        # Qwen templates require one initial system message. Separate system
+        # entries broke both token counting and generation after compaction.
+        if run and run.get('plan_only'): messages[0]['content']+='\n\n'+PLAN_ONLY_PROMPT
+        if summary: messages[0]['content']+='\n\nWorking summary of prior conversation. Original messages are retrievable by ID.\n'+summary['content']
         recent=self.store.messages(chat,summary['through_id'] if summary else 0)
         refs=[p['id'] for m in recent if isinstance(m.get('content'),list) for p in m['content'] if p.get('type')=='image_ref']
         retained=set(refs[-2:])
@@ -165,7 +171,7 @@ class Engine:
             yield response
 
     async def completion(self,messages,tools=None,run=None,max_tokens=None):
-        body={'model':CONFIG['model'],'messages':messages,'stream':True,'stream_options':{'include_usage':True},'max_tokens':max_tokens or CONFIG['output_tokens'],'temperature':0.4,'chat_template_kwargs':{'enable_thinking':bool(run and run.get('reasoning'))}}
+        body={'model':self.model_id(),'messages':messages,'stream':True,'stream_options':{'include_usage':True},'max_tokens':max_tokens or CONFIG['output_tokens'],'temperature':0.4,'chat_template_kwargs':{'enable_thinking':bool(run and run.get('reasoning'))}}
         if tools: body['tools']=tools; body['tool_choice']='auto'
         text=''; reasoning=''; calls={}; usage={}; started=time.monotonic(); first=None; finish=None
         async with self.model_stream(body) as response:
@@ -197,7 +203,7 @@ class Engine:
         if run:
             elapsed=time.monotonic()-started
             run['metrics']={'elapsed':round(elapsed,1),'completion_tokens':usage.get('completion_tokens'), 'prompt_tokens':usage.get('prompt_tokens'),'tokens_per_second':round(usage['completion_tokens']/max(elapsed,0.01),1) if usage.get('completion_tokens') else None,'first_token_seconds':round(first-started,2) if first else None}
-            self.store.set_setting('model_metrics:'+CONFIG['model'],{**run['metrics'],'measured_at':now(),'model':CONFIG['model'],'context_capacity':CONFIG['context']})
+            self.store.set_setting('model_metrics:'+self.model_id(),{**run['metrics'],'measured_at':now(),'model':self.model_id(),'context_capacity':self.context_limit()})
         msg={'role':'assistant','content':text or None}
         if calls: msg['tool_calls']=list(calls.values())
         if reasoning: msg['reasoning']=reasoning
@@ -206,7 +212,7 @@ class Engine:
 
     async def compact(self,chat,force=False,run=None):
         summary=self.store.summary(chat); recent=self.store.messages(chat,summary['through_id'] if summary else 0)
-        prefix=compact_prefix(recent,keep_turns=1 if force else 2)
+        prefix=compact_prefix(recent,keep_turns=1 if force else CONFIG.get('compact_keep_turns',4))
         if not prefix:
             if run and run.get('compact_only'): self.work(run,'compaction.skipped',label='Nothing old enough to compact',status='skipped',region='memory')
             return {'compacted':False,'reason':'Not enough completed older turns; recent turns stay verbatim.'}
@@ -218,7 +224,7 @@ class Engine:
             if isinstance(c.get('content'),list): c['content']='\n'.join(p.get('text','[Saved image '+p.get('id','')+']') for p in c['content'])
             transcript.append({'message_id':m['id'],**c})
         from .compaction import summarize
-        content=await summarize(transcript,summary['content'] if summary else '',CONFIG['context'],self.token_count,self.completion)
+        content=await summarize(transcript,summary['content'] if summary else '',self.context_limit(),self.token_count,self.completion)
         summary_id=self.store.save_summary(chat,prefix[-1]['id'],content)
         self.emit('compacted',chat=chat,through_id=prefix[-1]['id'])
         if run: self.work(run,'compaction.completed',through,node='compact'+str(through),label='Context compacted',status='done',region='memory',evidence={'summary':summary_id,'through_message':through})
@@ -233,15 +239,15 @@ class Engine:
         defs=self.tools.definitions(run['enabled']); messages=self.context(chat,run)
         if run.get('plan_only'): defs=[d for d in defs if d['function']['name'] in PLAN_TOOLS]
         tokens,method=await self.token_count(messages,defs)
-        if tokens+CONFIG['output_tokens']>=int(CONFIG['context']*CONFIG['compact_ratio']):
+        if tokens+CONFIG['output_tokens']>=int(self.context_limit()*CONFIG['compact_ratio']):
             result=await self.compact(chat,run=run)
             if result['compacted']: messages=self.context(chat,run); tokens,method=await self.token_count(messages,defs)
-        if tokens+CONFIG['output_tokens']>CONFIG['context']:
+        if tokens+CONFIG['output_tokens']>self.context_limit():
             result=await self.compact(chat,force=True,run=run)
             if result['compacted']:messages=self.context(chat,run);tokens,method=await self.token_count(messages,defs)
-        run['context']={'used':tokens,'reserved':CONFIG['output_tokens'],'limit':CONFIG['context'],'method':method}
+        run['context']={'used':tokens,'reserved':CONFIG['output_tokens'],'limit':self.context_limit(),'method':method}
         self.store.set_setting('context:'+chat,run['context'])
-        if tokens+CONFIG['output_tokens']>CONFIG['context']: raise ValueError('Context is full even after compaction. Split the input or start a new task; full history is saved.')
+        if tokens+CONFIG['output_tokens']>self.context_limit(): raise ValueError('Context is full even after compaction. Split the input or start a new task; full history is saved.')
         run['phase']='Thinking' if run.get('reasoning') else 'Generating'; self.emit('changed',chat=chat)
         turn=run['round']=state['steps']; node='gen'+str(turn)
         self.work(run,'generation.started',turn,node=node,label='Model response' if turn==0 else 'Model response after tools',status='running',region='generation',reasoning_requested=bool(run.get('reasoning')),parent=run.get('last_tool_node'))
@@ -361,6 +367,36 @@ class Engine:
         paused=False
         try:
             async with self.gpu:
+                from .models import registry
+                models=registry();selected=next((m for m in models if m['id']==run.get('model_id')),None)
+                router=CONFIG.get('orchestrator_model','')
+                if router and not compact_only and not selected:
+                    run['phase']='Choosing a model';self.emit('changed',chat=chat)
+                    self.work(run,'routing.started',node='router',label='Choose a local specialist',region='planning',status='running')
+                    try:
+                        from .orchestration import choose
+                        messages=self.store.messages(chat);last_user=next((m for m in reversed(messages) if m['role']=='user'),{})
+                        eligible=models
+                        if any(isinstance(m.get('content'),list) and any(p.get('type')=='image_url' for p in m['content']) for m in self.context(chat,run)):
+                            eligible=[m for m in models if m.get('projector_file') and Path(m['projector_file']).is_file()]
+                        content=last_user.get('content','')
+                        task='\n'.join(p.get('text','') for p in content if p.get('type')=='text') if isinstance(content,list) else str(content)
+                        decision=await choose(self.client,CONFIG['endpoint'],router,models,task,CONFIG['model'])
+                        selected=next((m for m in eligible if m['id']==decision['model_id']),None)
+                        if selected is None:raise ValueError('Selected model does not support this conversation’s images')
+                        run['routing']=decision
+                    except (ValueError,KeyError,TypeError,httpx.HTTPError) as error:
+                        selected=next((m for m in models if m['id']==CONFIG['model']),None)
+                        run['routing']={'model_id':CONFIG['model'],'reason':'Using your selected model because routing failed.','error':str(error)[:200]}
+                    self.work(run,'routing.completed',node='router',label='Selected '+run['routing']['model_id'],region='planning',status='done',evidence={'model':run['routing']['model_id'],'reason':run['routing']['reason']})
+                    run['last_tool_node']='router'
+                if selected:
+                    self.inference.set(selected);run['model_id']=selected['id']
+                if router and not compact_only:
+                    # The single llama-swap slot evicts the router before the
+                    # specialist loads. Warm it before using its tokenizer.
+                    warm=await self.client.post(CONFIG['endpoint']+'/chat/completions',json={'model':self.model_id(),'messages':[{'role':'user','content':'Ready'}],'max_tokens':1,'stream':False,'chat_template_kwargs':{'enable_thinking':False}},timeout=240)
+                    warm.raise_for_status()
                 if compact_only: run['compact_result']=await self.compact(chat,force=True,run=run)
                 else:
                     result=await self.graph.ainvoke(resume_input if resuming else {'run':run,'calls':[],'steps':0},{'recursion_limit':42,'configurable':{'thread_id':run['id']}})
@@ -390,6 +426,11 @@ class Engine:
         else: self.work(run,'run.completed',status='denied' if phase=='Denied' else 'done',label='Stopped after a denial' if phase=='Denied' else 'Complete')
     def public_run(self,chat):
         r=self.runs.get(chat)
+        if not r and chat:
+            rows=self.store.rows('SELECT payload FROM runs WHERE chat=? ORDER BY updated DESC LIMIT 1',(chat,))
+            if rows:
+                saved=json.loads(rows[0]['payload'])
+                if saved.get('finished'):r=saved
         return {k:v for k,v in r.items() if k not in ('enabled','pending_images')} if r else None
     async def close(self):
         self.shutting_down=True

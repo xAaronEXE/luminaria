@@ -16,7 +16,7 @@ CONFIG_PATH=DATA/'config.json'
 DEFAULT={
  'workspace':str((Path(sys.executable).parent if getattr(sys,'frozen',False) else DATA)/'Files'/PROFILE_ID),
  'endpoint':'http://127.0.0.1:8098/v1', 'tokenizer':'http://127.0.0.1:8097',
- 'model':'local-qwen','context':32768,'output_tokens':4096,'compact_ratio':0.80,
+ 'model':'local-qwen','context':32768,'output_tokens':4096,'compact_ratio':0.80,'compact_keep_turns':4,
  'version':VERSION, 'python':'python','node':'node','mcp':{},'external_tools':False,'ask_reads':False
 }
 device=json.loads((BASE_DATA/'config.json').read_text('utf-8')) if (BASE_DATA/'config.json').exists() else {}

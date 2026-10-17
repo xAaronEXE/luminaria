@@ -25,7 +25,8 @@ def model_storage(models):
             'used':usage.used,'free':usage.free,'model_bytes':model_bytes}
 def registry():
     return json.loads(PATH.read_text('utf-8')) if PATH.exists() else []
-def save(models): PATH.write_text(json.dumps(models,indent=2),encoding='utf-8')
+def save(models):
+    tmp=PATH.with_suffix('.tmp');tmp.write_text(json.dumps(models,indent=2),encoding='utf-8');tmp.replace(PATH)
 def public_models(store):
     from .benchmark_store import history
     result=[]
@@ -48,3 +49,18 @@ def select(id):
     if not m or not Path(m['model_file']).is_file(): raise ValueError('Model is unavailable')
     save_config({'model':id,'model_file':m['model_file'],'projector_file':m.get('projector_file',''),'context':m['context']})
     return m
+
+def set_context(id,value):
+    if isinstance(value,bool) or not isinstance(value,int) or not 4096<=value<=262144:
+        raise ValueError('Choose a whole number from 4,096 to 262,144 tokens')
+    models=registry();model=next((m for m in models if m['id']==id),None)
+    if not model or not Path(model['model_file']).is_file():raise ValueError('Install this model first')
+    supported=model.get('context_supported')
+    from .model_catalog import CATALOG
+    for entry in CATALOG:
+        if any(q['id']==id or q['filename']==Path(model['model_file']).name for q in entry['quants']):
+            supported=entry.get('context_supported') or supported;break
+    if supported and value>supported:raise ValueError(f'This model reports a maximum of {supported:,} tokens')
+    model['context']=value;save(models)
+    if CONFIG['model']==id:save_config({'context':value})
+    return model
