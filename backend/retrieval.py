@@ -58,7 +58,7 @@ def check_url(url):
     if host in ('localhost',) or host.endswith('.localhost'): raise ValueError('invalid_input')
     return url.strip()
 
-NOISE = re.compile(r'(^|[-_ ])(nav|navbar|menu|footer|header|sidebar|cookie|consent|banner|advert|ads?|promo|share|social|related|newsletter|subscribe|breadcrumb|comments?|popup|modal)([-_ ]|$)', re.I)
+NOISE = re.compile(r'(^|[-_ ])(nav|navbar|menu|footer|header|sidebar|cookie|consent|banner|advert|ads?|promo|share|social|related|newsletter|subscribe|breadcrumb|comments?|popup|modal|infobox|navbox|toc|editsection|hatnote|reflist|mw-jump-link)([-_ ]|$)', re.I)
 
 def extract_html(raw, charset=None):
     from bs4 import BeautifulSoup
@@ -93,8 +93,9 @@ def extract_pdf(raw):
     from pypdf import PdfReader
     reader = PdfReader(io.BytesIO(raw))
     if reader.is_encrypted:
-        try: reader.decrypt('')
-        except Exception: raise ValueError('auth')
+        try: opened = reader.decrypt('')
+        except Exception: opened = 0
+        if not opened: raise ValueError('auth')
     pages = []
     for page in reader.pages[:200]:
         pages.append((page.extract_text() or '').strip())
