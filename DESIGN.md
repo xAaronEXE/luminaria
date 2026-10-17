@@ -1,42 +1,65 @@
 ---
 name: Luminaria
-description: A local AI desktop with graphite and warm ivory, plus a branded light appearance.
+description: A local Windows AI workspace with shared semantic appearance for conversation and spatial activity.
 colors:
-  bg: "#141A17"
-  sidebar: "#101612"
-  panel: "#181F1A"
-  raised: "#1B231F"
-  hover: "#212B26"
-  line: "#2C3831"
-  text: "#F4F4F0"
-  muted: "#C5CBC5"
-  dim: "#A6B0A8"
-  accent: "#EAE6D9"
-  danger: "#FF6B5E"
-  warning: "#E3C886"
+  light-bg: "#FFFFFF"
+  light-sidebar: "#F7F7F5"
+  light-panel: "#FCFCFB"
+  light-raised: "#F0F0ED"
+  light-hover: "#E6E6E2"
+  light-line: "#D5D5D0"
+  light-control-line: "#85857F"
+  light-text: "#0A0A0A"
+  light-muted: "#3A3A37"
+  light-dim: "#575753"
+  light-success: "#1C6A38"
+  light-warning: "#7A5200"
+  light-danger: "#A3242C"
+  light-info: "#1D4D94"
+  light-entity: "#0A0A0A"
+  light-lattice: "#7A7A75"
+  light-pathway: "#4E4E4A"
+  light-particle: "#000000"
+  light-glow: "#1A1A1A"
+  dark-bg: "#000000"
+  dark-sidebar: "#050505"
+  dark-panel: "#0A0A0A"
+  dark-raised: "#141414"
+  dark-hover: "#1D1D1D"
+  dark-line: "#2A2A2A"
+  dark-control-line: "#5C5C5C"
+  dark-text: "#F5F5F2"
+  dark-muted: "#C2C2BD"
+  dark-dim: "#9E9E99"
+  dark-success: "#86D9A3"
+  dark-warning: "#EBC57E"
+  dark-danger: "#F59D94"
+  dark-info: "#9CC0F2"
+  dark-entity: "#F5F5F2"
+  dark-lattice: "#8A8A86"
+  dark-pathway: "#B4B4AF"
+  dark-particle: "#FFFFFF"
+  dark-glow: "#ECECE7"
 typography:
   display:
-    fontFamily: "'Segoe UI',system-ui,sans-serif"
+    fontFamily: "Segoe UI, system-ui, sans-serif"
     fontSize: "clamp(36px,4vw,58px)"
     fontWeight: 500
     lineHeight: 1.15
     letterSpacing: "-.035em"
   body:
-    fontFamily: "'Segoe UI',system-ui,sans-serif"
+    fontFamily: "Segoe UI, system-ui, sans-serif"
     fontSize: "14px"
     lineHeight: 1.55
   label:
-    fontFamily: "'Segoe UI',system-ui,sans-serif"
+    fontFamily: "Segoe UI, system-ui, sans-serif"
     fontSize: "12px"
   code:
-    fontFamily: "Consolas,'Cascadia Code',monospace"
+    fontFamily: "Consolas, Cascadia Code, monospace"
     fontSize: "12px"
     lineHeight: 1.55
 rounded:
   control: "7px"
-  icon: "6px"
-  send: "8px"
-  voice: "10px"
   card: "12px"
   composer: "14px"
 spacing:
@@ -45,131 +68,100 @@ spacing:
   panel: "16px"
   section: "18px"
 components:
-  button-primary:
-    backgroundColor: "{colors.accent}"
-    textColor: "{colors.bg}"
-    rounded: "{rounded.control}"
-    padding: "8px 13px"
   button-secondary:
-    backgroundColor: "{colors.raised}"
-    textColor: "{colors.text}"
+    backgroundColor: "{colors.light-raised}"
+    textColor: "{colors.light-text}"
     rounded: "{rounded.control}"
     padding: "8px 13px"
   field:
-    backgroundColor: "{colors.panel}"
-    textColor: "{colors.text}"
+    backgroundColor: "{colors.light-panel}"
+    textColor: "{colors.light-text}"
     rounded: "{rounded.control}"
-    padding: "10px 12px"
-  task-navigation:
-    textColor: "{colors.muted}"
-    rounded: "{rounded.control}"
-    padding: "10px 11px"
-  attachment-chip:
-    backgroundColor: "{colors.hover}"
-    textColor: "{colors.text}"
-    rounded: "5px"
-    padding: "3px 7px"
-  user-message:
-    backgroundColor: "{colors.raised}"
-    textColor: "{colors.text}"
-    rounded: "{rounded.card}"
-    padding: "18px 20px"
-  composer:
-    backgroundColor: "{colors.panel}"
-    textColor: "{colors.text}"
-    rounded: "{rounded.composer}"
-  voice-bar:
-    backgroundColor: "{colors.raised}"
-    textColor: "{colors.text}"
-    rounded: "{rounded.voice}"
     padding: "10px 12px"
 ---
-
-# Design System: Studio
+# Design System: Luminaria
 
 ## Overview
 
-**Creative North Star: "A local agent's conversation, evidence and pending actions visible together."**
+**Creative North Star: "Conversation and recorded work, visible together."**
 
-The user-pinned Codex-like workspace uses forestry graphite structural surfaces, acid mint actions, restrained controls and spacious conversation text. A full-window perspective filament field gives depth behind translucent panels while leaving the working interface readable.
+Luminaria keeps conversation, task history, workspace evidence and pending actions visible together. Black and white establish the default working surface; a shared accent and independent mode overrides let users personalize both interface and spatial activity without changing their semantic roles.
 
-Studio is the temporary visible brand; the final user-selected name is undecided. This records the implemented plain HTML/JavaScript interface, with locally served libraries and no CDN dependencies, intended for the native Windows WebView2 wrapper. It does not certify installation, voice quality, backend reliability or release readiness.
+This is a source-grounded record of the plain HTML/JavaScript interface, served by a Python API and hosted in Windows WebView2. It describes implemented visual behavior, not native acceptance or release readiness.
 
 **Key Characteristics:**
-- Conversation, task history and workspace evidence share one window.
-- Acid mint identifies primary actions and selected states.
-- Perspective filaments remain behind the working surfaces.
-- Voice is explicitly enabled by the user.
+- Light, Dark and Follow system share one semantic appearance contract.
+- The reactive entity and regional activity lattice are separate persistent layers.
+- Recorded activity remains inspectable through text, keyboard controls and evidence.
+- Local assets and system fonts support the plain HTML/JavaScript desktop interface.
 
 ## Colors
 
 ### Primary
 
-Acid mint is the user-pinned accent: send, primary buttons, selected icons, focused controls and active voice state. Warning and danger colors distinguish offline or attention states from failures and denied actions.
+With no chosen accent, primary controls use the resolved mode's text color. A shared user accent applies to both modes; a per-mode accent takes precedence. Accent controls selection, focus, progress and active spatial nodes. Black or white button text is selected by measured contrast. Hover, soft fills and selection fills are derived by mixing the accent with the current background or mode endpoint.
 
 ### Neutral
 
-Forestry graphite is the user-pinned background. Panel, raised and hover tones separate editing surfaces and interaction states. Text, muted and dim roles establish hierarchy; thin green-gray lines divide task rows, panels and tabs. Values above reflect the final CSS cascade, including overrides later in the stylesheet.
+The frontmatter records both default mode palettes from `web/appearance.js`. Light is the default. Follow system resolves the operating-system color preference and responds to changes. Surface, border and text roles remain distinct; customization overrides each mode independently. State colors retain their semantic purpose. Entity, particle, lattice, pathway and glow roles customize the 3D workspace independently.
 
-**The Working Surface Rule.** Keep decorative light behind legible, sufficiently opaque working surfaces.
+**The Shared Appearance Rule.** Apply resolved semantic tokens to CSS and the renderer together; do not hard-code a separate spatial palette.
+
+Settings warn about selected contrast failures. They permit custom colors and do not enforce universal contrast. Profile preferences persist appearance through the API; the prepaint localStorage cache is shared by the browser origin on this PC and is not profile-isolated.
 
 ## Typography
 
-Segoe UI with local system fallbacks carries the interface; Consolas with Cascadia Code fallback carries code and numeric context values. No font download is required. The display role is the welcome prompt. Working text stays compact: body text uses the body token, conversation prose has a roomier line-height (1.8), and metadata ranges from 9px to 12px. Sheet titles use 25px and weight 550. The final welcome heading rule overrides earlier mobile heading sizes; do not document the obsolete sizes as current.
+Segoe UI with system fallbacks carries interface text; Consolas with Cascadia Code fallback carries code. No downloaded fonts are required. The welcome prompt uses the display token. Conversation prose uses 14px with 1.8 line height; compact conversation uses 13px. Sheet titles use 25px and weight 550. Interface labels mostly use 11–12px; small supporting metadata exists at 9–10px and should not become the default for new working text. Spatial node labels use 11px, with a truncated title and visible status.
 
 ## Layout
 
-The full-height desktop grid has a 238px task sidebar, flexible conversation with a 360px minimum track, and a 300px inspector. At 1600px and wider, the default grid uses 260px and 330px side tracks. The collapsed-inspector rule retains its own 238px sidebar track. Conversation content is capped at 780px; the composer and approvals at 800px; the welcome section at 650px. The composer anchors below the independently scrolling conversation and can itself scroll with a 60vh maximum height.
+The desktop grid uses a 238px sidebar, flexible conversation with a 360px minimum track, and 300px inspector. At 1600px it uses 260px and 330px side tracks. The collapsed-inspector layout retains its own 238px sidebar. Conversation content is capped at 780px, composer and approvals at 800px, and welcome content at 650px. The composer can scroll up to 60vh.
 
-At 1180px and below, the inspector becomes an optional right overlay and the sidebar narrows to 210px. At 720px and below, the task sidebar becomes an optional 250px overlay, the main area fills the width, the header becomes 58px high and forms use one column. The voice row wraps at 800px. The final welcome margin starts at clamp(32px,8vh,90px), with no extra top padding. Sidebars can scroll to preserve access to bottom controls.
+At 1180px the sidebar narrows to 210px and the inspector becomes an optional overlay. At 720px the sidebar becomes an optional 250px overlay and forms become one column. Spatial controls adapt at 900px. The overview measures the actual main panel, header and composer boundaries; it does not rely on the initial CSS inset for final placement. Details and outline share compact space, with a Back to activity outline control. Labels prioritize selected, focused and active/problem nodes, avoid overlap where possible, and show at most 16 nodes; the outline remains the complete textual selection route for the displayed scene.
 
 ## Elevation & Depth
 
-Most controls use tonal layering and thin borders. Sheets, compact overlays and toasts use shadows; the sheet casts -12px 0 48px #0005 and the toast uses 0 8px 30px #0006. The main surface overlays the filament field with graphite at .65 opacity, side panels at .89 and the top bar at .8. The composer region has a graphite gradient approaching .97 opacity.
+Thin borders and tonal surfaces establish structure. The main panel mixes background at 82%, sidebar mixes sidebar at 96%, inspector uses background at 94%, and topbar uses background at 90%. Sheets, menus and toasts use the resolved shadow token; the voice bar is flat in the final cascade.
 
-The local WebGL field renders actual perspective-projected lines and points across the window. It is decorative, pointer-transparent and hidden from accessibility APIs. Rendering is throttled to approximately 20 fps, device pixel ratio is capped at 2, and the drawing buffer is capped at 3840 by 2160 while preserving aspect ratio. Typing and streamed tokens briefly increase energy. Hidden documents skip drawing; reduced-motion preference starts paused, and a sidebar control stores a pause preference. CSS reduced-motion rules also remove animations, transitions and smooth scrolling. WebGL unavailability removes the field; context loss hides it and its motion control. The obsolete small draggable core markup is removed by core.js.
+WebGL renders regional lattice clouds, recorded nodes and curved pathways separately from the toroidal reactive entity. Status changes affect shape and color; transient pathway packets correspond to eligible observed activity. Audio magnitude drives entity deformation when supplied. The renderer targets 30 frames/s normally and 60 during conversation, adapts quality, caps pixel ratio at 1.5 before quality scaling and drawing width at 3840px. Diagnostics report draw submissions rather than GPU completion or model speed. Hidden pages skip drawing. Motion preference and system reduced motion suppress animation; static dirty updates can still render. WebGL failure exposes the activity outline.
+
+**The Evidence Rule.** Animation describes observed execution and supplied audio; it never claims access to hidden thoughts.
 
 ## Shapes
 
-Controls use small rounded corners; larger message and approval containers use the card radius, with a slightly rounder composer. Dots and the profile symbol are circular. Icons are locally defined, thin-stroke SVGs, generally 18px with smaller contextual variants. Local mark.svg supplies the temporary brand symbol.
+Small rounded controls use the control radius; user messages and spatial panels use the card radius; the composer uses the composer radius. Send is 38px square with a 12px radius in the final cascade. Icons are local thin-stroke SVGs. Spatial node point shapes supplement status colors, while DOM labels expose names and states.
 
 ## Components
 
 ### Buttons and fields
 
-Primary buttons use accent over graphite; secondary buttons use raised surfaces. Hover shifts secondary surfaces to hover and primary buttons to #C9FF67. Disabled buttons reduce opacity to .4 and show a not-allowed cursor. Focus-visible uses a 2px accent outline with a 4px offset; search and the reasoning toggle have focus-within treatment. Standard inputs use panel surfaces and a thin line border.
+Primary buttons use accent and its computed black/white contrast text. Secondary buttons use raised surfaces, shifting to hover on pointer interaction. Standard field borders use control-line, distinct from structural dividers. Focus-visible uses a 2px accent outline with 3px offset; the spatial canvas target places its ring inward. Disabled buttons dim and use a not-allowed cursor.
 
-### Navigation and inspector
+### Navigation, chips and conversation
 
-Task rows truncate long titles. Active rows use the raised surface and an accent icon; hover raises contrast. Inspector tabs expose selection with aria-selected and a 2px accent underline. Files, Activity and Context occupy the same pane. Empty and offline states use explicit text rather than implied success.
+Task rows truncate long titles, raise the selected surface and accent the selected icon. Inspector tabs pair aria-selected with an accent underline. Attachment chips have removal controls; queued messages use raised, wrapped chips. Assistant text remains on the conversation surface, user messages are raised blocks. Pending approval details remain explicit above the composer.
 
-### Conversation and composer
+### Appearance settings
 
-User messages are raised rounded blocks; assistant responses remain on the main surface. Tool details and reasoning expand in disclosure controls. Markdown code blocks scroll horizontally and offer copy controls. Attachment chips include removal controls. Send swaps to stop during active execution. Pending approvals appear above the composer, with the action details and explicit approval controls visible. The context meter turns warning-colored as defined by runtime state; compaction markers remain distinct from messages.
+Three mode buttons expose pressed state. Shared and per-mode accent controls precede grouped per-mode color fields. Reset actions distinguish the current mode from all appearance. Changes apply immediately, save after a short debounce, and show saving, saved or failure feedback. Contrast warnings are live status content. Motion and metrics use a separate save action.
 
-### Sheets and feedback
+### Spatial workspace
 
-Model library, memory, tools, skills, schedules and settings use a right-side modal sheet. Escape and the close button dismiss it; app.js contains focus trapping and restoration. Toasts expose status and an error variant. Benchmark and capability descriptions reflect supplied records; the visual design makes no claim that a model or integration has been validated.
+Task overview keeps recorded execution separate from the conversation, with return, follow activity, focus, outline and refresh controls. Arrow keys select recorded nodes, Enter opens evidence, and Escape returns focus to the prior control. DOM labels and outline buttons open the same details. Tool evidence includes arguments, output and Activity navigation; supplied plans and reasoning are labeled model-provided. Empty and failure states use text. The main conversation becomes inert while overview is open; the composer remains outside that region.
 
-### Voice
+### Voice and fallback
 
-The Voice button starts inactive. After readiness and microphone access, it changes to Mic on and reveals a bordered voice bar with Listening, Transcribing, Thinking, Preparing speech, Speaking, interruption, failure or approval-review text. Interrupt and End voice remain explicit controls. A chat change ends the voice session. Voice uses the normal task route and does not grant tool approval. These are implemented UI states, not claims of successful microphone or speech-model testing.
+Voice state, interrupt and end controls remain explicit. Conversation keeps transcript and approval controls readable while the entity reacts. Compact layout can hide the entity caption. With unavailable WebGL, textual activity selection remains available. These are implemented UI paths, not successful native microphone or speech-model acceptance claims.
 
 ## Do's and Don'ts
 
 ### Do
-- Preserve the user-pinned graphite and acid mint identity.
-- Keep conversation, evidence and approval controls readable over the filament field.
-- Preserve visible keyboard focus and reduced-motion behavior.
-- Label unavailable, pending and failed states explicitly.
+- Do route interface and 3D colors through the same appearance tokens.
+- Do preserve readable evidence, explicit state labels and keyboard focus.
+- Do honor reduced motion and retain the activity outline when WebGL is unavailable.
+- Do distinguish recorded execution from model-provided plans and reasoning.
 
 ### Don't
-- Treat Studio as the approved final product name.
-- Add CDN or remote font dependencies to this local interface.
-- Replace the full-window filaments with the retired small draggable core.
-- Claim voice, model, installer or integration testing from visual review alone.
-
-Source snapshot: web/style.css, web/index.html, web/app.js, web/core.js and web/voice.js. Review captures are .impeccable/review/desktop.png, compact.png and user-3840.png; they are visual references, not runtime acceptance evidence.
-
-## Appearance revision, 2026-10-16
-Only Dark / Graphite and Light / Ivory are exposed. Custom palette controls are superseded. `web/preferences.js` defines both semantic token sets. Voice mode morphs a neural lattice into a torus; microphone and output FFT magnitudes drive deformation. Activity pulses represent observed application states, not hidden model thoughts. Reduced-motion and the motion preference suppress spatial animation.
+- Don't restore the superseded graphite/ivory-only palette or temporary Studio branding.
+- Don't present spatial animation as hidden model thoughts or proof of model correctness.
+- Don't claim native, voice, installer or model acceptance from mocked browser previews.
