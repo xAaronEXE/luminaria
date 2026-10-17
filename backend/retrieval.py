@@ -115,7 +115,9 @@ async def fetch(url, refresh=False, client=None, sleep=asyncio.sleep):
     started = time.monotonic()
     try: url = check_url(url)
     except ValueError: return failure('invalid_input', 'Not a fetchable public http(s) address.', str(url)[:300], started)
-    cached = _cache.get(url)
+    parts=urlsplit(url)
+    cacheable=client is None and not parts.query and not parts.username and not parts.password
+    cached = _cache.get(url) if cacheable else None
     if cached and not refresh and time.time() - cached['retrieved_at'] < CACHE_SECONDS:
         return {**cached, 'cached': True, 'age_seconds': int(time.time() - cached['retrieved_at'])}
     own = client is None
@@ -138,7 +140,8 @@ async def fetch(url, refresh=False, client=None, sleep=asyncio.sleep):
                 wait = min(retry_after if retry_after is not None else attempts, 8)
                 if category == 'throttled' and retry_after is not None and retry_after > 8: return result
                 await sleep(wait); continue
-            if result['status'] == 'ok': _cache[url] = result
+            if result['status'] == 'ok' and cacheable and result.pop('_cacheable',True): _cache[url] = result
+            result.pop('_cacheable',None)
             if len(_cache) > 64: _cache.pop(next(iter(_cache)))
             return result
     except asyncio.CancelledError:
@@ -188,8 +191,13 @@ async def _fetch_once(client, url, started, attempts):
         return failure('extraction', 'The content could not be parsed: ' + type(error).__name__, final, started, attempts, content_type=kind)
     text = text.strip()
     if not text: return envelope('empty', final, started, attempts, content_type=kind or 'text/html', title=title or None, message='The page loaded but has no readable text.')
+    from .sources import document
+    source=document(text,final,limit=TEXT_LIMIT)
+    source.pop('status');source.pop('source')
+    policy=response.headers.get('cache-control','').lower()
+    cacheable=not response.headers.get('set-cookie') and not any(v in policy for v in ('private','no-store','no-cache')) and not urlsplit(final).query
     return envelope('ok', final, started, attempts, content_type='application/pdf' if pdf else (kind or 'text/html'), title=title or None,
-                    text=text[:TEXT_LIMIT], truncated=len(text) > TEXT_LIMIT, total_characters=len(text), redirected=final != url or None, **extra)
+                    redirected=final != url or None, _cacheable=cacheable, **source, **extra)
 
 async def search(query, engine=None):
     started = time.monotonic()

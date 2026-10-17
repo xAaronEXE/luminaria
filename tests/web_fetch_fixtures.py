@@ -105,10 +105,10 @@ class WebFetchAcceptance(unittest.IsolatedAsyncioTestCase):
  async def test_missing_page_is_not_found_without_retry(self):
   r=await self.get('/gone');self.assertEqual((r['category'],r['attempts'],self.site.hits),('not_found',1,['/gone']))
 
- async def test_cache_reuses_recent_pages_until_refresh(self):
+ async def test_caller_supplied_clients_are_not_shared_in_the_public_cache(self):
   first=await self.get('/article');second=await self.get('/article')
-  self.assertNotIn('cached',first);self.assertTrue(second['cached']);self.assertEqual(second['retrieved_at'],first['retrieved_at']);self.assertEqual(self.site.hits,['/article'])
-  third=await self.get('/article',refresh=True);self.assertNotIn('cached',third);self.assertEqual(self.site.hits,['/article','/article'])
+  self.assertFalse(first['cached']);self.assertFalse(second['cached']);self.assertEqual(self.site.hits,['/article','/article'])
+  third=await self.get('/article',refresh=True);self.assertFalse(third['cached']);self.assertEqual(self.site.hits,['/article','/article','/article'])
 
  async def test_failures_are_not_cached(self):
   await self.get('/gone');await self.get('/gone');self.assertEqual(self.site.hits,['/gone','/gone'])

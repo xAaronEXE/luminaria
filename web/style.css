@@ -93,3 +93,8 @@ body[data-voice=conversation]:not(.voice-review) .inspector-content,body[data-vo
 .update-notice-mark{color:var(--info);display:grid;place-items:center}
 .update-notice .btn{padding:6px 12px;font-size:12px}
 @media (prefers-reduced-motion:reduce){.update-notice{transition:none;transform:none}}
+:root{--task-label-size:12px}
+.task-progress{font-size:var(--task-label-size);line-height:1.55;color:var(--muted);padding:6px 0;overflow-wrap:anywhere}
+.task-progress[hidden]{display:none}
+.approval-effect,.approval-target{font-size:13px;line-height:1.55;overflow-wrap:anywhere}
+.approval details summary{cursor:pointer;font-size:var(--task-label-size);padding:8px 0}

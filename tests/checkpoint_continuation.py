@@ -64,6 +64,31 @@ class CheckpointTests(unittest.IsolatedAsyncioTestCase):
   finally:h.close()
 
 class ReportTests(unittest.TestCase):
+ def test_command_and_integration_effects_are_not_reported_as_no_changes(self):
+  for name,args in [('run_command',{'command':'create an output'}),('run_code',{'language':'python'}),('github__create_issue',{'title':'Example'}),('remember',{'title':'Preference'})]:
+   with self.subTest(name=name):
+    out=report([{'name':name,'args':args,'status':'done','result':{'text':'ok'}}])
+    self.assertIn('Other actions that may have changed state',out)
+    self.assertIn('not fully established',out)
+    self.assertNotIn('No files were written',out)
+    self.assertIn('does not independently verify',out)
+
+ def test_uncertain_mutations_require_inspection_even_after_error(self):
+  for status in ('interrupted','running','error'):
+   with self.subTest(status=status):
+    out=report([{'name':'write_file','args':{'path':'x.txt'},'status':status,'result':None}])
+    self.assertIn('Uncertain outcomes',out)
+    self.assertIn('ask the user before retrying',out)
+    self.assertNotIn('Changes made:** none',out)
+    self.assertNotIn('will not be repeated',out)
+
+ def test_continuation_skip_is_not_a_new_write(self):
+  for result in ({'already_done':'original-id','skipped':True},{'text':json.dumps({'already_done':'original-id','skipped':True})}):
+   out=report([{'name':'write_file','args':{'path':'x.txt'},'status':'done','result':result}])
+   self.assertIn('Previously completed actions skipped (1)',out)
+   self.assertNotIn('file tools reported',out)
+   self.assertNotIn('No useful results',out)
+
  def test_report_lists_changes_failures_denials_and_remaining_plan(self):
   actions=[{'name':'edit_file','args':{'path':'x.py'},'status':'done','result':{'text':'{"ok": true}'}},
    {'name':'web_fetch','args':{'url':'https://a.example'},'status':'error','result':{'text':'{"error": "Timed out after 20 s"}'}},

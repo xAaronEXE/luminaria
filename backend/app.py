@@ -449,7 +449,7 @@ async def update_install(background_tasks:BackgroundTasks):
 @app.get('/api/skills')
 async def skills():
     from .skills import catalog
-    return [{**s,'enabled':store.setting('skill:'+s['name'],True)} for s in catalog(connectors)]
+    return [{**s,'enabled':store.setting('skill:'+s['name'],True),'last_run':store.setting('skill_run:'+s['name'],None)} for s in catalog(connectors)]
 
 @app.post('/api/skills')
 async def skill_import(request:Request):

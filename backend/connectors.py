@@ -31,7 +31,20 @@ class Connector:
                         name,args,future=item
                         if future.cancelled(): continue
                         try:
-                            result=await session.call_tool(name,args,read_timeout_seconds=120)
+                            call=asyncio.create_task(session.call_tool(name,args,read_timeout_seconds=120))
+                            def cancel_call(done,active=call):
+                                if done.cancelled() and not active.done(): active.cancel()
+                            future.add_done_callback(cancel_call)
+                            try: result=await call
+                            except asyncio.CancelledError:
+                                if not future.cancelled(): raise
+                                continue
+                            finally:
+                                future.remove_done_callback(cancel_call)
+                                if not call.done():
+                                    call.cancel()
+                                    try: await call
+                                    except asyncio.CancelledError: pass
                             if not future.done(): future.set_result(result.model_dump(by_alias=True))
                         except Exception as e:
                             if not future.done(): future.set_exception(RuntimeError(str(e)))

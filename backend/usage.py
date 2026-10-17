@@ -209,12 +209,19 @@ class Usage:
                             'top': [{'name': k, 'count': v} for k, v in sorted(invoked.items(), key=lambda kv: -kv[1])[:6]]}
         result['tools'] = tally(tools, lambda t: t['name'])[:10]
         result['integrations'] = tally([t for t in tools if t['data'].get('integration')], lambda t: t['data']['integration'])
+        result['plugins'] = None
+        result['missing'].append('Separate plugin usage is unavailable: recorded connector calls appear under Integrations, not inferred plugin identities.')
         models = {}
         for g in gens:
             entry = models.setdefault(g['model'] or 'unknown', {'model': g['model'] or 'unknown', 'generations': 0, 'tokens_out': 0, 'speeds': []})
             entry['generations'] += 1; entry['tokens_out'] += g['data'].get('completion_tokens') or 0
             if g['data'].get('tps') and (g['data'].get('completion_tokens') or 0) >= FAST_MIN_TOKENS: entry['speeds'].append(g['data']['tps'])
         result['models'] = sorted(({**{k: v for k, v in m.items() if k != 'speeds'}, 'median_tps': round(statistics.median(m['speeds']), 1) if m['speeds'] else None} for m in models.values()), key=lambda m: -m['generations'])
+        trends={}
+        for g in timed:
+            key=(g['model'],day_of(g['created'],tz))
+            trends.setdefault(key,[]).append(g['data']['tps'])
+        result['speed_history']=[{'model':model,'day':day,'median_tps':round(statistics.median(values),1),'samples':len(values)} for (model,day),values in sorted(trends.items(),key=lambda entry:(entry[0][1],str(entry[0][0])))]
         return result
 
     def compaction(self, recent=8):

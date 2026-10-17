@@ -364,9 +364,15 @@ class Engine:
                 if not isinstance(args,dict): raise ValueError('Tool arguments must be an object')
                 from jsonschema import validate
                 validate(args,definition['parameters'])
-                if run.get('continuing') and name in SIDE_EFFECTS:
-                    prior=self.store.rows("SELECT id FROM actions WHERE chat=? AND name=? AND args=? AND status='done' AND created>=? AND id<>? LIMIT 1",(run['chat'],name,json.dumps(args),run['continuing'],id))
-                    if prior: raise AlreadyDone(prior[0]['id'])
+                if run.get('continuing') and (name in SIDE_EFFECTS or '__' in name):
+                    prior=self.store.rows("SELECT id,args,status FROM actions WHERE chat=? AND name=? AND created>=? AND id<>? ORDER BY created",(run['chat'],name,run['continuing'],id))
+                    matching=[p for p in prior if call_key(name,json.loads(p['args']))==call_key(name,args)]
+                    uncertain=next((p for p in matching if p['status'] in ('running','interrupted','error')),None)
+                    if uncertain:
+                        run['denied']=True
+                        raise ValueError('An earlier attempt has an uncertain outcome. Inspect its target using read-only tools, then ask the user if still unclear. This continuation will not repeat it automatically. Action '+uncertain['id'])
+                    completed=next((p for p in matching if p['status']=='done'),None)
+                    if completed: raise AlreadyDone(completed['id'])
                 tier=definition['tier']
                 existing=self.store.rows('SELECT * FROM actions WHERE id=?',(id,))
                 if existing: tier=existing[0]['tier']
@@ -403,7 +409,9 @@ class Engine:
             except AlreadyDone as done:
                 self.store.execute('INSERT OR IGNORE INTO actions VALUES(?,?,?,?,?,?,?,?)',(id,run['chat'],name,json.dumps(args),'auto','ready',None,now()))
                 result={'skipped':True,'already_done':str(done),'message':'This exact step already succeeded before the checkpoint, so it was not repeated.'}; status='done'; duration='skipped'
-            except Exception as e: result={'error':str(e)}; status='error'
+            except Exception as e:
+                result={'error':str(e)}; status='error'
+                self.store.execute('INSERT OR IGNORE INTO actions VALUES(?,?,?,?,?,?,?,?)',(id,run['chat'],name,json.dumps(args if isinstance(args,dict) else {}),'approve','error',None,now()))
             folder=DATA/'tool-outputs'; folder.mkdir(exist_ok=True)
             (folder/(id+'.json')).write_text(json.dumps(result,ensure_ascii=False),encoding='utf-8')
             artifact=DATA/'runs'/run['id']/'artifacts'; artifact.mkdir(parents=True,exist_ok=True)
@@ -535,6 +543,8 @@ class Engine:
         except asyncio.CancelledError:
             run=self.runs.get(chat,run)
             if run.get('live'): self.store.add(chat,{'role':'assistant','content':run['live']+'\n\n[Stopped]','interrupted':True})
+            if any(a['status'] in ('done','interrupted','running') for a in self.run_actions(run)):
+                self.checkpoint(run,'error')
             run['phase']='Interrupted — resume available' if self.shutting_down else 'Stopped'
             if self.shutting_down: paused=True;run['resume_available']=True
         except Exception as e:
@@ -555,6 +565,13 @@ class Engine:
             run['live']=''; self.store.save_run(run); self.emit('changed',chat=chat)
     def finish_event(self,run):
         phase=run.get('phase','')
+        from .skills import catalog
+        from .skill_runs import set_state
+        if phase not in ('Checkpoint',):
+            for skill in catalog(getattr(self.tools,'connectors',{})):
+                record=self.store.setting('skill_run:'+skill['name'],{})
+                if record.get('run')==run['id'] and record.get('state')=='Running':
+                    set_state(self.store,skill['name'],'Failed','Run ended without verified skill outputs. Review partial results and load the skill again to recover.',run)
         try:
             events=[json.loads(r['payload']) for r in self.store.rows('SELECT payload FROM run_events WHERE run=?',(run['id'],))]
             self.usage.task(run,events,run.get('model_id') or self.model_id())

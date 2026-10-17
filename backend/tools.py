@@ -8,6 +8,7 @@ S={'type':'string'}; I={'type':'integer'}
 BUILTINS=[
  schema('list_skills','List installed reusable workflow skills.',{},[],'auto','skills'),
  schema('load_skill','Read a named workflow skill before using it.',{'name':S},['name'],'auto','skills'),
+ schema('finish_skill','Verify output files and finish a loaded skill. Supply successful evidence action IDs from this run. File readback/hashes establish existence, not semantic correctness.',{'name':S,'outputs':{'type':'array','items':S,'minItems':1,'maxItems':10},'evidence_actions':{'type':'array','items':S,'minItems':1,'maxItems':30}},['name','outputs','evidence_actions'],'auto','skills'),
  schema('list_files','List a workspace directory.',{'path':S}),
  schema('read_file','Read a UTF-8 workspace file, with optional offset and limit in characters.',{'path':S,'offset':I,'limit':I},['path']),
  schema('write_file','Create or replace a UTF-8 workspace file. Requires user approval.',{'path':S,'content':S},['path','content'],'approve'),
@@ -17,7 +18,7 @@ BUILTINS=[
  schema('run_command','Run a PowerShell command in the workspace. Full PC access after approval; not a sandbox. Use python/node configured paths from system prompt.',{'command':S,'timeout':I},['command'],'always','execution'),
  schema('run_code','Execute a Python or JavaScript script in the workspace. Saved as a file; no hidden REPL state.',{'language':{'type':'string','enum':['python','javascript']},'code':S,'timeout':I},['language','code'],'always','execution'),
  schema('web_search','Search the public web. Returns status, titles, snippets and source URLs. An empty result means no matches for these words, not that the information does not exist.',{'query':S},['query'],'auto','research'),
- schema('web_fetch','Fetch a public HTTP(S) page or PDF and extract its main readable text. Returns status ok, empty or error with a category and guidance; follow the guidance instead of retrying blindly. Recent pages are reused for 10 minutes unless refresh is true. Network request requires approval.',{'url':S,'refresh':{'type':'boolean'}},['url'],'approve','research'),
+ schema('web_fetch','Fetch a public HTTP(S) page or PDF. Network request requires approval. browser_fallback explicitly authorizes navigation and snapshot in the connected browser if JavaScript or sign-in is needed; never completes login dialogs or bypasses blocks. Public cache is bypassed for sensitive responses.',{'url':S,'refresh':{'type':'boolean'},'browser_fallback':{'type':'boolean'}},['url'],'approve','research'),
  schema('discover_tools','Load MCP tool schemas for browser or windows. Call before using those tools. Use category all to list every connected tool.',{'category':{'type':'string','enum':['browser','windows','all']}},['category'],'auto','system'),
  schema('memory_search','Search durable cross-chat memory and full saved conversation text by literal query.',{'query':S},['query'],'auto','memory'),
  schema('history_read','Retrieve saved message or complete tool output by ID. Original history remains after compaction.',{'message_id':I,'action_id':S},[],'auto','memory'),
@@ -27,7 +28,7 @@ BUILTINS=[
  schema('create_schedule','Schedule a recurring prompt while Studio is running. Every side effect still needs its normal approval. Minimum interval 5 minutes.',{'title':S,'prompt':S,'interval_minutes':I},['title','prompt','interval_minutes'],'approve','automation'),
 ]
 
-RETRIEVAL={'web_search':'web search','web_fetch':'web','memory_search':'memory','search_files':'workspace files','history_read':'history'}
+RETRIEVAL={'web_search':'web search','web_fetch':'web','memory_search':'memory','search_files':'workspace files','read_file':'workspace file','history_read':'history'}
 
 def host_of(url):
     from urllib.parse import urlsplit
@@ -88,7 +89,9 @@ class Toolbox:
         except asyncio.CancelledError:
             result={'status':'cancelled'}; raise
         except Exception as e:
-            result={'status':'error','category':type(e).__name__}; raise
+            category='not_found' if isinstance(e,FileNotFoundError) else 'permissions' if isinstance(e,PermissionError) else 'unsupported' if isinstance(e,UnicodeError) else 'invalid_input' if isinstance(e,ValueError) else 'retrieval_failed'
+            result={'status':'error','category':category,'source':RETRIEVAL[name],'message':str(e)[:300],'attempts':1,'truncated':False}
+            return result
         finally:
             r=result if isinstance(result,dict) else {}
             # Diagnostics never store queries, URLs or content; only the source host for web fetches.
@@ -108,9 +111,19 @@ class Toolbox:
             from .skills import catalog
             return [{k:s[k] for k in ('name','description','category','missing')} for s in catalog(self.connectors) if self.store.setting('skill:'+s['name'],True)]
         if name=='load_skill':
-            from .skills import load_skill
+            from .skills import load_skill,preflight
             if not self.store.setting('skill:'+a['name'],True): raise ValueError('This skill is disabled')
-            return load_skill(a['name'])
+            check=preflight(a['name'],self.connectors)
+            from .skill_runs import set_state
+            if not check['available']:
+                if run.get('id'):set_state(self.store,a['name'],'Needs setup',check['reason'],run)
+                return {'status':'error','category':'needs_setup',**check}
+            instructions=load_skill(a['name'])
+            if run.get('id'):set_state(self.store,a['name'],'Running','Instructions loaded; workflow outputs have not been verified.',run)
+            return {**instructions,'state':'Running','completion':'Use finish_skill after producing output files and collecting evidence action IDs. Loading instructions alone is not completion.'}
+        if name=='finish_skill':
+            from .skill_runs import complete
+            return complete(self.store,a['name'],a['outputs'],a['evidence_actions'],run)
         if '__' in name:
             group,tool=name.split('__',1)
             return await self.connectors[group].call(tool,a)
@@ -121,7 +134,8 @@ class Toolbox:
             p=workspace_path(a['path'])
             if p.stat().st_size>8_000_000: raise ValueError('File is larger than 8 MB; use a targeted script')
             text=p.read_text('utf-8'); offset=max(0,a.get('offset',0)); limit=min(max(a.get('limit',16000),1),32000)
-            return {'path':a['path'],'text':text[offset:offset+limit],'total_characters':len(text),'offset':offset}
+            from .sources import document
+            return {'path':a['path'],**document(text,'workspace:'+a['path'],offset,limit)}
         if name=='write_file':
             p=workspace_path(a['path']); p.parent.mkdir(parents=True,exist_ok=True)
             if len(a['content'])>2_000_000: raise ValueError('Write limit is 2 MB')
@@ -140,18 +154,22 @@ class Toolbox:
             backup=DATA/'backups'/run['id']; backup.mkdir(parents=True,exist_ok=True)
             shutil.copy2(p,backup/(str(time.time_ns())+'-'+p.name)); p.unlink(); return {'deleted':str(p),'backup':str(backup)}
         if name=='search_files':
+            from .sources import matches
+            if not isinstance(a.get('query'),str) or not a['query'].strip() or len(a['query'])>500: raise ValueError('Provide a non-empty literal query of at most 500 characters')
             root=workspace_path(); result=[]; count=0
+            unreadable=0
             for p in root.rglob('*'):
                 count+=1
                 if count>10000: break
                 if any(v in p.parts for v in ['node_modules','.git','.venv','venv']): continue
                 if not p.is_file() or p.stat().st_size>1_000_000 or not p.resolve().is_relative_to(root): continue
                 try:
-                    for n,line in enumerate(p.read_text('utf-8').splitlines(),1):
-                        if a['query'].lower() in line.lower(): result.append({'path':str(p.relative_to(root)),'line':n,'text':line[:500]})
-                        if len(result)>=80: return {'status':'ok','source':'workspace files','matches':result,'truncated':True,'message':'Showing the first 80 matches; search a more specific phrase for the rest.'}
-                except (UnicodeError,OSError): continue
+                    relative=str(p.relative_to(root))
+                    result.extend({'path':relative,**m} for m in matches(p.read_text('utf-8'),'workspace:'+relative,a['query'],80-len(result)))
+                    if len(result)>=80: return {'status':'ok','source':'workspace files','matches':result,'truncated':True,'message':'Showing the first 80 matches; search a more specific phrase for the rest.'}
+                except (UnicodeError,OSError): unreadable+=1;continue
             if result: return {'status':'ok','source':'workspace files','matches':result,'truncated':False}
+            if count>10000 or unreadable: return {'status':'error','category':'incomplete_scan','source':'workspace files','matches':[],'truncated':count>10000,'unreadable':unreadable,'message':'No match in the readable files scanned; the scan was incomplete. Narrow the folder or inspect unreadable sources.'}
             return {'status':'empty','source':'workspace files','matches':[],'scanned_entries':min(count,10000),'message':'No workspace text file contains this exact text. Try a shorter phrase or list_files to check the folder.'}
         if name=='run_command': return await self.process(['powershell.exe','-NoProfile','-NonInteractive','-Command',a['command']],a.get('timeout',60))
         if name=='run_code':
@@ -164,16 +182,23 @@ class Toolbox:
             return await search(a['query'])
         if name=='web_fetch':
             from .retrieval import fetch
-            return await fetch(a['url'],bool(a.get('refresh')))
+            result=await fetch(a['url'],bool(a.get('refresh')))
+            if a.get('browser_fallback') and result.get('category') in ('needs_javascript','auth','extraction'):
+                if not external_tools_enabled():return {**result,'guidance':'Enable external tools and connect a browser before authorizing browser fallback.'}
+                from .browser_retrieval import fetch as browser_fetch
+                return await browser_fetch(self.connectors.get('browser'),a['url'])
+            return result
         if name=='discover_tools':
             cats=list(self.connectors) if a['category']=='all' else [a['category']]
             run['enabled'].update(cats)
             return [{'name':t['name'],'description':t['description'][:300],'approval':t['tier']} for t in self.catalog() if t['group'] in cats]
         if name=='memory_search':
             q=a['query'].lower()
+            if not q.strip() or len(q)>500:raise ValueError('Provide a non-empty literal query of at most 500 characters')
             memories=[m for m in self.store.memory() if q in (m['title']+' '+m['content']).lower()]
             rows=self.store.rows('SELECT id,chat,payload FROM messages WHERE instr(lower(payload),?)>0 ORDER BY id DESC LIMIT 15',(q,))
-            history=[dict(id=r['id'],chat=r['chat'],excerpt=str(json.loads(r['payload']).get('content',''))[:1500]) for r in rows]
+            from .sources import matches
+            history=[dict(id=r['id'],chat=r['chat'],matches=matches(str(json.loads(r['payload']).get('content','')),'message:'+str(r['id']),q,3)) for r in rows]
             found=bool(memories or history)
             return {'status':'ok' if found else 'empty','source':'memory and saved history','memories':memories,'history':history,**({} if found else {'message':'No saved memory or message contains this exact text. Try a shorter or different phrase.'})}
         if name=='history_read':

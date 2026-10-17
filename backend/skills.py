@@ -25,8 +25,18 @@ def catalog(connectors=None):
                 text=p.read_text('utf-8');name=p.parent.name;local=folder==DATA/'skills';info=meta.get(name,{}) if not local else {}
                 requires=info.get('requires',[]);gaps=missing(requires,connectors)
                 result[name]={'name':name,'description':next((l for l in text.splitlines() if l.strip() and not l.startswith('#')),'')[:200],'local':local,
-                              'category':info.get('category','Imported' if local else 'Other'),'requires':[NEEDS.get(r,r) for r in requires],'missing':gaps,'available':not gaps}
+                              'category':info.get('category','Imported' if local else 'Other'),'requires':[NEEDS.get(r,r) for r in requires],'missing':gaps,'available':not gaps,
+                              'state':'Needs setup' if gaps else 'Ready','reason':'; '.join(gaps) if gaps else 'Declared dependencies are available; instructions do not grant permissions.',
+                              'permissions':'Uses the same per-action permissions as the chat.',
+                              'inputs':info.get('inputs','User task and explicitly provided sources'),
+                              'outputs':info.get('outputs','Follow the workflow instructions; verify its output before completion.')}
     return sorted(result.values(),key=lambda s:s['name'])
+
+def preflight(name,connectors=None):
+    if not isinstance(name,str) or not re.fullmatch(r'[a-z0-9-]{1,60}',name): raise ValueError('Invalid skill name')
+    row=next((s for s in catalog(connectors) if s['name']==name),None)
+    if row is None:raise ValueError('Skill not found')
+    return row
 
 def load_skill(name):
     if not re.fullmatch(r'[a-z0-9-]{1,60}',name): raise ValueError('Invalid skill name')
