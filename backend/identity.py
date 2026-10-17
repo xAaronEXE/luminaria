@@ -214,12 +214,12 @@ def cancel(id):
     pending.pop(id,None)
     return {'cancelled':True}
 
-def _any_session():
+def _any_session(missing='Sign in first to manage your devices.'):
     for path in [SESSION]+[DATA/f'identity-{p}.bin' for p in PROVIDERS]:
         try:token=read_session(path)
         except ValueError:continue
         if token:return token
-    raise ValueError('Sign in first to manage your devices.')
+    raise ValueError(missing)
 
 async def _devices_call(method,path,payload=None):
     token=_any_session()

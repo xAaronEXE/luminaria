@@ -124,3 +124,28 @@
 .profile-row p{margin:2px 0 0;font-size:12px;color:var(--muted)}
 .profile-row .segmented input:disabled+span{opacity:.45;cursor:not-allowed}
 .device-row h3 .badge{margin-left:6px;vertical-align:middle}
+.insight-stats{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:1px;margin:0 0 22px;background:var(--line);border:1px solid var(--line);border-radius:10px;overflow:hidden}
+.insight-stat{background:var(--panel);padding:14px 16px;margin:0}
+.insight-stat dt{font-size:11px;color:var(--muted)}
+.insight-stat dd{margin:6px 0 0;font-variant-numeric:tabular-nums}
+.insight-stat strong{display:block;font-size:20px;font-weight:550;letter-spacing:-.01em}
+.insight-stat small{display:block;margin-top:4px;font-size:11px;color:var(--dim);line-height:1.5}
+.insight-chart{margin:0 0 8px}
+.insight-chart figcaption{display:flex;justify-content:space-between;flex-wrap:wrap;gap:6px 16px;font-size:11px;color:var(--muted);margin-bottom:10px}
+.chart-legend{display:inline-flex;align-items:center;gap:6px}.chart-legend i{width:9px;height:9px;border-radius:2px;display:inline-block;margin-left:8px}
+.insight-chart ol{display:flex;align-items:flex-end;gap:3px;height:120px;margin:0;padding:0 0 1px;list-style:none;border-bottom:1px solid var(--line)}
+.insight-chart li{flex:1;height:100%;display:flex;flex-direction:column-reverse;min-width:0}
+.insight-chart li:hover{background:var(--hover)}
+.bar-in{background:color-mix(in srgb,var(--muted) 55%,transparent)}.bar-out{background:var(--accent)}
+.insight-chart li span{display:block;width:100%}
+.insight-chart li.uncovered,.chart-legend i.uncovered{background:repeating-linear-gradient(135deg,var(--line) 0 2px,transparent 2px 5px)}
+.chart-axis{display:flex;justify-content:space-between;font-size:11px;color:var(--dim);margin-top:6px}
+.insight-specs dd{text-align:right}
+.insight-table{width:100%;border-collapse:collapse;font-size:12px;font-variant-numeric:tabular-nums;margin:4px 0 8px}
+.insight-table th,.insight-table td{padding:8px 0;border-bottom:1px solid var(--line);text-align:right}
+.insight-table th:first-child{text-align:left;font-weight:500;overflow-wrap:anywhere}
+.insight-table thead th{font-size:11px;font-weight:500;color:var(--muted)}
+.insight-missing{margin:4px 0 8px;padding-left:18px;font-size:12px;line-height:1.7;color:var(--muted)}
+.insight-zone{display:flex;align-items:end;gap:10px}.insight-zone .field{flex:1;max-width:340px;margin:0}
+@media(max-width:850px){.insight-stats{grid-template-columns:repeat(2,minmax(0,1fr))}}
+@media(prefers-reduced-motion:no-preference){.insight-chart li span{transition:height .35s cubic-bezier(.16,1,.3,1)}}
