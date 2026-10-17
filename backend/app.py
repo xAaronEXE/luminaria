@@ -91,6 +91,10 @@ async def state(chat:str=''):
     if chat: require_chat(chat)
     return {'chats':store.chats(),'chat':chat,'messages':store.messages(chat) if chat else [],'actions':store.actions(chat) if chat else [],'summary':store.summary(chat) if chat else None,'summaries':store.rows('SELECT id,through_id,created FROM summaries WHERE chat=? ORDER BY id',(chat,)) if chat else [],'run':engine.public_run(chat),'context':store.setting('context:'+chat,{}),'memories':store.memory(),'schedules':store.rows('SELECT * FROM schedules ORDER BY next_run'),'workspace':CONFIG['workspace'],'model':CONFIG['model'],'context_limit':CONFIG['context'],'connectors':{n:{'status':c.status,'tools':len(c.tools)} for n,c in connectors.items()},'tool_count':len(engine.tools.catalog()),'active_runs':[{'chat':k,'phase':v['phase']} for k,v in engine.runs.items() if not v.get('finished')]}
 
+@app.get('/api/chats/{id}/work')
+async def work_events(id:str,runs:int=12):
+    require_chat(id); return {'chat':id,'events':engine.worklog.events(id,runs),'active_run':(engine.public_run(id) or {}).get('id') if not (engine.public_run(id) or {}).get('finished') else None}
+
 @app.get('/api/events')
 async def events(request:Request):
     queue=asyncio.Queue(maxsize=200); subscribers.add(queue)
@@ -194,6 +198,7 @@ async def stop_chat(id:str):
         with contextlib.suppress(asyncio.CancelledError): await task
     elif id in engine.runs:
         run=engine.runs[id]; run['phase']='Stopped';run['finished']=now();store.save_run(run)
+        engine.finish_event(run)
         store.execute("UPDATE actions SET status='denied' WHERE chat=? AND status='pending'",(id,));store.recover_tool_pairs(id)
         for aid,cid in list(engine.approvals.items()):
             if cid==id: engine.approvals.pop(aid,None)
