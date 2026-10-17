@@ -35,6 +35,7 @@ class Harness:
   async def count(messages,definitions=None):return 100,'test'
   self.engine.token_count=count
  def close(self):
+  self.store.db.close()
   for p in self.patches:p.stop()
  def work(self):return [e['event'] for e in self.events if e['type']=='work']
 
@@ -97,6 +98,7 @@ class WorkEventTests(unittest.IsolatedAsyncioTestCase):
   for i in range(5):log.record({'id':f'x{i}','chat':'c1'},'run.started')
   self.assertEqual(len({e['run'] for e in log.events('c1',runs=3)}),3)
   with self.assertRaises(ValueError):log.record(run,'made.up')
+  store.db.close()
 
  def test_plan_validation_and_regions(self):
   self.assertEqual(plan_steps(PLAN)[0]['status'],'active')
