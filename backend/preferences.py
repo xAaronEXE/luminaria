@@ -23,7 +23,7 @@ DEFAULTS = {'theme_mode': 'light', 'theme': 'Graphite & Ivory', 'background': '#
             'voice_threshold': 0.022, 'voice_silence': 0.85, 'interruptible': True,
             'saved_themes': [], 'voice_id':'lessac',
             'appearance': {'mode':'light','accent':'','modes':{'dark':{},'light':{}},'version':1}}
-APPEARANCE_KEYS = {'bg','sidebar','panel','raised','hover','line','control-line','text','muted','dim','success','warning','danger','info','entity','particle','lattice','pathway','glow'}
+APPEARANCE_KEYS = {'bg','sidebar','panel','raised','hover','line','control-line','text','muted','dim','success','warning','danger','info','memory','tools','entity','particle','lattice','pathway','glow'}
 HEX = re.compile(r'#[0-9a-fA-F]{6}')
 
 def appearance(value):

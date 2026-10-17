@@ -4,6 +4,9 @@ User decisions through 2026-10-16. Requirements are not completion claims.
 This addendum wins conflicts with older specifications. Existing non-conflicting
 master-spec requirements remain in scope.
 
+The October 17, 2026 direction (account, insights, memory, agent reliability, UI
+refinement) and its delivery status live in [ROADMAP-2026-10-17.md](ROADMAP-2026-10-17.md).
+
 ## Fixed product decisions
 
 - Permanent identity: Luminaria; use existing approved logo and sharing imagery.

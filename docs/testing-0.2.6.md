@@ -83,7 +83,7 @@ Do this before installing anything by hand, so the updater itself gets tested.
 
 ### Integrations
 
-Open **Tools & integrations → Integrations**.
+Open **Integrations** in the sidebar (named **Tools & integrations → Integrations** before 0.2.15).
 
 - [ ] **GitHub:** create a token at https://github.com/settings/personal-access-tokens/new
       (only the repos you want, read-only is fine). Paste it and click **Connect**.

@@ -197,6 +197,17 @@ async def run_chat(id:str,request:Request):
     store.add(id,{'role':'user','content':content if attachments else text})
     return {'run_id':engine.start(id,bool(b.get('reasoning',False)),plan_only=bool(b.get('plan_only',False)))}
 
+MAX_CONTINUATIONS=5
+
+@app.post('/api/chats/{id}/continue')
+async def continue_chat(id:str):
+    require_chat(id)
+    previous=engine.public_run(id)
+    if not previous or not previous.get('finished') or not previous.get('checkpoint'): raise ValueError('There is no checkpoint to continue from')
+    if previous.get('continuations',0)>=MAX_CONTINUATIONS: raise ValueError(f'This task has already been continued {MAX_CONTINUATIONS} times. Review the results above, then give a new instruction.')
+    store.add(id,{'role':'user','content':'Continue the task from the checkpoint above. Steps that already succeeded are listed there; do not repeat them. If the same approach keeps failing, try a different one or explain what is blocking.'})
+    return {'run_id':engine.start(id,bool(previous.get('reasoning')),continue_from=previous)}
+
 @app.post('/api/chats/{id}/stop')
 async def stop_chat(id:str):
     require_chat(id)
@@ -322,6 +333,23 @@ async def schedule_update(id:str,request:Request):
 
 @app.delete('/api/schedules/{id}')
 async def schedule_delete(id:str): store.execute('DELETE FROM schedules WHERE id=?',(id,)); return {'ok':True}
+
+@app.post('/api/orchestration/eligibility')
+async def orchestration_eligibility(request:Request):
+    from .orchestration import eligibility,explain_none,normalize_pool
+    from .models import registry
+    b=await request.json() if (await request.body()) else {}
+    setting=normalize_pool(b.get('pool',CONFIG.get('orchestration_pool')))
+    router=b.get('router',CONFIG.get('orchestrator_model',''))
+    models=registry();rows=eligibility(models,setting,router=router)
+    for r,m in zip(rows,models): r['vision']=bool(m.get('projector_file')) and Path(m['projector_file']).is_file(); r['context']=m.get('context')
+    included=[r for r in rows if r['included']]
+    selected=CONFIG['model']; inside=any(r['id']==selected for r in included)
+    if not included: fallback=explain_none(rows,setting)
+    elif inside: fallback=f'If Auto cannot decide, it uses your selected model ({selected}), which is in this selection.'
+    else: fallback=f'Your selected model ({selected}) is outside this selection, so if Auto cannot decide the task stops and says why instead of using it.'
+    return {'pool':setting,'router':router,'models':rows,'included':len(included),'fallback':fallback,
+            'rules':'Auto never downloads a model or routes outside this list. Image tasks also need a model that can read images, and long conversations need enough context.'}
 
 @app.get('/api/settings')
 async def settings():

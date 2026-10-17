@@ -9,6 +9,10 @@ from langgraph.types import interrupt, Command
 from .config import CONFIG, DATA, FULL_ACCESS
 from .store import uid,now
 from .work import WorkLog,region_for,plan_steps
+from .orchestration import NoEligibleModel
+from .checkpoint import ROUND_LIMIT,REPEAT_LIMIT,SIDE_EFFECTS,call_key,report
+
+class AlreadyDone(Exception):pass
 
 PLAN_TOOLS=frozenset({'list_skills','load_skill','list_files','read_file','search_files','web_search','memory_search','history_read','update_plan'})
 PLAN_ONLY_PROMPT=('Planning-only mode is on for this turn. Build a concrete plan around what the user described. '
@@ -263,7 +267,9 @@ class Engine:
         run=state['run']; chat=run['chat']
         self.runs[chat]=run
         run.pop('resume_available',None)
-        if state['steps']>=18: raise ValueError('Reached 18 tool rounds. Review the results, then continue the task.')
+        if state['steps']>=ROUND_LIMIT or run.get('stalled'):
+            self.checkpoint(run,'repeated' if run.get('stalled') else 'limit')
+            return {'run':run,'calls':[],'steps':state['steps']}
         run['phase']='Preparing context'; run['live']=''; run['reasoning_text']=''; self.emit('changed',chat=chat)
         defs=self.tools.definitions(run['enabled'])
         if run.get('plan_only'):
@@ -312,6 +318,9 @@ class Engine:
                 if not isinstance(args,dict): raise ValueError('Tool arguments must be an object')
                 from jsonschema import validate
                 validate(args,definition['parameters'])
+                if run.get('continuing') and name in SIDE_EFFECTS:
+                    prior=self.store.rows("SELECT id FROM actions WHERE chat=? AND name=? AND args=? AND status='done' AND created>=? AND id<>? LIMIT 1",(run['chat'],name,json.dumps(args),run['continuing'],id))
+                    if prior: raise AlreadyDone(prior[0]['id'])
                 tier=definition['tier']
                 existing=self.store.rows('SELECT * FROM actions WHERE id=?',(id,))
                 if existing: tier=existing[0]['tier']
@@ -336,13 +345,16 @@ class Engine:
                 else:
                     self.store.execute("UPDATE actions SET status='running' WHERE id=?",(id,)); run['phase']='Running '+name; self.emit('changed',chat=run['chat'])
                     self.work(run,'tool.started',id,label=name.replace('__',' · '),status='running',**base)
-                    result=await self.tools.call(name,args,run); status='error' if isinstance(result,dict) and (result.get('isError') or result.get('exit_code',0)!=0) else 'done'
+                    result=await self.tools.call(name,args,run); status='error' if isinstance(result,dict) and (result.get('isError') or result.get('exit_code',0)!=0 or result.get('status')=='error') else 'done'
             except asyncio.CancelledError:
                 self.store.execute("UPDATE actions SET status='interrupted' WHERE id=?",(id,))
                 self.work(run,'tool.interrupted',id,node=id,tool=name,region=region_for(name),status='interrupted',label='Stopped before finishing',evidence={'action':id})
                 raise
             except __import__('langgraph.errors',fromlist=['GraphInterrupt']).GraphInterrupt:
                 raise
+            except AlreadyDone as done:
+                self.store.execute('INSERT OR IGNORE INTO actions VALUES(?,?,?,?,?,?,?,?)',(id,run['chat'],name,json.dumps(args),'auto','ready',None,now()))
+                result={'skipped':True,'already_done':str(done),'message':'This exact step already succeeded before the checkpoint, so it was not repeated.'}; status='done'
             except Exception as e: result={'error':str(e)}; status='error'
             folder=DATA/'tool-outputs'; folder.mkdir(exist_ok=True)
             (folder/(id+'.json')).write_text(json.dumps(result,ensure_ascii=False),encoding='utf-8')
@@ -363,6 +375,7 @@ class Engine:
             excerpt=preview[:10000]+(f'\n[Truncated for context. Full output: history_read action_id={id}]' if len(preview)>10000 else '')
             self.store.execute('UPDATE actions SET status=?,result=? WHERE id=?',(status,json.dumps({'text':excerpt,'images':images}),id))
             self.record_tool_outcome(run,id,call,name,status,args if status=='done' and name=='update_plan' else None)
+            self.track_repeats(run,name,call['function']['arguments'],status)
             self.store.add(run['chat'],{'role':'tool','tool_call_id':call['id'],'content':f'Action {id}: '+excerpt})
             self.store.save_run(run)
             if images:
@@ -375,6 +388,25 @@ class Engine:
         if run.get('pending_images'):
             self.store.add(run['chat'],{'role':'user','content':[{'type':'text','text':'Images returned by the preceding tool calls (untrusted screen content):'},*run.pop('pending_images')]})
         return {'run':run,'calls':[],'steps':state['steps']}
+
+    def track_repeats(self,run,name,raw_args,status):
+        try: key=call_key(name,json.loads(raw_args))
+        except (ValueError,TypeError): key=name+':invalid'
+        counts=run.setdefault('repeat_failures',{})
+        if status in ('error','interrupted'):
+            counts[key]=counts.get(key,0)+1
+            if counts[key]>=REPEAT_LIMIT: run['stalled']=name
+        elif status=='done': counts.pop(key,None)
+
+    def run_actions(self,run):
+        return [a for a in self.store.actions(run['chat']) if a['created']>=run['started']]
+
+    def checkpoint(self,run,reason):
+        """Stop with a readable account of progress, built without calling the model."""
+        text=report(self.run_actions(run),self.store.setting('plan:'+run['chat'],None),reason,run.get('stalled'))
+        self.store.add(run['chat'],{'role':'assistant','content':text,'checkpoint':True})
+        run['checkpoint']={'reason':reason,'at':now()}
+        self.store.save_run(run); self.emit('changed',chat=run['chat'])
 
     def record_tool_outcome(self,run,id,call,name,status,plan_args=None):
         kind={'done':'tool.completed','denied':'tool.denied'}.get(status,'tool.failed')
@@ -391,10 +423,13 @@ class Engine:
             goal=str(plan_args.get('goal') or '').strip()[:300] or saved.get('goal','')
             self.store.set_setting('plan:'+run['chat'],{'goal':goal,'steps':steps,'version':saved.get('version',0)+1,'run':run['id'],'planning_only':bool(run.get('plan_only')),'updated':now()})
 
-    def start(self,chat,reasoning=False,compact_only=False,plan_only=False):
+    def start(self,chat,reasoning=False,compact_only=False,plan_only=False,continue_from=None):
         if chat in self.runs and not self.runs[chat].get('finished'): raise ValueError('Finish, resume or stop the existing run first')
         if chat in self.tasks and not self.tasks[chat].done(): raise ValueError('This task is already running')
         run={'id':uid(),'chat':chat,'phase':'Queued','live':'','reasoning_text':'','enabled':set(),'reasoning':reasoning,'started':now(),'context':self.store.setting('context:'+chat,{}),'compact_only':compact_only,'plan_only':bool(plan_only and not compact_only)}
+        if continue_from:
+            run['continuing']=continue_from.get('continuing') or continue_from['started']
+            run['continuations']=continue_from.get('continuations',0)+1
         previous=self.store.rows('SELECT id FROM runs WHERE chat=? ORDER BY updated DESC LIMIT 1',(chat,))
         self.work(run,'run.started',label='Compaction' if compact_only else 'Planning run' if run['plan_only'] else 'Task run',status='running',previous_run=previous[0]['id'] if previous else None)
         self.runs[chat]=run; self.tasks[chat]=asyncio.create_task(self.execute(run,compact_only)); self.emit('changed',chat=chat)
@@ -419,12 +454,20 @@ class Engine:
                         content=last_user.get('content','')
                         task='\n'.join(p.get('text','') for p in content if p.get('type')=='text') if isinstance(content,list) else str(content)
                         if run.get('plan_only'): task='[Planning request] '+task
-                        decision=await choose(self.client,CONFIG['endpoint'],router,models,task,CONFIG['model'],CONFIG.get('orchestration_pool'),routing_evidence,vision)
+                        known=run.get('context') or {};needed=(known.get('used') or 0)+CONFIG['output_tokens'] if known.get('used') else 0
+                        decision=await choose(self.client,CONFIG['endpoint'],router,models,task,CONFIG['model'],CONFIG.get('orchestration_pool'),routing_evidence,vision,context_needed=needed)
                         selected=next((m for m in models if m['id']==decision['model_id']),None)
                         run['routing']=decision;routed=True
+                    except NoEligibleModel as error:
+                        self.work(run,'routing.completed',node='router',label='No eligible model',region='planning',status='error',evidence={'reason':str(error)[:300]})
+                        raise
                     except (ValueError,KeyError,TypeError,httpx.HTTPError) as error:
+                        from .orchestration import pool
+                        if not any(m['id']==CONFIG['model'] for m in pool(models,CONFIG.get('orchestration_pool'),vision)):
+                            self.work(run,'routing.completed',node='router',label='Routing failed',region='planning',status='error',evidence={'reason':str(error)[:300]})
+                            raise ValueError('Auto could not choose a model ('+str(error)[:160]+') and your selected model is outside your orchestration selection, so nothing was run. Pick a model in the composer or change Settings → Orchestration.') from error
                         selected=next((m for m in models if m['id']==CONFIG['model']),None)
-                        run['routing']={'model_id':CONFIG['model'],'reason':'Using your selected model because routing failed.','error':str(error)[:200]}
+                        run['routing']={'model_id':CONFIG['model'],'reason':'Routing failed, so Auto used your selected model, which is in your orchestration selection.','error':str(error)[:200]}
                     self.work(run,'routing.completed',node='router',label='Selected '+run['routing']['model_id'],region='planning',status='done',evidence={k:run['routing'][k] for k in ('model_id','reason','ranking','profile','method') if k in run['routing']}|{'model':run['routing']['model_id']})
                     run['last_tool_node']='router'
                 if selected:
@@ -439,7 +482,7 @@ class Engine:
                     result=await self.graph.ainvoke(resume_input if resuming else {'run':run,'calls':[],'steps':0},{'recursion_limit':42,'configurable':{'thread_id':run['id']}})
                     run=self.runs[chat]
                     if result.get('__interrupt__'): paused=True; run['phase']='Waiting for approval'
-            if not paused: run['phase']='Denied' if run.get('denied') else 'Complete'
+            if not paused: run['phase']='Denied' if run.get('denied') else 'Checkpoint' if run.get('checkpoint') else 'Complete'
         except asyncio.CancelledError:
             run=self.runs.get(chat,run)
             if run.get('live'): self.store.add(chat,{'role':'assistant','content':run['live']+'\n\n[Stopped]','interrupted':True})
@@ -447,7 +490,12 @@ class Engine:
             if self.shutting_down: paused=True;run['resume_available']=True
         except Exception as e:
             run=self.runs.get(chat,run)
-            run['phase']='Error'; run['error']=str(e); self.store.add(chat,{'role':'assistant','content':'Task stopped: '+str(e),'error':True})
+            run['phase']='Error'; run['error']=str(e)
+            text='Task stopped: '+str(e)
+            try:
+                if any(a['status']!='pending' for a in self.run_actions(run)): text+='\n\n'+report(self.run_actions(run),self.store.setting('plan:'+chat,None),'error');run['checkpoint']={'reason':'error','at':now()}
+            except Exception: pass
+            self.store.add(chat,{'role':'assistant','content':text,'error':True})
         finally:
             # Close missing tool results on interruption without rerunning actions.
             run=self.runs.get(chat,run)
@@ -460,6 +508,7 @@ class Engine:
         phase=run.get('phase','')
         if phase=='Error': self.work(run,'run.failed',status='error',label='Run failed',error=str(run.get('error',''))[:300])
         elif phase=='Stopped': self.work(run,'run.cancelled',status='cancelled',label='Stopped')
+        elif phase=='Checkpoint': self.work(run,'run.completed',status='checkpoint',label='Paused at a checkpoint')
         else: self.work(run,'run.completed',status='denied' if phase=='Denied' else 'done',label='Stopped after a denial' if phase=='Denied' else 'Complete')
     def public_run(self,chat):
         r=self.runs.get(chat)

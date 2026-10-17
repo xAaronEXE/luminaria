@@ -1,0 +1,26 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><title>Tuning llama.cpp threads on Ryzen</title>
+<style>body{font-family:sans-serif}</style>
+<script>window.analytics=[];</script>
+</head>
+<body>
+<header class="site-header"><a href="/">Home</a> <a href="/blog">Blog</a></header>
+<nav><ul><li><a href="/a">Archive</a></li><li><a href="/b">About</a></li></ul></nav>
+<div class="cookie-banner">We use cookies to improve your experience. Accept all cookies?</div>
+<main>
+<article>
+<h1>Tuning llama.cpp threads on Ryzen</h1>
+<p>Thread count matters more than most people expect when running quantized models on a desktop processor. Setting threads to the number of physical cores is usually the best starting point.</p>
+<h2>Measure before changing</h2>
+<p>Record prompt processing and generation speed with the default settings, then change one value at a time and record again.</p>
+<ul><li>Use physical cores, not logical threads.</li><li>Keep the batch size fixed while testing.</li></ul>
+<pre>llama-server -m model.gguf -t 8 -b 512</pre>
+<table><tr><th>Threads</th><th>Tokens per second</th></tr><tr><td>8</td><td>41.2</td></tr><tr><td>16</td><td>37.9</td></tr></table>
+</article>
+</main>
+<aside class="related-posts"><p>You might also like: ten GPU tips.</p></aside>
+<div class="newsletter"><p>Subscribe to our newsletter for weekly updates.</p></div>
+<footer><p>Copyright 2026 Example Blog. All rights reserved.</p></footer>
+</body>
+</html>

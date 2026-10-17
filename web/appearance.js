@@ -1,16 +1,17 @@
-/* Semantic appearance tokens. Loaded synchronously in <head> so the saved look applies before first paint.
+/* Semantic appearance tokens. State (success, warning, danger, info) and function (memory, tools) colors are never mixed with a custom accent. Loaded synchronously in <head> so the saved look applies before first paint.
    CSS reads the custom properties; the spatial renderer receives the same values through `studio-appearance`. */
 (()=>{
  const BASE={
   dark:{bg:'#000000',sidebar:'#050505',panel:'#0A0A0A',raised:'#141414',hover:'#1D1D1D',line:'#2A2A2A','control-line':'#5C5C5C',text:'#F5F5F2',muted:'#C2C2BD',dim:'#9E9E99',
-   success:'#86D9A3',warning:'#EBC57E',danger:'#F59D94',info:'#9CC0F2',entity:'#F5F5F2',lattice:'#8A8A86',pathway:'#B4B4AF',particle:'#FFFFFF',glow:'#ECECE7'},
+   success:'#86D9A3',warning:'#EBC57E',danger:'#F59D94',info:'#9CC0F2',memory:'#C8B4FA',tools:'#8CCFDC',entity:'#F5F5F2',lattice:'#8A8A86',pathway:'#B4B4AF',particle:'#FFFFFF',glow:'#ECECE7'},
   light:{bg:'#FFFFFF',sidebar:'#F7F7F5',panel:'#FCFCFB',raised:'#F0F0ED',hover:'#E6E6E2',line:'#D5D5D0','control-line':'#85857F',text:'#0A0A0A',muted:'#3A3A37',dim:'#575753',
-   success:'#1C6A38',warning:'#7A5200',danger:'#A3242C',info:'#1D4D94',entity:'#0A0A0A',lattice:'#7A7A75',pathway:'#4E4E4A',particle:'#000000',glow:'#1A1A1A'}
+   success:'#1C6A38',warning:'#7A5200',danger:'#A3242C',info:'#1D4D94',memory:'#5A3196',tools:'#0D5E6C',entity:'#0A0A0A',lattice:'#7A7A75',pathway:'#4E4E4A',particle:'#000000',glow:'#1A1A1A'}
  };
  const EDITABLE=[
   ['Surfaces',[['bg','Background'],['sidebar','Sidebar'],['panel','Panels and composer'],['raised','Raised controls'],['hover','Hover'],['line','Borders'],['control-line','Field borders']]],
   ['Text',[['text','Primary text'],['muted','Secondary text'],['dim','Tertiary text']]],
   ['States',[['success','Success'],['warning','Warning'],['danger','Error'],['info','Information']]],
+  ['Function accents',[['memory','Memory'],['tools','Tools and integrations']]],
   ['Spatial workspace',[['entity','Entity'],['particle','Particles'],['lattice','Lattice'],['pathway','Pathways'],['glow','Lighting']]]
  ];
  const KEYS=new Set(EDITABLE.flatMap(([,items])=>items.map(([k])=>k)));
@@ -62,7 +63,7 @@
   const out=[],check=(fg,bg,min,what)=>{const r=contrast(t[fg],t[bg]);if(r<min)out.push({fg,bg,ratio:Math.round(r*10)/10,min,what})};
   check('text','bg',4.5,'Primary text on the background');check('text','panel',4.5,'Primary text on panels');check('muted','bg',4.5,'Secondary text on the background');
   check('dim','panel',4.5,'Tertiary text on panels');check('accent','bg',3,'Accent controls against the background');check('accent-contrast','accent',4.5,'Button labels on the accent');
-  check('danger','bg',4.5,'Error text');check('warning','bg',4.5,'Warning text');check('success','bg',4.5,'Success text');check('line','bg',1.25,'Borders against the background');
+  check('danger','bg',4.5,'Error text');check('warning','bg',4.5,'Warning text');check('success','bg',4.5,'Success text');check('memory','bg',4.5,'Memory accent');check('tools','bg',4.5,'Tools accent');check('line','bg',1.25,'Borders against the background');
   return out
  }
  let current=null;
