@@ -6,6 +6,8 @@ master-spec requirements remain in scope.
 
 The October 17, 2026 direction (account, insights, memory, agent reliability, UI
 refinement) and its delivery status live in [ROADMAP-2026-10-17.md](ROADMAP-2026-10-17.md).
+The complete remaining work list, combining every planning document, is
+[SCOPE-OF-WORK.md](SCOPE-OF-WORK.md).
 
 ## Fixed product decisions
 
