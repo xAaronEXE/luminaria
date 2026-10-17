@@ -8,6 +8,18 @@ const now=()=>Math.floor(Date.now()/1000);
 // A remembered device stays signed in for 30 days after its last use, and never longer than 90 days in total.
 const SESSION_IDLE=30*86400,SESSION_MAX=90*86400;
 const deviceLabel=value=>typeof value==='string'?value.replace(/[^\p{L}\p{N} ._'()-]/gu,'').trim().slice(0,60)||null:null;
+// Insights sync stores daily totals only. Each device replaces its own day, so a retried upload never double-counts.
+const INSIGHT_KEYS=['tokens_in','tokens_out','tokens_cached','generations','runs','active_seconds','wait_seconds','tool_ok','tool_failed','reasoning_generations','skills_invoked'];
+const INSIGHT_RETENTION_DAYS=730,INSIGHT_BATCH=90,INSIGHT_DEVICES=20;
+function insightDay(entry,time){
+ if(!entry||typeof entry!=='object'||typeof entry.day!=='string'||!/^\d{4}-\d{2}-\d{2}$/.test(entry.day))return null;
+ const at=Date.parse(entry.day+'T00:00:00Z')/1000;
+ if(!Number.isFinite(at)||at>time+2*86400||at<time-INSIGHT_RETENTION_DAYS*86400)return null;
+ const input=entry.metrics;if(!input||typeof input!=='object'||Object.keys(input).some(k=>!INSIGHT_KEYS.includes(k)))return null;
+ const metrics={};
+ for(const key of INSIGHT_KEYS){const value=input[key]??0;if(!Number.isSafeInteger(value)||value<0||value>1e12)return null;metrics[key]=value;}
+ return {day:entry.day,metrics:JSON.stringify(metrics)};
+}
 const random=()=>Array.from(crypto.getRandomValues(new Uint8Array(32)),x=>x.toString(16).padStart(2,'0')).join('');
 const bytes=value=>new TextEncoder().encode(value);
 async function hash(value){return Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256',bytes(value))),x=>x.toString(16).padStart(2,'0')).join('');}
@@ -22,11 +34,11 @@ function page(title,message,status=200,headers={}){
 }
 const clearCookie={'Set-Cookie':'__Host-luminaria_oauth=; Secure; HttpOnly; SameSite=Lax; Path=/; Max-Age=0'};
 function configured(env,name){return Boolean(providers[name]&&env[name.toUpperCase()+'_CLIENT_ID']&&env[name.toUpperCase()+'_CLIENT_SECRET']);}
-async function body(request){
+async function body(request,limit=4096){
  if(!request.headers.get('content-type')?.startsWith('application/json'))throw new Error('JSON required');
  const reader=request.body?.getReader();if(!reader)throw new Error('Body required');
  let size=0,chunks=[];
- while(true){const {done,value}=await reader.read();if(done)break;size+=value.length;if(size>4096){await reader.cancel();throw new Error('Body too large');}chunks.push(value);}
+ while(true){const {done,value}=await reader.read();if(done)break;size+=value.length;if(size>limit){await reader.cancel();throw new Error('Body too large');}chunks.push(value);}
  const result=new Uint8Array(size);let offset=0;for(const chunk of chunks){result.set(chunk,offset);offset+=chunk.length;}
  return JSON.parse(new TextDecoder().decode(result));
 }
@@ -226,6 +238,38 @@ async function route(request,env){
   if(!done.meta.changes)return json({error:'That device is not signed in to your account'},404);
   return json({revoked:done.meta.changes,current:digest.startsWith(input.id)});
  }
+ if(path.startsWith('/insights/')){
+  const token=request.headers.get('Authorization')?.match(/^Bearer ([a-f0-9]{64})$/)?.[1];
+  if(!token)return json({error:'Sign-in required'},401);
+  const me=await env.DB.prepare('SELECT m.account_id FROM sessions s JOIN account_members m ON m.identity_id=s.identity_id WHERE s.token_hash=? AND s.expires>?').bind(await hash(token),time).first();
+  if(!me)return json({error:'Session expired or revoked'},401);
+  if(path==='/insights/days'&&request.method==='GET'){
+   const rows=await env.DB.prepare('SELECT device,day,metrics FROM insight_days WHERE account_id=? ORDER BY day').bind(me.account_id).all();
+   const days=new Map(),devices=new Set();
+   for(const row of rows.results){
+    devices.add(row.device);const metrics=JSON.parse(row.metrics),total=days.get(row.day)||Object.fromEntries(INSIGHT_KEYS.map(k=>[k,0]));
+    for(const key of INSIGHT_KEYS)total[key]+=metrics[key]||0;days.set(row.day,total);
+   }
+   return json({devices:devices.size,days:[...days].map(([day,metrics])=>({day,metrics})),retention_days:INSIGHT_RETENTION_DAYS});
+  }
+  if(path==='/insights/days'&&request.method==='POST'){
+   const input=await body(request,65536);
+   if(typeof input.device!=='string'||!/^[a-f0-9]{32}$/.test(input.device))return json({error:'Invalid device'},400);
+   if(!Array.isArray(input.days)||input.days.length<1||input.days.length>INSIGHT_BATCH)return json({error:`Send 1 to ${INSIGHT_BATCH} days at a time`},400);
+   const days=input.days.map(entry=>insightDay(entry,time));
+   if(days.some(d=>!d)||new Set(days.map(d=>d.day)).size!==days.length)return json({error:'Insights must be daily totals of known counters'},400);
+   const known=await env.DB.prepare('SELECT COUNT(DISTINCT device) AS n,SUM(device=?) AS mine FROM insight_days WHERE account_id=?').bind(input.device,me.account_id).first();
+   if(!known.mine&&known.n>=INSIGHT_DEVICES)return json({error:'Too many devices sync insights for this account. Delete synced insights and try again.'},400);
+   await env.DB.batch(days.map(d=>env.DB.prepare('INSERT INTO insight_days(account_id,device,day,metrics,updated) VALUES(?,?,?,?,?) ON CONFLICT(account_id,device,day) DO UPDATE SET metrics=excluded.metrics,updated=excluded.updated').bind(me.account_id,input.device,d.day,d.metrics,time)));
+   return json({stored:days.length});
+  }
+  if(path==='/insights/delete'&&request.method==='POST'){
+   const input=await body(request);
+   if(input.device!==undefined&&(typeof input.device!=='string'||!/^[a-f0-9]{32}$/.test(input.device)))return json({error:'Invalid device'},400);
+   const done=input.device?await env.DB.prepare('DELETE FROM insight_days WHERE account_id=? AND device=?').bind(me.account_id,input.device).run():await env.DB.prepare('DELETE FROM insight_days WHERE account_id=?').bind(me.account_id).run();
+   return json({deleted:done.meta.changes});
+  }
+ }
  return json({error:'Not found'},404);
 }
 export default {
@@ -234,5 +278,6 @@ export default {
   console.error(JSON.stringify({event:release?'release_request_failed':'auth_request_failed',kind:error.name}));
   if(path.startsWith('/callback/'))return page('Sign-in could not be completed','The provider did not confirm your account. Start sign-in again from Luminaria.',400,clearCookie);
   return release?json({error:'The update service could not read the release. Try again later.'},502):json({error:'Sign-in could not be completed. Please start again.'},400);}},
- async scheduled(controller,env){await env.DB.batch(['devices','device_links','oauth_states','sessions','rate_limits'].map(table=>env.DB.prepare(`DELETE FROM ${table} WHERE expires<?`).bind(now())));}
+ async scheduled(controller,env){await env.DB.batch([...['devices','device_links','oauth_states','sessions','rate_limits'].map(table=>env.DB.prepare(`DELETE FROM ${table} WHERE expires<?`).bind(now())),
+  env.DB.prepare('DELETE FROM insight_days WHERE day<?').bind(new Date((now()-INSIGHT_RETENTION_DAYS*86400)*1000).toISOString().slice(0,10))]);}
 };

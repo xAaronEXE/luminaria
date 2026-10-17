@@ -143,5 +143,28 @@ try{
  assert.equal((await send('/session',undefined,{Authorization:'Bearer '+foreignToken})).status,200);
  assert.equal((await send('/sessions',undefined,{Authorization:'Bearer '+'0'.repeat(64)})).status,401);
 
- console.log('Identity flow passed: GitHub, Google and Discord pairing, cookie, PKCE, callback replay, one-time claim, server session, hashed storage, logout, expiry, remembered devices (sliding 30-day expiry, 90-day cap, listing, revocation scoped to one account), browser cancellation and forged refusal. Provider responses were mocked; no real provider login claimed.');
+ // Insights sync: daily totals per device, idempotent re-uploads, summed per account, never visible to another account.
+ const today=new Date().toISOString().slice(0,10),yesterday=new Date(Date.now()-86400000).toISOString().slice(0,10);
+ const pcA='a'.repeat(32),pcB='b'.repeat(32),upload=(device,days,auth=laptopAuth)=>send('/insights/days',{device,days},auth);
+ assert.equal((await send('/insights/days')).status,401);
+ assert.equal((await upload(pcA,[{day:today,metrics:{tokens_in:100,tokens_out:40,generations:2}}],{Authorization:'Bearer '+'0'.repeat(64)})).status,401);
+ for(let i=0;i<2;i++)assert.equal((await upload(pcA,[{day:yesterday,metrics:{tokens_in:10,generations:1}},{day:today,metrics:{tokens_in:100,tokens_out:40,generations:2}}])).status,200);
+ assert.equal((await upload(pcB,[{day:today,metrics:{tokens_in:5,tokens_out:5,generations:1,active_seconds:30}}])).status,200);
+ let combined=await (await send('/insights/days',undefined,laptopAuth)).json();
+ assert.equal(combined.devices,2);assert.deepEqual(combined.days.map(d=>d.day),[yesterday,today]);
+ assert.equal(combined.days[1].metrics.tokens_in,105);assert.equal(combined.days[1].metrics.tokens_out,45);assert.equal(combined.days[1].metrics.active_seconds,30);
+ assert.equal((await upload(pcA,[{day:today,metrics:{tokens_in:120,tokens_out:40,generations:3}}])).status,200); // A newer total replaces, it does not add.
+ combined=await (await send('/insights/days',undefined,laptopAuth)).json();assert.equal(combined.days[1].metrics.tokens_in,125);
+ for(const bad of [[{day:today,metrics:{message:'hello'}}],[{day:today,metrics:{tokens_in:-1}}],[{day:today,metrics:{tokens_in:1.5}}],[{day:'2020-01-01',metrics:{}}],[{day:'tomorrow',metrics:{}}],[{day:today,metrics:{}},{day:today,metrics:{}}],[]])
+  assert.equal((await upload(pcA,bad)).status,400);
+ assert.equal((await upload('not-a-device',[{day:today,metrics:{}}])).status,400);
+ const foreignInsights=await (await send('/insights/days',undefined,{Authorization:'Bearer '+foreignToken})).json();
+ assert.equal(foreignInsights.devices,0);assert.equal(foreignInsights.days.length,0);
+ assert.deepEqual(await (await send('/insights/delete',{},{Authorization:'Bearer '+foreignToken})).json(),{deleted:0});
+ assert.deepEqual(await (await send('/insights/delete',{device:pcB},laptopAuth)).json(),{deleted:1});
+ assert.equal((await (await send('/insights/days',undefined,laptopAuth)).json()).devices,1);
+ assert.deepEqual(await (await send('/insights/delete',{},laptopAuth)).json(),{deleted:2});
+ assert.equal((await (await send('/insights/days',undefined,laptopAuth)).json()).days.length,0);
+
+ console.log('Identity flow passed: GitHub, Google and Discord pairing, cookie, PKCE, callback replay, one-time claim, server session, hashed storage, logout, expiry, remembered devices (sliding 30-day expiry, 90-day cap, listing, revocation scoped to one account), insights sync (idempotent daily totals, per-account sums, validation, delete), browser cancellation and forged refusal. Provider responses were mocked; no real provider login claimed.');
 }finally{await mf.dispose();}
