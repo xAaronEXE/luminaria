@@ -1,4 +1,4 @@
-# Luminaria 0.2.8 Windows acceptance — Aaron
+# Luminaria 0.2.8 Windows acceptance â€” Aaron
 
 Candidate only. Do not publish until these checks are accepted. Preserve your data.
 
