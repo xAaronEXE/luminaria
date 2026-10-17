@@ -23,7 +23,7 @@ class ActionHistoryTests(unittest.TestCase):
   store.execute('UPDATE chats SET archived=2 WHERE id=?',(cls.old,))
  @classmethod
  def tearDownClass(cls):
-  cls.client.__exit__(None,None,None);FOLDER.cleanup()
+  cls.client.__exit__(None,None,None);server.store.db.close();FOLDER.cleanup()
 
  def names(self,query=''):
   r=self.client.get('/api/actions'+query);self.assertEqual(r.status_code,200,r.text);return [a['name'] for a in r.json()]

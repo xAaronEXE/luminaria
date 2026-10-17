@@ -25,3 +25,20 @@ All /api routes except GET /api/bootstrap require X-Studio-Token returned by boo
 - GET /api/updates; POST /api/updates/install: user-configured GitHub release workflow.
 
 Frontend voice uses an epoch counter to discard stale speech/transcripts, AudioWorklet capture, browser echo-cancellation request, and continuous silence segmentation. Switching tasks or ending voice releases tracks. Model/tool approval is independent of voice.
+
+## Spatial browser contract (0.2.8)
+
+- SSE work events dispatch studio-work without triggering a state fetch by themselves.
+  Existing changed events still refresh state. SSE reconnect triggers work recovery.
+- work-graph.js reduces evidence into studio-scene: chat, nodes, known edges, focus,
+  selected, omitted count and recovery error. All references are namespaced per run.
+- studio-appearance updates CSS and scene materials; no per-frame computed-style reads.
+- studio-audio and studio-voice-state remain local/client-side. studio-voice-turn marks
+  a pending spoken turn so typed queues cannot race barge-in/transcription.
+- GET /api/chats/ID/summaries/SUMMARY_ID resolves exact historical summary evidence.
+  Existing token, loopback, profile and chat boundaries apply; foreign references return404.
+- Typed queues are client-side, per chat, bounded to ten unsent messages. A queued item
+  is not a backend message until POST /chats/ID/run succeeds. Active submissions cannot
+  be cancelled as unsent; errors remain available for explicit retry/cancel.
+- Spatial overview enables pointer selection; normal conversation retains ordinary chat
+  interaction. The accessible outline uses the same reduced nodes as WebGL.

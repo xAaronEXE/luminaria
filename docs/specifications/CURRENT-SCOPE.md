@@ -168,35 +168,43 @@ master-spec requirements remain in scope.
 - Version 0.2.7 adds the expanded model library. See testing-0.2.7.md.
 - See verification-0.2.4.md for detailed historical evidence and remaining checks.
 
-## Spatial workspace and appearance (in progress, branch cursor/neural-workspace-11de)
+## Spatial workspace and appearance (0.2.8 candidate; unpublished)
 
-Done and verified only at the stated layer:
-- Structured work events are recorded per run in the run_events table and sent on the
-  existing event stream (see API.md). Verified by engine tests with a mocked model
-  stream: ordering, plan/tool/generation events, failure follow-ups, cancellation,
-  approval resume without duplicates. Not yet seen in the packaged app.
-- Optional model-provided update_plan tool. Whether local models use it well is unverified.
-- Appearance: black on white by default, white on black in dark mode, follow system,
-  an optional accent color (picker, no presets) shared across modes with an optional
-  per-mode accent, and every surface, text, state and spatial color editable per mode.
-  Contrast warnings, live application, save status, reset current mode, reset all
-  (confirmed). Applied before first paint from a local cache, then from the profile.
-  Legacy Acid Mint colors removed from style.css. Verified in a browser preview with
-  mocked APIs (screenshots) and by preference validation tests; not yet in the desktop app.
-  The pre-paint cache is shared by all profiles on the PC, so switching profile can
-  briefly show the previous profile's colors.
+The persistent conversational entity and neural lattice coexist. The entity moves
+through recorded task nodes during text or voice work. The lattice is an execution
+view, not a claim to hidden neural activations or private thoughts.
 
-Remaining:
-- Frontend scene store fed by work events (dedupe by id, order by seq, rebuild from
-  /api/chats/ID/work on reconnect and chat switch).
-- Renderer rewrite: entity (particle organism, deforming mesh, toroidal energy) plus a
-  neural lattice with functional regions, curved pathways, node clusters for long runs,
-  entity travel to the active node, adaptive quality and instancing. core.js still draws
-  the older brain-to-torus form; it now takes its color from the entity token.
-- Node inspection, two-way link with the Activity inspector, follow/overview/focus/
-  return controls, keyboard navigation and a non-3D activity view.
-- Continued typing during a run (queued messages); voice barge-in already cancels the run.
-- Version bump, release notes, packaged desktop acceptance on Windows.
+Implemented on codex/spatial-workspace:
+- Existing persisted work events feed a bounded, replay-deduplicated browser scene.
+  Chat changes and SSE reconnect recover history without accepting stale responses.
+- Latest run expanded; older runs are inspectable clusters. Visible nodes are bounded;
+  truncation is labelled. Plans/reasoning remain model-provided, distinct from tool evidence.
+- Separate toroidal particle entity, seven functional regions, curved known edges,
+  activity packets and event-driven travel. Stable node positions, adaptive resolution,
+  reusable GPU buffers, actual audio-frame inputs, motion pause and reduced motion.
+- Overview/follow/focus/return, visible node labels, keyboard inspection, evidence cards,
+  Activity links in both directions and an accessible outline/WebGL fallback.
+- Historical compaction summaries resolve by exact chat-scoped reference.
+- Typed messages queue per chat during a run, can be cancelled before submission,
+  retain failed sends for retry and dispatch after completion. Voice turns take priority.
+  Queues are client memory only; closing warns about unsent messages.
+- Voice chat recedes modestly while Stop, approvals and errors remain usable.
+- Black/white light/dark/system appearance and existing customization tokens drive the
+  complete interface and scene. The startup cache is still PC-wide; switching profiles
+  can briefly show the prior profile's appearance.
+
+Verified layers:
+- Isolated Python tests for event recording, existing product behaviour and new scoped
+  summary evidence. JS checks for graph ordering/recovery, queueing and renderer lifecycle.
+- Browser preview with MOCKED APIs for theme variants, outline/evidence interaction,
+  Activity links, queued dispatch and fault-injected unavailable WebGL. These are not
+  real inference or native desktop acceptance.
+
+Release blockers:
+- Aaron's packaged Windows acceptance: real model/tool workflow, real microphone and
+  output reactivity, voice/task continuity, barge-in and sustained performance.
+- Real OS reduced-motion changes and update/persistence acceptance on Windows.
+- 0.2.8 must remain unpublished until implementation is accepted.
 
 ## Locations
 

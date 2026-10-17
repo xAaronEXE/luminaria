@@ -4,6 +4,7 @@
  let enabled=false,stream,context,node,source,sink,audio,micAnalyser,fetchController,epoch=0,lastAudioFrame=0;
  let frames=[],pre=[],talking=false,loud=0,quiet=0,length=0,transcribing=false;
  let voiceChat='',seen=new Set(),queue=[],speaking=false,interrupting=Promise.resolve();
+ const voiceTurn=(pending,target=voiceChat)=>window.dispatchEvent(new CustomEvent('studio-voice-turn',{detail:{chat:target,pending}}));
  const voiceIcon='<svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 10v4m4-8v12m4-15v18m4-15v12m4-8v4"/></svg>';
  const button=document.createElement('button');button.type='button';button.className='voice-toggle';button.id='voice-toggle';
  button.innerHTML=voiceIcon;button.setAttribute('aria-pressed','false');button.title='Start a local voice conversation';
@@ -16,7 +17,7 @@
  function audioFrame(analyser,source,rms){const bins=new Uint8Array(analyser.frequencyBinCount);analyser.getByteFrequencyData(bins);const hz=context.sampleRate/analyser.fftSize;const average=(lo,hi)=>{let sum=0,n=0;for(let i=Math.max(1,Math.floor(lo/hz));i<Math.min(bins.length,Math.ceil(hi/hz));i++){sum+=bins[i]/255;n++}return n?sum/n:0};const samples=new Float32Array(analyser.fftSize);analyser.getFloatTimeDomainData(samples);let power=0;for(const value of samples)power+=value*value;return {source,rms:rms??Math.min(1,Math.sqrt(power/samples.length)*8),bass:average(60,300),mid:average(300,2000),high:average(2000,7000)}}
  const clearSpeech=()=>{epoch++;queue=[];fetchController?.abort();if(audio){audio.pause();audio.src='';audio=null}speaking=false};
  function resetCapture(){frames=[];pre=[];talking=false;loud=quiet=length=0}
- function end(){if(enabled&&mode==='conversation'&&chat===voiceChat&&active())stop().catch(e=>toast(e.message,true));enabled=false;delete document.body.dataset.voice;document.body.classList.remove('voice-review');label('Microphone off');window.dispatchEvent(new CustomEvent('studio-audio',{detail:0}));clearSpeech();stream?.getTracks().forEach(t=>t.stop());node?.disconnect();source?.disconnect();sink?.disconnect();context?.close();context=null;micAnalyser=null;resetCapture();bar.hidden=true;button.innerHTML=voiceIcon;button.setAttribute('aria-pressed','false');dictation.setAttribute('aria-pressed','false')}
+ function end(){voiceTurn(false);if(enabled&&mode==='conversation'&&chat===voiceChat&&active())stop().catch(e=>toast(e.message,true));enabled=false;delete document.body.dataset.voice;document.body.classList.remove('voice-review');label('Microphone off');window.dispatchEvent(new CustomEvent('studio-audio',{detail:0}));clearSpeech();stream?.getTracks().forEach(t=>t.stop());node?.disconnect();source?.disconnect();sink?.disconnect();context?.close();context=null;micAnalyser=null;resetCapture();bar.hidden=true;button.innerHTML=voiceIcon;button.setAttribute('aria-pressed','false');dictation.setAttribute('aria-pressed','false')}
  async function interrupt(){clearSpeech();if(enabled)label('Listening · reply interrupted');if(active()&&chat===voiceChat)await stop()}
  async function begin(nextMode='conversation'){
   if(starting)return;starting=true;button.disabled=dictation.disabled=true;
@@ -43,7 +44,7 @@
   const level=Math.sqrt(power/samples.length);if(performance.now()-lastAudioFrame>30){lastAudioFrame=performance.now();window.dispatchEvent(new CustomEvent('studio-audio',{detail:audioFrame(micAnalyser,'microphone',Math.min(1,level*8))}));}const voiced=level>(studioPrefs.voice_threshold||.022);
   if(!talking){pre.push(samples);while(pre.length*dt>.32)pre.shift();loud=voiced?loud+dt:0;
    if(loud<.18)return;talking=true;frames=pre.slice();pre=[];length=frames.length*dt;
-   interrupting=(mode==='conversation'&&studioPrefs.interruptible?interrupt():Promise.resolve()).catch(e=>{toast(e.message,true)});label('Listening…');
+   if(mode==='conversation')voiceTurn(true);interrupting=(mode==='conversation'&&studioPrefs.interruptible?interrupt():Promise.resolve()).catch(e=>{toast(e.message,true)});label('Listening…');
   }else{frames.push(samples);length+=dt}
   quiet=voiced?0:quiet+dt;
   if(quiet>(studioPrefs.voice_silence||.85)||length>=30){const captured=frames;resetCapture();transcribe(captured).catch(e=>{toast(e.message,true);if(enabled)label('Listening · last turn failed')})}
@@ -67,7 +68,7 @@
    if(mode==='dictation'){$('#prompt').value+=($('#prompt').value?' ':'')+result.text;$('#prompt').dispatchEvent(new Event('input'));end();$('#prompt').focus();return}
    // A voice turn uses exactly the normal agent route; it cannot grant approvals.
    await api('/chats/'+target+'/run','POST',{text:result.text,reasoning:$('#reasoning').checked});await refresh();label('Thinking · you can interrupt');
-  }finally{transcribing=false}
+  }finally{transcribing=false;voiceTurn(false,target)}
  }
  const spokenText=text=>text.replace(/```[\s\S]*?```/g,' Code is shown in the chat. ').replace(/\[([^\]]+)\]\([^)]+\)/g,'$1').replace(/https?:\/\/\S+/g,'link in the chat').replace(/[*#`_>|]/g,'').trim();
  async function playQueue(){

@@ -95,6 +95,13 @@ async def state(chat:str=''):
 async def work_events(id:str,runs:int=12):
     require_chat(id); return {'chat':id,'events':engine.worklog.events(id,runs),'active_run':(engine.public_run(id) or {}).get('id') if not (engine.public_run(id) or {}).get('finished') else None}
 
+@app.get('/api/chats/{id}/summaries/{summary_id}')
+async def summary_evidence(id:str,summary_id:int):
+    require_chat(id)
+    rows=store.rows('SELECT id,through_id,content,created FROM summaries WHERE chat=? AND id=?',(id,summary_id))
+    if not rows:raise HTTPException(404,'Summary not found in this chat')
+    return rows[0]
+
 @app.get('/api/events')
 async def events(request:Request):
     queue=asyncio.Queue(maxsize=200); subscribers.add(queue)
