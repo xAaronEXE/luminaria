@@ -5,6 +5,21 @@ const providers = {
  discord:{authorize:'https://discord.com/oauth2/authorize',token:'https://discord.com/api/oauth2/token',user:'https://discord.com/api/users/@me',scope:'identify',pkce:false}
 };
 const now=()=>Math.floor(Date.now()/1000);
+// A remembered device stays signed in for 30 days after its last use, and never longer than 90 days in total.
+const SESSION_IDLE=30*86400,SESSION_MAX=90*86400;
+const deviceLabel=value=>typeof value==='string'?value.replace(/[^\p{L}\p{N} ._'()-]/gu,'').trim().slice(0,60)||null:null;
+// Insights sync stores daily totals only. Each device replaces its own day, so a retried upload never double-counts.
+const INSIGHT_KEYS=['tokens_in','tokens_out','tokens_cached','generations','runs','active_seconds','wait_seconds','tool_ok','tool_failed','reasoning_generations','skills_invoked'];
+const INSIGHT_RETENTION_DAYS=730,INSIGHT_BATCH=90,INSIGHT_DEVICES=20;
+function insightDay(entry,time){
+ if(!entry||typeof entry!=='object'||typeof entry.day!=='string'||!/^\d{4}-\d{2}-\d{2}$/.test(entry.day))return null;
+ const at=Date.parse(entry.day+'T00:00:00Z')/1000;
+ if(!Number.isFinite(at)||at>time+2*86400||at<time-INSIGHT_RETENTION_DAYS*86400)return null;
+ const input=entry.metrics;if(!input||typeof input!=='object'||Object.keys(input).some(k=>!INSIGHT_KEYS.includes(k)))return null;
+ const metrics={};
+ for(const key of INSIGHT_KEYS){const value=input[key]??0;if(!Number.isSafeInteger(value)||value<0||value>1e12)return null;metrics[key]=value;}
+ return {day:entry.day,metrics:JSON.stringify(metrics)};
+}
 const random=()=>Array.from(crypto.getRandomValues(new Uint8Array(32)),x=>x.toString(16).padStart(2,'0')).join('');
 const bytes=value=>new TextEncoder().encode(value);
 async function hash(value){return Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256',bytes(value))),x=>x.toString(16).padStart(2,'0')).join('');}
@@ -19,11 +34,11 @@ function page(title,message,status=200,headers={}){
 }
 const clearCookie={'Set-Cookie':'__Host-luminaria_oauth=; Secure; HttpOnly; SameSite=Lax; Path=/; Max-Age=0'};
 function configured(env,name){return Boolean(providers[name]&&env[name.toUpperCase()+'_CLIENT_ID']&&env[name.toUpperCase()+'_CLIENT_SECRET']);}
-async function body(request){
+async function body(request,limit=4096){
  if(!request.headers.get('content-type')?.startsWith('application/json'))throw new Error('JSON required');
  const reader=request.body?.getReader();if(!reader)throw new Error('Body required');
  let size=0,chunks=[];
- while(true){const {done,value}=await reader.read();if(done)break;size+=value.length;if(size>4096){await reader.cancel();throw new Error('Body too large');}chunks.push(value);}
+ while(true){const {done,value}=await reader.read();if(done)break;size+=value.length;if(size>limit){await reader.cancel();throw new Error('Body too large');}chunks.push(value);}
  const result=new Uint8Array(size);let offset=0;for(const chunk of chunks){result.set(chunk,offset);offset+=chunk.length;}
  return JSON.parse(new TextDecoder().decode(result));
 }
@@ -173,11 +188,11 @@ async function route(request,env){
    await env.DB.prepare('INSERT OR IGNORE INTO account_members VALUES(?,?,?)').bind(parent.id,parent.id,parent.provider).run();
    statements.push(env.DB.prepare('UPDATE account_members SET account_id=(SELECT account_id FROM account_members WHERE identity_id=?) WHERE account_id=(SELECT account_id FROM account_members WHERE identity_id=?) AND EXISTS(SELECT 1 FROM sessions WHERE token_hash=? AND expires>?)').bind(parent.id,device.identity_id,link.session_hash,time));
   }
-  const token=random(),tokenHash=await hash(token),expires=time+7*86400;
+  const token=random(),tokenHash=await hash(token),expires=time+SESSION_IDLE,label=deviceLabel(input.label);
   // Insertion and deletion share a transaction. Only one poll can obtain a session.
   const sessionIndex=statements.length;let results;
   try{results=await env.DB.batch([...statements,
-   env.DB.prepare('INSERT INTO sessions SELECT ?,identity_id,? FROM devices WHERE id=? AND secret_hash=? AND expires>? AND identity_id IS NOT NULL AND identity_id<>? AND (? IS NULL OR EXISTS(SELECT 1 FROM sessions WHERE token_hash=? AND expires>?))').bind(tokenHash,expires,input.device_id,digest,time,DENIED,link?.session_hash||null,link?.session_hash||null,time),
+   env.DB.prepare('INSERT INTO sessions(token_hash,identity_id,expires,created,last_seen,label) SELECT ?,identity_id,?,?,?,? FROM devices WHERE id=? AND secret_hash=? AND expires>? AND identity_id IS NOT NULL AND identity_id<>? AND (? IS NULL OR EXISTS(SELECT 1 FROM sessions WHERE token_hash=? AND expires>?))').bind(tokenHash,expires,time,time,label,input.device_id,digest,time,DENIED,link?.session_hash||null,link?.session_hash||null,time),
    env.DB.prepare('DELETE FROM devices WHERE id=? AND secret_hash=? AND identity_id IS NOT NULL').bind(input.device_id,digest),
    env.DB.prepare('DELETE FROM device_links WHERE device_id=?').bind(input.device_id)
   ]);}catch{return json({error:'Account already has a different identity for this provider. No account was changed.'},409);}
@@ -189,12 +204,71 @@ async function route(request,env){
   if(!token)return json({error:'Sign-in required'},401);
   const digest=await hash(token);
   if(path==='/logout'){await env.DB.prepare('DELETE FROM sessions WHERE token_hash=?').bind(digest).run();return json({signed_out:true});}
-  const user=await env.DB.prepare('SELECT i.id,i.provider,i.name,s.expires FROM sessions s JOIN identities i ON i.id=s.identity_id WHERE s.token_hash=? AND s.expires>?').bind(digest,time).first();
+  const user=await env.DB.prepare('SELECT i.id,i.provider,i.name,s.expires,s.created,s.last_seen FROM sessions s JOIN identities i ON i.id=s.identity_id WHERE s.token_hash=? AND s.expires>?').bind(digest,time).first();
   if(!user)return json({error:'Session expired or revoked'},401);
+  const started=user.created||time;
+  if(!user.last_seen||time-user.last_seen>3600||user.expires-time<SESSION_IDLE-86400){
+   user.expires=Math.max(user.expires,Math.min(time+SESSION_IDLE,started+SESSION_MAX));
+   await env.DB.prepare('UPDATE sessions SET expires=?,last_seen=?,created=COALESCE(created,?) WHERE token_hash=?').bind(user.expires,time,started,digest).run();
+  }
+  delete user.created;delete user.last_seen;
   await env.DB.prepare('INSERT OR IGNORE INTO account_members VALUES(?,?,?)').bind(user.id,user.id,user.provider).run();
   const account=await env.DB.prepare('SELECT i.id,i.name FROM account_members m JOIN identities i ON i.id=m.account_id WHERE m.identity_id=?').bind(user.id).first();
   const connections=await env.DB.prepare('SELECT i.id,i.provider,i.name FROM identities i JOIN account_members m ON m.identity_id=i.id WHERE m.account_id=? ORDER BY i.created,i.id').bind(account.id).all();
   return json({user,account,connections:connections.results});
+ }
+ if(path==='/sessions'&&request.method==='GET'||path==='/sessions/revoke'&&request.method==='POST'){
+  const token=request.headers.get('Authorization')?.match(/^Bearer ([a-f0-9]{64})$/)?.[1];
+  if(!token)return json({error:'Sign-in required'},401);
+  const digest=await hash(token);
+  const me=await env.DB.prepare('SELECT m.account_id FROM sessions s JOIN account_members m ON m.identity_id=s.identity_id WHERE s.token_hash=? AND s.expires>?').bind(digest,time).first();
+  if(!me)return json({error:'Session expired or revoked'},401);
+  const scope='FROM sessions s JOIN account_members m ON m.identity_id=s.identity_id JOIN identities i ON i.id=s.identity_id WHERE m.account_id=? AND s.expires>?';
+  if(path==='/sessions'){
+   const rows=await env.DB.prepare(`SELECT substr(s.token_hash,1,16) AS id,s.token_hash=? AS current,i.provider,s.label,s.created,s.last_seen,s.expires ${scope} ORDER BY s.last_seen DESC`).bind(digest,me.account_id,time).all();
+   return json({devices:rows.results.map(r=>({...r,current:Boolean(r.current)})),idle_days:SESSION_IDLE/86400,max_days:SESSION_MAX/86400});
+  }
+  const input=await body(request);
+  if(input.others===true){
+   const done=await env.DB.prepare(`DELETE FROM sessions WHERE token_hash IN (SELECT s.token_hash ${scope}) AND token_hash<>?`).bind(me.account_id,time,digest).run();
+   return json({revoked:done.meta.changes});
+  }
+  if(typeof input.id!=='string'||!/^[a-f0-9]{16}$/.test(input.id))return json({error:'Invalid device'},400);
+  const done=await env.DB.prepare(`DELETE FROM sessions WHERE token_hash IN (SELECT s.token_hash ${scope} AND substr(s.token_hash,1,16)=?)`).bind(me.account_id,time,input.id).run();
+  if(!done.meta.changes)return json({error:'That device is not signed in to your account'},404);
+  return json({revoked:done.meta.changes,current:digest.startsWith(input.id)});
+ }
+ if(path.startsWith('/insights/')){
+  const token=request.headers.get('Authorization')?.match(/^Bearer ([a-f0-9]{64})$/)?.[1];
+  if(!token)return json({error:'Sign-in required'},401);
+  const me=await env.DB.prepare('SELECT m.account_id FROM sessions s JOIN account_members m ON m.identity_id=s.identity_id WHERE s.token_hash=? AND s.expires>?').bind(await hash(token),time).first();
+  if(!me)return json({error:'Session expired or revoked'},401);
+  if(path==='/insights/days'&&request.method==='GET'){
+   const rows=await env.DB.prepare('SELECT device,day,metrics FROM insight_days WHERE account_id=? ORDER BY day').bind(me.account_id).all();
+   const days=new Map(),devices=new Set();
+   for(const row of rows.results){
+    devices.add(row.device);const metrics=JSON.parse(row.metrics),total=days.get(row.day)||Object.fromEntries(INSIGHT_KEYS.map(k=>[k,0]));
+    for(const key of INSIGHT_KEYS)total[key]+=metrics[key]||0;days.set(row.day,total);
+   }
+   return json({devices:devices.size,days:[...days].map(([day,metrics])=>({day,metrics})),retention_days:INSIGHT_RETENTION_DAYS});
+  }
+  if(path==='/insights/days'&&request.method==='POST'){
+   const input=await body(request,65536);
+   if(typeof input.device!=='string'||!/^[a-f0-9]{32}$/.test(input.device))return json({error:'Invalid device'},400);
+   if(!Array.isArray(input.days)||input.days.length<1||input.days.length>INSIGHT_BATCH)return json({error:`Send 1 to ${INSIGHT_BATCH} days at a time`},400);
+   const days=input.days.map(entry=>insightDay(entry,time));
+   if(days.some(d=>!d)||new Set(days.map(d=>d.day)).size!==days.length)return json({error:'Insights must be daily totals of known counters'},400);
+   const known=await env.DB.prepare('SELECT COUNT(DISTINCT device) AS n,SUM(device=?) AS mine FROM insight_days WHERE account_id=?').bind(input.device,me.account_id).first();
+   if(!known.mine&&known.n>=INSIGHT_DEVICES)return json({error:'Too many devices sync insights for this account. Delete synced insights and try again.'},400);
+   await env.DB.batch(days.map(d=>env.DB.prepare('INSERT INTO insight_days(account_id,device,day,metrics,updated) VALUES(?,?,?,?,?) ON CONFLICT(account_id,device,day) DO UPDATE SET metrics=excluded.metrics,updated=excluded.updated').bind(me.account_id,input.device,d.day,d.metrics,time)));
+   return json({stored:days.length});
+  }
+  if(path==='/insights/delete'&&request.method==='POST'){
+   const input=await body(request);
+   if(input.device!==undefined&&(typeof input.device!=='string'||!/^[a-f0-9]{32}$/.test(input.device)))return json({error:'Invalid device'},400);
+   const done=input.device?await env.DB.prepare('DELETE FROM insight_days WHERE account_id=? AND device=?').bind(me.account_id,input.device).run():await env.DB.prepare('DELETE FROM insight_days WHERE account_id=?').bind(me.account_id).run();
+   return json({deleted:done.meta.changes});
+  }
  }
  return json({error:'Not found'},404);
 }
@@ -204,5 +278,6 @@ export default {
   console.error(JSON.stringify({event:release?'release_request_failed':'auth_request_failed',kind:error.name}));
   if(path.startsWith('/callback/'))return page('Sign-in could not be completed','The provider did not confirm your account. Start sign-in again from Luminaria.',400,clearCookie);
   return release?json({error:'The update service could not read the release. Try again later.'},502):json({error:'Sign-in could not be completed. Please start again.'},400);}},
- async scheduled(controller,env){await env.DB.batch(['devices','device_links','oauth_states','sessions','rate_limits'].map(table=>env.DB.prepare(`DELETE FROM ${table} WHERE expires<?`).bind(now())));}
+ async scheduled(controller,env){await env.DB.batch([...['devices','device_links','oauth_states','sessions','rate_limits'].map(table=>env.DB.prepare(`DELETE FROM ${table} WHERE expires<?`).bind(now())),
+  env.DB.prepare('DELETE FROM insight_days WHERE day<?').bind(new Date((now()-INSIGHT_RETENTION_DAYS*86400)*1000).toISOString().slice(0,10))]);}
 };

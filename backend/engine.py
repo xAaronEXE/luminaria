@@ -11,10 +11,11 @@ from .store import uid,now
 from .work import WorkLog,region_for,plan_steps
 from .orchestration import NoEligibleModel
 from .checkpoint import ROUND_LIMIT,REPEAT_LIMIT,SIDE_EFFECTS,call_key,report
+from .usage import Usage
 
 class AlreadyDone(Exception):pass
 
-PLAN_TOOLS=frozenset({'list_skills','load_skill','list_files','read_file','search_files','web_search','memory_search','history_read','update_plan'})
+PLAN_TOOLS=frozenset({'list_skills','load_skill','list_files','read_file','search_files','web_search','memory_search','history_read','update_plan','update_brief'})
 PLAN_ONLY_PROMPT=('Planning-only mode is on for this turn. Build a concrete plan around what the user described. '
  '1) Restate the goal in one sentence. 2) Draft the plan straight away from the description and call update_plan with a goal and '
  'specific, ordered steps; give each step a short detail saying what will be done and how it will be checked. Every step is pending '
@@ -48,10 +49,15 @@ def clean_message(m):
     return {k:v for k,v in m.items() if k in ('role','content','tool_calls','tool_call_id','name')}
 
 def compact_prefix(messages,keep_turns=2):
-    """Cut only before a user turn, never between an assistant call and its result."""
+    """Cut only before a user turn, never between an assistant call and its result,
+    and never past a tool call that has no result yet (for example one awaiting approval)."""
+    answered={m.get('tool_call_id') for m in messages if m['role']=='tool'}
+    open_at=next((i for i,m in enumerate(messages) if m['role']=='assistant' and any(c.get('id') not in answered for c in m.get('tool_calls') or [])),len(messages))
     users=[i for i,m in enumerate(messages) if m['role']=='user']
     if len(users)<=keep_turns: return []
-    return messages[:users[-keep_turns]]
+    cut=users[-keep_turns]
+    if cut>open_at: cut=max((i for i in users if i<=open_at),default=0)
+    return messages[:cut]
 
 class GraphState(TypedDict):
     run: dict
@@ -71,6 +77,7 @@ class Engine:
         graph.add_conditional_edges('tools',lambda s:END if s['run'].get('denied') else 'model'); self.graph=graph.compile(checkpointer=checkpointer)
         self.shutting_down=False
         self.worklog=WorkLog(store,broadcast)
+        self.usage=Usage(store)
 
     async def restore(self):
         for row in self.store.rows("SELECT * FROM runs WHERE status NOT IN ('Complete','Stopped','Error','Denied') ORDER BY updated"):
@@ -100,6 +107,9 @@ class Engine:
         # Observability must never break or alter the run it describes.
         try: return self.worklog.record(run,kind,key,**fields)
         except Exception: return None
+    def measure(self,method,*args,**fields):
+        try: return getattr(self.usage,method)(*args,**fields)
+        except Exception: return None
     def system(self):
         memories=self.store.memory()
         memory='\n'.join(f"[{m['id']}] {m['title']}: {m['content']}" for m in memories)
@@ -125,6 +135,9 @@ class Engine:
         # Qwen templates require one initial system message. Separate system
         # entries broke both token counting and generation after compaction.
         if run and run.get('plan_only'): messages[0]['content']+='\n\n'+PLAN_ONLY_PROMPT
+        from .brief import load as load_brief,prompt as brief_prompt
+        pinned=brief_prompt(load_brief(self.store,chat))
+        if pinned: messages[0]['content']+='\n\n'+pinned
         plan=self.store.setting('plan:'+chat,None)
         if plan and plan.get('steps'):
             messages[0]['content']+=('\n\nSaved plan for this chat (version '+str(plan.get('version',1))+'). When the user asks to see, review or '
@@ -206,7 +219,7 @@ class Engine:
     async def completion(self,messages,tools=None,run=None,max_tokens=None):
         body={'model':self.model_id(),'messages':messages,'stream':True,'stream_options':{'include_usage':True},'max_tokens':max_tokens or CONFIG['output_tokens'],'temperature':0.4,'chat_template_kwargs':{'enable_thinking':bool(run and run.get('reasoning'))}}
         if tools: body['tools']=tools; body['tool_choice']='auto'
-        text=''; reasoning=''; calls={}; usage={}; started=time.monotonic(); first=None; finish=None
+        text=''; reasoning=''; calls={}; usage={}; timings=None; started=time.monotonic(); first=None; finish=None
         async with self.model_stream(body) as response:
             if response.status_code>=400:
                 raw=(await response.aread()).decode('utf-8','replace')[:600]
@@ -216,7 +229,7 @@ class Engine:
             async for line in response.aiter_lines():
                 if not line.startswith('data: '): continue
                 if line[6:]=='[DONE]': break
-                chunk=json.loads(line[6:]); usage=chunk.get('usage') or usage
+                chunk=json.loads(line[6:]); usage=chunk.get('usage') or usage; timings=chunk.get('timings') or timings
                 for choice in chunk.get('choices',[]):
                     finish=choice.get('finish_reason') or finish; d=choice.get('delta',{})
                     if d.get('content'):
@@ -236,6 +249,7 @@ class Engine:
         if run:
             elapsed=time.monotonic()-started
             run['metrics']={'elapsed':round(elapsed,1),'completion_tokens':usage.get('completion_tokens'), 'prompt_tokens':usage.get('prompt_tokens'),'tokens_per_second':round(usage['completion_tokens']/max(elapsed,0.01),1) if usage.get('completion_tokens') else None,'first_token_seconds':round(first-started,2) if first else None}
+            run['usage_raw']={'usage':usage,'timings':timings}
             self.store.set_setting('model_metrics:'+self.model_id(),{**run['metrics'],'measured_at':now(),'model':self.model_id(),'context_capacity':self.context_limit()})
         msg={'role':'assistant','content':text or None}
         if calls: msg['tool_calls']=list(calls.values())
@@ -243,7 +257,7 @@ class Engine:
         if finish=='length' and not calls: msg['content']=(text or '')+'\n\n[Output limit reached. Ask to continue.]'
         return msg
 
-    async def compact(self,chat,force=False,run=None):
+    async def compact(self,chat,force=False,run=None,tokens_before=None):
         summary=self.store.summary(chat); recent=self.store.messages(chat,summary['through_id'] if summary else 0)
         prefix=compact_prefix(recent,keep_turns=1 if force else CONFIG.get('compact_keep_turns',4))
         if not prefix:
@@ -256,12 +270,37 @@ class Engine:
             c=clean_message(m)
             if isinstance(c.get('content'),list): c['content']='\n'.join(p.get('text','[Saved image '+p.get('id','')+']') for p in c['content'])
             transcript.append({'message_id':m['id'],**c})
-        from .compaction import summarize
-        content=await summarize(transcript,summary['content'] if summary else '',self.context_limit(),self.token_count,self.completion)
-        summary_id=self.store.save_summary(chat,prefix[-1]['id'],content)
+        from .compaction import summarize_detailed
+        if tokens_before is None: tokens_before,_=await self.token_count(self.context(chat,run))
+        started=time.monotonic()
+        key=f"{chat}:{through}:{uid()}"
+        try:
+            content,stats=await summarize_detailed(transcript,summary['content'] if summary else '',self.context_limit(),self.token_count,self.completion)
+            summary_id=self.store.save_summary(chat,prefix[-1]['id'],content)
+        except Exception as error:
+            self.measure('record','compaction',key,run=run['id'] if run else None,model=self.model_id(),status='failed',
+                         seconds=round(time.monotonic()-started,2),tokens_before=tokens_before,messages=len(prefix),reason=str(error)[:200],forced=bool(force))
+            if run: self.work(run,'compaction.skipped',through,node='compact'+str(through),label='Compaction failed; history kept',status='error',region='memory',evidence={'reason':str(error)[:200]})
+            raise
+        tokens_after,_=await self.token_count(self.context(chat,run))
+        summary_tokens,_=await self.token_count([{'role':'user','content':content}])
+        metrics={'seconds':round(time.monotonic()-started,2),'tokens_before':tokens_before,'tokens_after':tokens_after,'summary_tokens':summary_tokens,
+                 'messages':len(prefix),'through':through,'chunks':stats['chunks'],'attempts':stats['attempts'],'failed_validations':stats['failed_validations'],'restored':stats['restored'],'forced':bool(force)}
+        self.measure('record','compaction',key,run=run['id'] if run else None,model=self.model_id(),status='done',**metrics)
         self.emit('compacted',chat=chat,through_id=prefix[-1]['id'])
-        if run: self.work(run,'compaction.completed',through,node='compact'+str(through),label='Context compacted',status='done',region='memory',evidence={'summary':summary_id,'through_message':through})
-        return {'compacted':True,'through_id':prefix[-1]['id'],'summary':content}
+        if run: self.work(run,'compaction.completed',through,node='compact'+str(through),label='Context compacted',status='done',region='memory',evidence={'summary':summary_id,'through_message':through},metrics={k:metrics[k] for k in ('tokens_before','tokens_after','summary_tokens','chunks','failed_validations')})
+        return {'compacted':True,'through_id':prefix[-1]['id'],'summary':content,'metrics':metrics}
+
+    def overflow_reason(self,messages,tokens):
+        """Explain what still does not fit after compaction, naming the largest single input."""
+        limit=self.context_limit(); reserved=CONFIG['output_tokens']
+        sizes=[(len(json.dumps(m.get('content'),ensure_ascii=False).encode()),i) for i,m in enumerate(messages)]
+        biggest,index=max(sizes)
+        share=round(100*biggest/max(1,sum(s for s,_ in sizes)))
+        what='the system instructions with your memory, working brief and summary' if index==0 else 'the latest message' if index==len(messages)-1 else f'message {len(messages)-index} from the end'
+        return (f'The request needs about {tokens:,} tokens plus {reserved:,} reserved for the reply, but this model holds {limit:,}. '
+                f'Compaction already ran. The largest single part is {what} (about {share}% of the request), and it cannot be shortened without losing content. '
+                'Split that input, attach it as a file to read in parts, choose a model with a larger context, or start a new task. Full history is saved.')
 
     async def model_node(self,state):
         run=state['run']; chat=run['chat']
@@ -280,19 +319,26 @@ class Engine:
         messages=self.context(chat,run)
         tokens,method=await self.token_count(messages,defs)
         if tokens+CONFIG['output_tokens']>=int(self.context_limit()*CONFIG['compact_ratio']):
-            result=await self.compact(chat,run=run)
-            if result['compacted']: messages=self.context(chat,run); tokens,method=await self.token_count(messages,defs)
+            try:
+                result=await self.compact(chat,run=run,tokens_before=tokens)
+                if result['compacted']: messages=self.context(chat,run); tokens,method=await self.token_count(messages,defs)
+            except (ValueError,RuntimeError,httpx.HTTPError):
+                # Early compaction is an optimisation. If it fails while the request still fits, keep going on full history.
+                if tokens+CONFIG['output_tokens']>self.context_limit(): raise
         if tokens+CONFIG['output_tokens']>self.context_limit():
-            result=await self.compact(chat,force=True,run=run)
+            result=await self.compact(chat,force=True,run=run,tokens_before=tokens)
             if result['compacted']:messages=self.context(chat,run);tokens,method=await self.token_count(messages,defs)
         run['context']={'used':tokens,'reserved':CONFIG['output_tokens'],'limit':self.context_limit(),'method':method}
         self.store.set_setting('context:'+chat,run['context'])
-        if tokens+CONFIG['output_tokens']>self.context_limit(): raise ValueError('Context is full even after compaction. Split the input or start a new task; full history is saved.')
+        if tokens+CONFIG['output_tokens']>self.context_limit(): raise ValueError(self.overflow_reason(messages,tokens))
         run['phase']='Thinking' if run.get('reasoning') else 'Generating'; self.emit('changed',chat=chat)
         turn=run['round']=state['steps']; node='gen'+str(turn)
         self.work(run,'generation.started',turn,node=node,label='Model response' if turn==0 else 'Model response after tools',status='running',region='generation',reasoning_requested=bool(run.get('reasoning')),parent=run.get('last_tool_node'))
         msg=await self.completion(messages,defs,run)
-        message_id=self.store.add(chat,msg); run['live']=''; run['reasoning_text']=''; self.store.save_run(run); self.emit('changed',chat=chat)
+        message_id=self.store.add(chat,msg); run['live']=''; run['reasoning_text']=''
+        raw=run.pop('usage_raw',None) or {}
+        self.measure('generation',run,message_id,self.model_id(),run.get('metrics',{}),raw.get('usage') or {},raw.get('timings'),run.get('reasoning'))
+        self.store.save_run(run); self.emit('changed',chat=chat)
         self.work(run,'generation.completed',turn,node=node,status='done',region='generation',tool_calls=len(msg.get('tool_calls',[])),evidence={'message':message_id},metrics={k:run.get('metrics',{}).get(k) for k in ('completion_tokens','tokens_per_second','elapsed')})
         return {'run':run,'calls':msg.get('tool_calls',[]),'steps':state['steps']+1}
 
@@ -309,7 +355,7 @@ class Engine:
         self.runs[run['chat']]=run
         for call in state['calls']:
             import hashlib
-            name=call['function']['name']; id=hashlib.sha256((run['id']+call['id']).encode()).hexdigest()[:32]; result=None
+            name=call['function']['name']; id=hashlib.sha256((run['id']+call['id']).encode()).hexdigest()[:32]; result=None; args=None; duration=None
             try:
                 args=json.loads(call['function']['arguments']); definition=self.tools.get(name)
                 if not definition: raise ValueError('Unknown tool. Use discover_tools first.')
@@ -345,16 +391,18 @@ class Engine:
                 else:
                     self.store.execute("UPDATE actions SET status='running' WHERE id=?",(id,)); run['phase']='Running '+name; self.emit('changed',chat=run['chat'])
                     self.work(run,'tool.started',id,label=name.replace('__',' · '),status='running',**base)
-                    result=await self.tools.call(name,args,run); status='error' if isinstance(result,dict) and (result.get('isError') or result.get('exit_code',0)!=0 or result.get('status')=='error') else 'done'
+                    began=time.monotonic()
+                    result=await self.tools.call(name,args,run); duration=round((time.monotonic()-began)*1000); status='error' if isinstance(result,dict) and (result.get('isError') or result.get('exit_code',0)!=0 or result.get('status')=='error') else 'done'
             except asyncio.CancelledError:
                 self.store.execute("UPDATE actions SET status='interrupted' WHERE id=?",(id,))
                 self.work(run,'tool.interrupted',id,node=id,tool=name,region=region_for(name),status='interrupted',label='Stopped before finishing',evidence={'action':id})
+                self.measure('tool',run,id,name,'interrupted')
                 raise
             except __import__('langgraph.errors',fromlist=['GraphInterrupt']).GraphInterrupt:
                 raise
             except AlreadyDone as done:
                 self.store.execute('INSERT OR IGNORE INTO actions VALUES(?,?,?,?,?,?,?,?)',(id,run['chat'],name,json.dumps(args),'auto','ready',None,now()))
-                result={'skipped':True,'already_done':str(done),'message':'This exact step already succeeded before the checkpoint, so it was not repeated.'}; status='done'
+                result={'skipped':True,'already_done':str(done),'message':'This exact step already succeeded before the checkpoint, so it was not repeated.'}; status='done'; duration='skipped'
             except Exception as e: result={'error':str(e)}; status='error'
             folder=DATA/'tool-outputs'; folder.mkdir(exist_ok=True)
             (folder/(id+'.json')).write_text(json.dumps(result,ensure_ascii=False),encoding='utf-8')
@@ -375,6 +423,7 @@ class Engine:
             excerpt=preview[:10000]+(f'\n[Truncated for context. Full output: history_read action_id={id}]' if len(preview)>10000 else '')
             self.store.execute('UPDATE actions SET status=?,result=? WHERE id=?',(status,json.dumps({'text':excerpt,'images':images}),id))
             self.record_tool_outcome(run,id,call,name,status,args if status=='done' and name=='update_plan' else None)
+            self.measure('tool',run,id,name,'skipped' if duration=='skipped' else status,None if duration=='skipped' else duration,args.get('name') if name=='load_skill' and isinstance(args,dict) else None)
             self.track_repeats(run,name,call['function']['arguments'],status)
             self.store.add(run['chat'],{'role':'tool','tool_call_id':call['id'],'content':f'Action {id}: '+excerpt})
             self.store.save_run(run)
@@ -506,6 +555,10 @@ class Engine:
             run['live']=''; self.store.save_run(run); self.emit('changed',chat=chat)
     def finish_event(self,run):
         phase=run.get('phase','')
+        try:
+            events=[json.loads(r['payload']) for r in self.store.rows('SELECT payload FROM run_events WHERE run=?',(run['id'],))]
+            self.usage.task(run,events,run.get('model_id') or self.model_id())
+        except Exception: pass
         if phase=='Error': self.work(run,'run.failed',status='error',label='Run failed',error=str(run.get('error',''))[:300])
         elif phase=='Stopped': self.work(run,'run.cancelled',status='cancelled',label='Stopped')
         elif phase=='Checkpoint': self.work(run,'run.completed',status='checkpoint',label='Paused at a checkpoint')

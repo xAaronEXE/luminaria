@@ -24,7 +24,7 @@ PLAN_STATUSES = ('pending', 'active', 'done', 'blocked', 'skipped')
 
 def region_for(tool):
     """Functional region from the tool's identity, not from its content."""
-    if tool == 'update_plan': return 'planning'
+    if tool in ('update_plan', 'update_brief'): return 'planning'
     if tool in ('memory_search', 'history_read', 'remember'): return 'memory'
     if tool in ('web_search', 'web_fetch', 'discover_tools', 'list_skills', 'load_skill'): return 'retrieval'
     if tool in ('list_files', 'read_file', 'write_file', 'edit_file', 'delete_file', 'search_files'): return 'files'

@@ -26,6 +26,10 @@ def read_session(path=None):
         return token
     except Exception:raise ValueError('Saved sign-in could not be unlocked. Sign in again on this Windows account.') from None
 
+def device_label():
+    import platform
+    return re.sub(r"[^\w ._'()-]",'',platform.node() or 'This PC')[:60] or 'This PC'
+
 def validate_user(user):
     if not isinstance(user,dict) or user.get('provider') not in PROVIDERS or not re.fullmatch(r'[a-f0-9-]{32,36}',str(user.get('id',''))):raise ValueError('Identity server returned an invalid account')
     return {'id':user['id'],'provider':user['provider'],'name':str(user.get('name','Account'))[:120],'expires':user.get('expires')}
@@ -92,7 +96,7 @@ async def poll(id):
         if flow['next_poll']>time.monotonic():return {'status':'pending'}
         flow['next_poll']=time.monotonic()+5
         async with httpx.AsyncClient(timeout=15,follow_redirects=False) as client:
-            response=await client.post(ORIGIN+'/device/poll',json={k:flow[k] for k in ('device_id','device_secret')})
+            response=await client.post(ORIGIN+'/device/poll',json={**{k:flow[k] for k in ('device_id','device_secret')},'label':device_label()})
             if response.status_code==202:return {'status':'pending'}
             if response.status_code==403:pending.pop(id,None);raise ValueError('Sign-in was cancelled or permission was denied in the browser. Nothing was shared.')
             if response.status_code==400:pending.pop(id,None);raise ValueError('Sign-in request expired or was already used. Start again.')
@@ -158,9 +162,14 @@ async def gate(force=False):
                 if response.status_code==401:
                     _verified_path().unlink(missing_ok=True);result['reason']='Your sign-in expired or was revoked. Sign in again.'
                 else:
-                    response.raise_for_status();user=validate_user(response.json()['user'])
+                    response.raise_for_status();payload=response.json();user=validate_user(payload['user'])
+                    account=str((payload.get('account') or {}).get('id') or user['id'])
                     if profile.get('identity_id') and (user['id']!=profile['identity_id'] or user['provider']!=profile.get('provider')):
                         result['reason']='This sign-in belongs to a different account. Sign in again.'
+                    elif profile.get('account_id') and account!=profile['account_id']:
+                        result['reason']='This profile is attached to a different Luminaria account. Sign in with that account.'
+                    elif profile.get('migration')=='separate':
+                        result['reason']='This profile is kept separate from your account, so it cannot open while sign-in is required. Turn off required sign-in from another profile, or attach it to your account.'
                     else:
                         import json
                         _verified_path().write_text(json.dumps({'at':time.time(),'name':user['name']}),encoding='utf-8')
@@ -204,3 +213,35 @@ def cancel(id):
     if not isinstance(id,str) or not re.fullmatch('[a-f0-9]{64}',id):raise ValueError('Invalid sign-in request')
     pending.pop(id,None)
     return {'cancelled':True}
+
+def _any_session(missing='Sign in first to manage your devices.'):
+    for path in [SESSION]+[DATA/f'identity-{p}.bin' for p in PROVIDERS]:
+        try:token=read_session(path)
+        except ValueError:continue
+        if token:return token
+    raise ValueError(missing)
+
+async def _devices_call(method,path,payload=None):
+    token=_any_session()
+    async with httpx.AsyncClient(timeout=15,follow_redirects=False) as client:
+        response=await client.request(method,ORIGIN+path,json=payload,headers={'Authorization':'Bearer '+token})
+    if response.status_code==404 and path=='/sessions':return None
+    if response.status_code==401:forget_gate();raise ValueError('Your sign-in on this PC expired or was revoked. Sign in again.')
+    if response.status_code in (400,404):raise ValueError(str(response.json().get('error','That device could not be signed out.'))[:200])
+    response.raise_for_status();return response.json()
+
+async def devices():
+    data=await _devices_call('GET','/sessions')
+    if data is None:return {'available':False,'devices':[],'message':'Device management needs the updated sign-in service. Your sign-in keeps working.'}
+    rows=[{'id':str(d['id']),'current':bool(d.get('current')),'provider':d.get('provider') if d.get('provider') in PROVIDERS else None,'label':str(d.get('label') or 'Unnamed device')[:60],
+           'created':d.get('created'),'last_seen':d.get('last_seen'),'expires':d.get('expires')} for d in data.get('devices',[]) if re.fullmatch('[a-f0-9]{16}',str(d.get('id','')))]
+    return {'available':True,'devices':rows,'idle_days':data.get('idle_days',30),'max_days':data.get('max_days',90),'offline_days':OFFLINE_GRACE//86400}
+
+async def revoke_device(id):
+    if not isinstance(id,str) or not re.fullmatch('[a-f0-9]{16}',id):raise ValueError('Invalid device')
+    listed=await devices()
+    if any(d['id']==id and d['current'] for d in listed['devices']):raise ValueError('Use Sign out on this PC to sign out this device.')
+    return await _devices_call('POST','/sessions/revoke',{'id':id})
+
+async def revoke_others():
+    return await _devices_call('POST','/sessions/revoke',{'others':True})

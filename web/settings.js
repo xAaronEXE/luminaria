@@ -1,9 +1,9 @@
 /* Categorized settings backed by the local API. */
 (()=>{
- const sections=['Models','Orchestration','Voice','Tools & permissions','Memory & context','Appearance','Account','Updates'];
+ const sections=['Profile','Insights','Models','Orchestration','Voice','Tools & permissions','Memory & context','Appearance','Updates'];
  let library,selectedKey,selectedQuant,modelFilter='all',capabilityFilter='',benchmarkOpen=false,libraryGeneration=0,libraryTimer;
  const original=openPanel;
- openPanel=async function(name){if(['settings','models'].includes(name))return settingsView(name==='models'?'Models':(window.studioSettingsCategory||'Account'));$('.sheet').classList.remove('settings-sheet');return original(name)};
+ openPanel=async function(name){if(['settings','models'].includes(name))return settingsView(name==='models'?'Models':({Account:'Profile',Accounts:'Profile'}[window.studioSettingsCategory]||window.studioSettingsCategory||'Profile'));$('.sheet').classList.remove('settings-sheet');return original(name)};
  const row=(title,description,value)=>`<div class="setting-row"><div><h3>${title}</h3><p>${description}</p></div><span class="badge">${value}</span></div>`;
  function stopLibraryPoll(){clearTimeout(libraryTimer);libraryGeneration++}
  async function settingsView(section){

@@ -9,9 +9,11 @@ from .store import Store,uid,now
 from .connectors import Connector
 from .tools import Toolbox
 from .engine import Engine
+from .usage import Usage
 
 TOKEN=secrets.token_urlsafe(32)
 store=Store(DATA/'studio.sqlite3')
+usage=Usage(store)
 subscribers=set(); connectors={}; engine=None; benchmarking=False
 
 def broadcast(event):
@@ -89,7 +91,7 @@ async def bootstrap(): return {'token':TOKEN,'version':CONFIG['version'],'name':
 @app.get('/api/state')
 async def state(chat:str=''):
     if chat: require_chat(chat)
-    return {'chats':store.chats(),'chat':chat,'messages':store.messages(chat) if chat else [],'actions':store.actions(chat) if chat else [],'summary':store.summary(chat) if chat else None,'summaries':store.rows('SELECT id,through_id,created FROM summaries WHERE chat=? ORDER BY id',(chat,)) if chat else [],'run':engine.public_run(chat),'context':store.setting('context:'+chat,{}),'plan':store.setting('plan:'+chat,None) if chat else None,'orchestration':{'router':CONFIG.get('orchestrator_model',''),'enabled':bool(CONFIG.get('orchestrator_model')) and CONFIG.get('orchestration_enabled',True)},'memories':store.memory(),'schedules':store.rows('SELECT * FROM schedules ORDER BY next_run'),'workspace':CONFIG['workspace'],'model':CONFIG['model'],'context_limit':CONFIG['context'],'connectors':{n:{'status':c.status,'tools':len(c.tools)} for n,c in connectors.items()},'tool_count':len(engine.tools.catalog()),'active_runs':[{'chat':k,'phase':v['phase']} for k,v in engine.runs.items() if not v.get('finished')]}
+    return {'chats':store.chats(),'chat':chat,'messages':store.messages(chat) if chat else [],'actions':store.actions(chat) if chat else [],'summary':store.summary(chat) if chat else None,'summaries':store.rows('SELECT id,through_id,created FROM summaries WHERE chat=? ORDER BY id',(chat,)) if chat else [],'run':engine.public_run(chat),'context':store.setting('context:'+chat,{}),'plan':store.setting('plan:'+chat,None) if chat else None,'brief':brief_summary(chat) if chat else None,'orchestration':{'router':CONFIG.get('orchestrator_model',''),'enabled':bool(CONFIG.get('orchestrator_model')) and CONFIG.get('orchestration_enabled',True)},'memories':store.memory(),'schedules':store.rows('SELECT * FROM schedules ORDER BY next_run'),'workspace':CONFIG['workspace'],'model':CONFIG['model'],'context_limit':CONFIG['context'],'connectors':{n:{'status':c.status,'tools':len(c.tools)} for n,c in connectors.items()},'tool_count':len(engine.tools.catalog()),'active_runs':[{'chat':k,'phase':v['phase']} for k,v in engine.runs.items() if not v.get('finished')]}
 
 @app.get('/api/chats/{id}/work')
 async def work_events(id:str,runs:int=12):
@@ -457,7 +459,9 @@ async def skill_import(request:Request):
 @app.get('/api/skills/{name}')
 async def skill_instructions(name:str):
     from .skills import load_skill
-    return load_skill(name)
+    skill=load_skill(name)
+    with contextlib.suppress(Exception): usage.skill('viewed',name)
+    return skill
 
 @app.delete('/api/skills/{name}')
 async def skill_remove(name:str):
@@ -473,6 +477,23 @@ async def session(id:str): return await state(id)
 @app.delete('/api/sessions/{id}')
 async def delete_session(id:str):
     await stop_chat(id); store.execute('UPDATE chats SET archived=1 WHERE id=?',(id,));return {'archived':True,'history_preserved':True}
+
+def brief_summary(chat):
+    from .brief import load
+    entries=load(store,chat)['entries']
+    return {'entries':len(entries),'pinned':sum(1 for e in entries if e.get('pinned',True))}
+
+@app.get('/api/chats/{id}/brief')
+async def chat_brief(id:str):
+    from .brief import load,SECTIONS,MAX_ENTRIES,MAX_TEXT
+    require_chat(id); return {'brief':load(store,id),'sections':SECTIONS,'max_entries':MAX_ENTRIES,'max_text':MAX_TEXT}
+
+@app.post('/api/chats/{id}/brief')
+async def chat_brief_change(id:str,request:Request):
+    from .brief import apply
+    require_chat(id); b=await request.json()
+    brief=apply(store,id,b.get('op'),'user',b.get('id'),b.get('section'),b.get('text'),b.get('pinned'))
+    broadcast({'type':'changed','chat':id}); return {'brief':brief}
 
 @app.get('/api/chats/{id}/plan')
 async def chat_plan(id:str):
@@ -572,7 +593,10 @@ async def oauth_callback(request:Request):
 
 @app.post('/api/skills/{name}/toggle')
 async def skill_toggle(name:str,request:Request):
-    b=await request.json();store.set_setting('skill:'+name,bool(b['enabled']));return {'ok':True}
+    b=await request.json();enabled=bool(b['enabled'])
+    if store.setting('skill:'+name,True)!=enabled:
+        with contextlib.suppress(Exception): usage.skill('enabled' if enabled else 'disabled',name)
+    store.set_setting('skill:'+name,enabled);return {'ok':True}
 
 @app.post('/api/chat')
 async def chat_stream(request:Request):
@@ -778,6 +802,33 @@ async def identity_cancel(request:Request):
     from .identity import cancel
     return cancel((await request.json()).get('flow_id',''))
 
+@app.get('/api/identity/devices')
+async def identity_devices():
+    from .identity import devices
+    return await identity_call(devices())
+
+@app.post('/api/identity/devices/{id}/revoke')
+async def identity_revoke(id:str):
+    from .identity import revoke_device
+    return await identity_call(revoke_device(id))
+
+@app.post('/api/identity/devices/revoke-others')
+async def identity_revoke_others():
+    from .identity import revoke_others
+    return await identity_call(revoke_others())
+
+@app.post('/api/accounts/{id}/migration')
+async def account_migration(id:str,request:Request):
+    from .profiles import migrate
+    from .identity import status as identity_status
+    choice=(await request.json()).get('choice')
+    account=None
+    if choice=='attach':
+        info=await identity_status()
+        if not info.get('signed_in'):raise ValueError('Sign in before attaching a profile to your account')
+        account=info.get('account') or {'id':info['user']['id']}
+    return migrate(id,choice,account)
+
 @app.post('/api/accounts')
 async def account_create(request:Request):
     from .profiles import create
@@ -788,6 +839,75 @@ async def account_select(id:str):
     if any(not r.get('finished') for r in engine.runs.values()): raise ValueError('Finish or stop active tasks before switching profiles')
     from .profiles import select
     return select(id)
+
+def insights_zone(): return str(store.setting('insights_timezone','') or '')
+
+def insights_sync_public():
+    from .usage import sync_state
+    state=sync_state(store)
+    return {k:state.get(k) for k in ('enabled','last_sync','last_error','days_sent')}|{'enabled':bool(state.get('enabled'))}
+
+@app.get('/api/compaction/metrics')
+async def compaction_metrics(): return usage.compaction()
+
+@app.get('/api/insights')
+async def insights():
+    return {**usage.summary(insights_zone()),'sync':insights_sync_public(),'account':store.setting('insights_account',None)}
+
+@app.post('/api/insights/timezone')
+async def insights_timezone(request:Request):
+    from .usage import zone
+    name=str((await request.json()).get('timezone') or '').strip()[:64]
+    if name and (not re.fullmatch(r'[A-Za-z_]+(/[A-Za-z0-9_+-]+){0,2}|UTC',name) or zone(name)[1]!=name): raise ValueError('Unknown time zone. Use a name such as Europe/Amsterdam or America/New_York, or leave it empty for this PC.')
+    store.set_setting('insights_timezone',name); return {'timezone':name}
+
+async def insights_upload():
+    import httpx
+    from .usage import sync,sync_state
+    try:
+        result=await sync(store,usage,insights_zone())
+        store.set_setting('insights_account',result['account']); return result
+    except (ValueError,httpx.HTTPError) as error:
+        state=sync_state(store); state['last_error']=str(error)[:200] if isinstance(error,ValueError) else 'Sign-in service is unavailable. Try again later.'
+        store.set_setting('insights_sync',state); raise ValueError(state['last_error']) from None
+
+@app.post('/api/insights/sync-setting')
+async def insights_sync_setting(request:Request):
+    from .usage import sync_state
+    enabled=bool((await request.json()).get('enabled'))
+    state=sync_state(store)
+    if enabled:
+        from .identity import status as identity_status
+        if not (await identity_status()).get('signed_in'): raise ValueError('Sign in before turning on insights sync')
+    state['enabled']=enabled; store.set_setting('insights_sync',state)
+    if enabled: await insights_upload()
+    return insights_sync_public()
+
+@app.post('/api/insights/sync')
+async def insights_sync_now():
+    from .usage import sync_state
+    if not sync_state(store).get('enabled'): raise ValueError('Turn on insights sync first')
+    result=await insights_upload()
+    return {'sent':result['sent'],'account':result['account'],'sync':insights_sync_public()}
+
+@app.get('/api/insights/export')
+async def insights_export():
+    body=json.dumps(usage.export(insights_zone()),ensure_ascii=False,indent=1)
+    return Response(body,media_type='application/json',headers={'Content-Disposition':'attachment; filename="luminaria-insights.json"'})
+
+@app.post('/api/insights/delete')
+async def insights_delete(request:Request):
+    import httpx
+    from .usage import service,sync_state
+    scope=(await request.json()).get('scope')
+    if scope not in ('local','synced','all'): raise ValueError('Choose what to delete')
+    result={}
+    if scope in ('synced','all'):
+        try: result['synced']=(await service('POST','/insights/delete',{})).get('deleted',0)
+        except httpx.HTTPError: raise ValueError('Sign-in service is unavailable, so synced insights were not deleted. Nothing was removed.') from None
+        state=sync_state(store); state['enabled']=False; store.set_setting('insights_sync',state); store.set_setting('insights_account',None)
+    if scope in ('local','all'): result['local']=usage.delete()
+    return result
 
 app.mount('/',StaticFiles(directory=ROOT/'web',html=True),name='ui')
 

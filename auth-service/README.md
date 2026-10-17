@@ -127,3 +127,43 @@ session 401; GitHub device start 503. Secrets have not been provisioned.
 Provider references: [GitHub OAuth](https://docs.github.com/en/apps/oauth-apps/building-oauth-apps/authorizing-oauth-apps),
 [Google OAuth](https://developers.google.com/identity/protocols/oauth2/web-server),
 [Discord OAuth](https://docs.discord.com/developers/topics/oauth2).
+
+## Remembered devices (desktop 0.2.16)
+
+Sessions now record a device label (the PC name sent by the desktop app), when they
+were created and when they were last used. A session stays valid for 30 days after
+its last use and never longer than 90 days after sign-in. `GET /sessions` lists the
+signed-in devices of the caller's account; `POST /sessions/revoke` signs out one
+device (`{"id": "<16 hex>"}`) or every other device (`{"others": true}`). Devices of
+other accounts can never be listed or revoked.
+
+The deployed database predates these columns. Apply the migration once, then deploy:
+
+```
+npx wrangler d1 execute luminaria-identity --remote --file migrations/0002_device_sessions.sql
+npx wrangler deploy
+```
+
+Until this is deployed, desktop 0.2.16 shows "Device management needs the updated
+sign-in service" and sign-in keeps working as before. Existing sessions keep working
+after the migration and become 30-day sessions on their next use.
+
+## Insights sync (desktop 0.2.17)
+
+Opt-in only. A desktop that turns on insights sync sends one row per day for itself:
+`POST /insights/days` with `{"device": "<32 hex>", "days": [{"day": "YYYY-MM-DD", "metrics": {...}}]}`,
+up to 90 days per request. Only these whole-number counters are accepted:
+`tokens_in`, `tokens_out`, `tokens_cached`, `generations`, `runs`, `active_seconds`,
+`wait_seconds`, `tool_ok`, `tool_failed`, `reasoning_generations`, `skills_invoked`.
+Anything else (text, model or tool names) is rejected. The key is
+(account, device, day), and a new upload replaces the old row, so a retried upload never
+double-counts. `GET /insights/days` returns per-day sums across the account's devices.
+`POST /insights/delete` removes the account's rows (or one device's with `{"device": ...}`).
+The scheduled job drops days older than two years. At most 20 devices per account.
+
+Apply the migration once, then deploy:
+
+```
+npx wrangler d1 execute luminaria-identity --remote --file migrations/0003_insight_days.sql
+npx wrangler deploy
+```
