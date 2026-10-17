@@ -1,7 +1,7 @@
 // Identity only: provider access tokens are never returned to the desktop or saved.
 const providers = {
  github:{authorize:'https://github.com/login/oauth/authorize',token:'https://github.com/login/oauth/access_token',user:'https://api.github.com/user',scope:'read:user',pkce:true},
- google:{authorize:'https://accounts.google.com/o/oauth2/v2/auth',token:'https://oauth2.googleapis.com/token',user:'https://openidconnect.googleapis.com/v1/userinfo',scope:'openid profile',pkce:true},
+ google:{authorize:'https://accounts.google.com/o/oauth2/v2/auth',token:'https://oauth2.googleapis.com/token',user:'https://openidconnect.googleapis.com/v1/userinfo',scope:'openid profile',pkce:true,extra:{prompt:'select_account'}},
  discord:{authorize:'https://discord.com/oauth2/authorize',token:'https://discord.com/api/oauth2/token',user:'https://discord.com/api/users/@me',scope:'identify',pkce:false}
 };
 const now=()=>Math.floor(Date.now()/1000);
@@ -10,6 +10,14 @@ const bytes=value=>new TextEncoder().encode(value);
 async function hash(value){return Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256',bytes(value))),x=>x.toString(16).padStart(2,'0')).join('');}
 async function challenge(value){return btoa(String.fromCharCode(...new Uint8Array(await crypto.subtle.digest('SHA-256',bytes(value))))).replaceAll('+','-').replaceAll('/','_').replaceAll('=','');}
 function json(value,status=200){return Response.json(value,{status,headers:{'Cache-Control':'no-store','X-Content-Type-Options':'nosniff','Referrer-Policy':'no-referrer'}});}
+// A denied device keeps this marker until the desktop polls, so it can stop waiting.
+const DENIED='denied';
+const pageStyle='body{margin:0;min-height:100vh;display:grid;place-items:center;background:#fff;color:#0a0a0a;font:15px/1.5 system-ui,sans-serif}@media(prefers-color-scheme:dark){body{background:#000;color:#f5f5f2}}main{max-width:420px;padding:32px}h1{font-size:22px;font-weight:600;margin:0 0 8px}p{margin:0;opacity:.75}';
+function page(title,message,status=200,headers={}){
+ const escape=value=>value.replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+ return new Response(`<!doctype html><html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${escape(title)} · Luminaria</title><style>${pageStyle}</style><main><h1>${escape(title)}</h1><p>${escape(message)}</p></main></html>`,{status,headers:{'Content-Type':'text/html; charset=utf-8','Content-Security-Policy':"default-src 'none'; style-src 'unsafe-inline'",'Cache-Control':'no-store','X-Content-Type-Options':'nosniff','Referrer-Policy':'no-referrer',...headers}});
+}
+const clearCookie={'Set-Cookie':'__Host-luminaria_oauth=; Secure; HttpOnly; SameSite=Lax; Path=/; Max-Age=0'};
 function configured(env,name){return Boolean(providers[name]&&env[name.toUpperCase()+'_CLIENT_ID']&&env[name.toUpperCase()+'_CLIENT_SECRET']);}
 async function body(request){
  if(!request.headers.get('content-type')?.startsWith('application/json'))throw new Error('JSON required');
@@ -108,21 +116,25 @@ async function route(request,env){
  if(path==='/authorize'&&request.method==='GET'){
   const id=url.searchParams.get('device');
   const device=await env.DB.prepare('SELECT * FROM devices WHERE id=? AND expires>? AND identity_id IS NULL').bind(id,time).first();
-  if(!device||!configured(env,device.provider))return json({error:'Sign-in request expired or unavailable'},400);
+  if(!device||!configured(env,device.provider))return page('Sign-in link expired','Start sign-in again from Luminaria.',400);
   const provider=providers[device.provider],state=random(),cookie=random(),verifier=random();
   await env.DB.prepare('INSERT INTO oauth_states VALUES(?,?,?,?,?,?)').bind(await hash(state),await hash(cookie),id,device.provider,verifier,time+600).run();
   const target=new URL(provider.authorize);
-  target.search=new URLSearchParams({client_id:env[device.provider.toUpperCase()+'_CLIENT_ID'],redirect_uri:url.origin+'/callback/'+device.provider,response_type:'code',scope:provider.scope,state}).toString();
+  target.search=new URLSearchParams({client_id:env[device.provider.toUpperCase()+'_CLIENT_ID'],redirect_uri:url.origin+'/callback/'+device.provider,response_type:'code',scope:provider.scope,state,...provider.extra}).toString();
   if(provider.pkce){target.searchParams.set('code_challenge',await challenge(verifier));target.searchParams.set('code_challenge_method','S256');}
   return new Response(null,{status:302,headers:{Location:target.href,'Set-Cookie':`__Host-luminaria_oauth=${cookie}; Secure; HttpOnly; SameSite=Lax; Path=/; Max-Age=600`,'Cache-Control':'no-store','Referrer-Policy':'no-referrer'}});
  }
  if(path.startsWith('/callback/')&&request.method==='GET'){
-  const providerName=path.slice(10),state=url.searchParams.get('state')||'',code=url.searchParams.get('code');
+  const providerName=path.slice(10),state=url.searchParams.get('state')||'',code=url.searchParams.get('code'),refused=url.searchParams.get('error');
   const cookie=(request.headers.get('Cookie')||'').match(/(?:^|;\s*)__Host-luminaria_oauth=([a-f0-9]{64})(?:;|$)/)?.[1];
-  if(!code||!cookie||!configured(env,providerName))return json({error:'Invalid sign-in callback'},400);
+  if((!code&&!refused)||!cookie||!configured(env,providerName))return page('Sign-in could not be completed','Start sign-in again from Luminaria.',400);
   // Atomic consumption prevents parallel callbacks from reusing an authorization.
   const entry=await env.DB.prepare('DELETE FROM oauth_states WHERE state_hash=? AND cookie_hash=? AND provider=? AND expires>? RETURNING *').bind(await hash(state),await hash(cookie),providerName,time).first();
-  if(!entry)return json({error:'Sign-in expired or already used'},400);
+  if(!entry)return page('Sign-in expired or already used','Start sign-in again from Luminaria.',400);
+  if(refused){
+   await env.DB.prepare('UPDATE devices SET identity_id=? WHERE id=? AND expires>? AND identity_id IS NULL').bind(DENIED,entry.device_id,time).run();
+   return page('Sign-in cancelled','Nothing was shared. You can close this tab; Luminaria has stopped waiting.',200,clearCookie);
+  }
   const provider=providers[providerName],form=new URLSearchParams({grant_type:'authorization_code',client_id:env[providerName.toUpperCase()+'_CLIENT_ID'],client_secret:env[providerName.toUpperCase()+'_CLIENT_SECRET'],code,redirect_uri:url.origin+path});
   if(provider.pkce)form.set('code_verifier',entry.verifier);
   const token=await providerJson(provider.token,{method:'POST',headers:{Accept:'application/json','Content-Type':'application/x-www-form-urlencoded'},body:form.toString()});
@@ -133,7 +145,7 @@ async function route(request,env){
   const name=String(user.name||user.global_name||user.login||user.username||'Luminaria user').slice(0,120);
   const identity=await env.DB.prepare('INSERT INTO identities VALUES(?,?,?,?,?) ON CONFLICT(provider,subject) DO UPDATE SET name=excluded.name RETURNING id').bind(crypto.randomUUID(),providerName,String(subject),name,time).first();
   await env.DB.prepare('UPDATE devices SET identity_id=? WHERE id=? AND expires>? AND identity_id IS NULL').bind(identity.id,entry.device_id,time).run();
-  return new Response('Signed in to Luminaria. You can close this tab and return to the desktop app.',{headers:{'Content-Type':'text/plain; charset=utf-8','Cache-Control':'no-store','Set-Cookie':'__Host-luminaria_oauth=; Secure; HttpOnly; SameSite=Lax; Path=/; Max-Age=0','Referrer-Policy':'no-referrer'}});
+  return page('Signed in to Luminaria','You can close this tab and return to the desktop app.',200,clearCookie);
  }
  if(path==='/device/poll'&&request.method==='POST'){
   const input=await body(request);
@@ -142,10 +154,11 @@ async function route(request,env){
   const device=await env.DB.prepare('SELECT * FROM devices WHERE id=? AND secret_hash=? AND expires>?').bind(input.device_id,digest,time).first();
   if(!device)return json({error:'Device request expired or consumed'},400);
   if(!device.identity_id)return json({status:'pending'},202);
+  if(device.identity_id===DENIED){await env.DB.prepare('DELETE FROM devices WHERE id=? AND secret_hash=?').bind(input.device_id,digest).run();return json({error:'Sign-in was cancelled in the browser'},403);}
   const token=random(),tokenHash=await hash(token),expires=time+7*86400;
   // Insertion and deletion share a transaction. Only one poll can obtain a session.
   const results=await env.DB.batch([
-   env.DB.prepare('INSERT INTO sessions SELECT ?,identity_id,? FROM devices WHERE id=? AND secret_hash=? AND expires>? AND identity_id IS NOT NULL').bind(tokenHash,expires,input.device_id,digest,time),
+   env.DB.prepare('INSERT INTO sessions SELECT ?,identity_id,? FROM devices WHERE id=? AND secret_hash=? AND expires>? AND identity_id IS NOT NULL AND identity_id<>?').bind(tokenHash,expires,input.device_id,digest,time,DENIED),
    env.DB.prepare('DELETE FROM devices WHERE id=? AND secret_hash=? AND identity_id IS NOT NULL').bind(input.device_id,digest)
   ]);
   if(results[0].meta.changes!==1)return json({error:'Device request already consumed'},400);
@@ -163,8 +176,9 @@ async function route(request,env){
 }
 export default {
  async fetch(request,env){try{return await route(request,env);}catch(error){
-  const release=new URL(request.url).pathname.startsWith('/releases/');
+  const path=new URL(request.url).pathname,release=path.startsWith('/releases/');
   console.error(JSON.stringify({event:release?'release_request_failed':'auth_request_failed',kind:error.name}));
+  if(path.startsWith('/callback/'))return page('Sign-in could not be completed','The provider did not confirm your account. Start sign-in again from Luminaria.',400,clearCookie);
   return release?json({error:'The update service could not read the release. Try again later.'},502):json({error:'Sign-in could not be completed. Please start again.'},400);}},
  async scheduled(controller,env){await env.DB.batch(['devices','oauth_states','sessions','rate_limits'].map(table=>env.DB.prepare(`DELETE FROM ${table} WHERE expires<?`).bind(now())));}
 };

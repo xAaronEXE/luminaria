@@ -74,6 +74,7 @@ async def poll(id):
         async with httpx.AsyncClient(timeout=15,follow_redirects=False) as client:
             response=await client.post(ORIGIN+'/device/poll',json={k:flow[k] for k in ('device_id','device_secret')})
             if response.status_code==202:return {'status':'pending'}
+            if response.status_code==403:pending.pop(id,None);raise ValueError('Sign-in was cancelled or permission was denied in the browser. Nothing was shared.')
             if response.status_code==400:pending.pop(id,None);raise ValueError('Sign-in request expired or was already used. Start again.')
             response.raise_for_status();token=response.json().get('access_token','')
             if not re.fullmatch('[a-f0-9]{64}',token):raise ValueError('Identity server returned an invalid session')
