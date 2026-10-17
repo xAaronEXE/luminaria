@@ -1,98 +1,76 @@
-/* Local WebGL neural lattice -> toroidal voice core. Motion represents UI events, not hidden thoughts. */
 (()=>{
  const canvas=document.createElement('canvas');canvas.id='ambient-field';canvas.setAttribute('aria-hidden','true');document.body.prepend(canvas);
- const status=document.createElement('div');status.className='entity-caption';status.setAttribute('aria-hidden','true');status.innerHTML='<span>Voice conversation</span><strong>Listening</strong><small>Your voice stays on this PC</small>';document.body.append(status);
+ const caption=document.createElement('div');caption.className='entity-caption';caption.setAttribute('aria-hidden','true');caption.innerHTML='<span>Local activity</span><strong>Idle</strong><small>Observed execution, not hidden thoughts</small>';document.body.append(caption);
  const button=document.createElement('button');button.id='ambient-motion';button.className='text-button';document.querySelector('.sidebar-bottom').prepend(button);
- const gl=canvas.getContext('webgl',{alpha:true,antialias:true,powerPreference:'low-power'}),reduce=matchMedia('(prefers-reduced-motion: reduce)');
- let failed=false;
+ const reduce=matchMedia('(prefers-reduced-motion: reduce)'),gl=canvas.getContext('webgl',{alpha:true,antialias:true,powerPreference:'low-power'});
  const publish=detail=>{window.luminariaRenderStats=detail;window.dispatchEvent(new CustomEvent('studio-render-stats',{detail}))};
- function fallback(reason){if(failed)return;failed=true;canvas.remove();button.remove();document.body.classList.add('entity-fallback');publish({mode:'fallback',reason,fps:0,paused:true,reducedMotion:reduce.matches});const layout=()=>{const main=document.querySelector('.main').getBoundingClientRect(),top=document.querySelector('.topbar').getBoundingClientRect().bottom,bottom=document.querySelector('.composer-area').getBoundingClientRect().top;status.style.left=(main.x+main.width/2)+'px';status.style.top=(top+Math.max(120,bottom-top)*.5)+'px';status.style.maxWidth=Math.max(240,main.width-48)+'px'};new ResizeObserver(layout).observe(document.querySelector('.main'));new ResizeObserver(layout).observe(document.querySelector('.composer-area'));window.addEventListener('resize',layout);layout();window.addEventListener('studio-voice-state',e=>status.querySelector('strong').textContent=e.detail)}
- if(!gl){fallback('3D graphics are unavailable. Voice and chat remain available.');return}
- let voice=0,targetVoice=0,t=0,last=0,dirty=true,paused=reduce.matches,px=0,py=0,region=-1,pulse=0,phase='idle';
- const rgbOf=h=>h.slice(1,7).match(/../g).map(x=>parseInt(x,16)/255);let tint=rgbOf(window.luminariaAppearance?.current?.tokens.entity||'#808080');
- window.addEventListener('studio-appearance',e=>{tint=rgbOf(e.detail.tokens.entity);dirty=true});
- let microphone={rms:0,bass:0,mid:0,high:0},output={rms:0,bass:0,mid:0,high:0};
- const envelope={rms:0,bass:0,mid:0,high:0};
- function shader(type,code){const s=gl.createShader(type);gl.shaderSource(s,code);gl.compileShader(s);if(!gl.getShaderParameter(s,gl.COMPILE_STATUS))throw Error(gl.getShaderInfoLog(s));return s}
+ let failed=false,dirty=true,paused=reduce.matches||window.studioPrefs?.motion===false,frameId=0;
+ const resources={buffers:[],shaders:[],program:null};
+ const dispose=()=>{if(!gl)return;for(const b of resources.buffers)gl.deleteBuffer(b);for(const s of resources.shaders)gl.deleteShader(s);if(resources.program)gl.deleteProgram(resources.program)};
+ function fallback(reason){if(failed)return;failed=true;if(typeof cancelAnimationFrame==='function')cancelAnimationFrame(frameId);dispose();canvas.remove();document.body.classList.add('entity-fallback');caption.querySelector('strong').textContent=reason;publish({mode:'fallback',reason,fps:0,paused:true,reducedMotion:reduce.matches});window.dispatchEvent(new CustomEvent('studio-spatial-fallback',{detail:reason}))}
+ const label=()=>{button.textContent=reduce.matches?'System reduced motion':paused?'Resume background motion':'Pause background motion';button.disabled=reduce.matches;button.setAttribute('aria-pressed',String(paused))};
+ button.onclick=safe(async()=>savePrefs({motion:!studioPrefs.motion}));
+ window.addEventListener('studio-preferences',e=>{paused=reduce.matches||e.detail.motion===false;dirty=true;label();publish({...window.luminariaRenderStats,paused,fps:paused?0:window.luminariaRenderStats?.fps||0})});
+ reduce.addEventListener('change',()=>{paused=reduce.matches||window.studioPrefs?.motion===false;dirty=true;label()});
+ let mood='idle',audio={rms:0,bass:0,mid:0,high:0},audioFrames={},voice=false;
+ window.addEventListener('studio-audio',e=>{const d=e.detail;if(d&&typeof d==='object')audioFrames[d.source]={...d,at:performance.now()};else audioFrames={};if(!paused)dirty=true});
+ window.addEventListener('studio-voice-state',e=>{const text=String(e.detail);mood=/error|fail/i.test(text)?'error':/interrupted/i.test(text)?'interrupted':/^speaking/i.test(text)?'speaking':/^listening/i.test(text)?'listening':/thinking|preparing|transcribing/i.test(text)?'generating':'idle';caption.querySelector('strong').textContent=text;dirty=true});
+ label();if(!gl){fallback('3D unavailable · use the activity outline');return}
  try{
- const program=gl.createProgram();
- gl.attachShader(program,shader(gl.VERTEX_SHADER,`
- precision mediump float;
- attribute vec3 brain;attribute vec3 torus;attribute float cluster;
- uniform float time,morph,aspect,amplitude,bass,mid,high,reduced,entityScale,listen,think,speak,recoil,fault;uniform vec2 pointer,dock,center;
- varying float depth;varying float zone;varying float travel;varying float ring;
- void main(){
- vec3 b=brain; b.x+=.025*sin(b.y*11.+b.z*7.);b.z+=.02*cos(b.x*17.);
- vec3 v=torus;float a=atan(v.z,v.x);
- v.xz*=1.+bass*.22*(1.-reduced);v.y*=1.+high*.7*(1.-reduced);
- v+=normalize(v)*sin(a*7.+time*2.5)*mid*.09*(1.-reduced);
- float motion=1.-reduced;
- v*=1.-listen*.035*sin(time*3.-length(v.xz)*7.)*motion;
- v*=1.-recoil*.14;
- vec3 p=mix(b,v,morph);
- float rotation=(time*.07*(1.+think*1.6)*(1.-fault*.8)+pointer.x*.12)*motion;
- p.xz=mat2(cos(rotation),-sin(rotation),sin(rotation),cos(rotation))*p.xz;
- float tilt=.28+pointer.y*.08*(1.-reduced);p.yz=mat2(cos(tilt),-sin(tilt),sin(tilt),cos(tilt))*p.yz;
- p*=mix(.18,entityScale,morph);p.z+=4.6;
- vec2 offset=mix(dock,center,morph);
- gl_Position=vec4(p.x*2.15/aspect+offset.x*p.z,p.y*2.15+offset.y*p.z,0.,p.z);
- depth=clamp(1.-(p.z-2.)/5.,.15,1.);zone=cluster;travel=brain.y*3.+brain.x*2.;ring=a;
- gl_PointSize=mix(1.7,2.6,morph)+amplitude*2.*(1.-reduced);
- }`));
- gl.attachShader(program,shader(gl.FRAGMENT_SHADER,`
- precision mediump float;uniform vec3 tint;uniform float points,time,region,pulse,morph,amplitude,listen,think,speak,recoil,fault,reduced;
- varying float depth;varying float zone;varying float travel;varying float ring;
- void main(){float shape=1.;if(points>.5){float d=length(gl_PointCoord-vec2(.5));if(d>.5)discard;shape=1.-smoothstep(.12,.5,d);}
- float zoneActive=1.-step(.4,abs(zone-region));float packet=pow(max(0.,sin(travel-time*4.)),18.)*zoneActive*pulse;
- float orbit=pow(max(0.,sin(ring*3.-time*5.*(1.-reduced))),24.)*think*morph;
- float alpha=(depth*mix(.32,.72,morph)*(points>.5?.86:.24)*(1.+speak*.25+listen*.1)+packet*.6+orbit*.55+amplitude*.08+recoil*.2)*(1.-fault*.45);
- gl_FragColor=vec4(tint,alpha*shape);
- }`));gl.linkProgram(program);if(!gl.getProgramParameter(program,gl.LINK_STATUS))throw Error(gl.getProgramInfoLog(program));gl.useProgram(program);
- // Deterministic anatomical lobes and neighboring synapses, each with a stable torus destination.
- const nodes=[],links=[],rings=42,steps=60;
- for(let j=0;j<rings;j++)for(let i=0;i<steps;i++){
-  const u=i/steps*Math.PI*2,v=(j+.5)/rings*Math.PI,side=Math.cos(u)<0?-1:1;
-  const fold=1+.085*Math.sin(u*11+Math.sin(v*5))*Math.sin(v*9);
-  const cleft=.07+.17*Math.pow(Math.abs(Math.cos(u)),.5);
-  const b=[side*cleft+Math.sin(v)*Math.cos(u)*.82*fold,Math.cos(v)*.88,Math.sin(v)*Math.sin(u)*1.06*fold];
-  const a=i/steps*Math.PI*2,c=j/rings*Math.PI*2,r=.98+.26*Math.cos(c);
-  const tor=[r*Math.cos(a),.26*Math.sin(c),r*Math.sin(a)];
-  const zone=b[1]>.35?0:b[0]<0?1:b[2]>0?2:3;
-  nodes.push([...b,...tor,zone]);
+ function shader(type,code){const s=gl.createShader(type);resources.shaders.push(s);gl.shaderSource(s,code);gl.compileShader(s);if(!gl.getShaderParameter(s,gl.COMPILE_STATUS))throw Error(gl.getShaderInfoLog(s));return s}
+ const program=gl.createProgram();resources.program=program;
+ gl.attachShader(program,shader(gl.VERTEX_SHADER,`precision mediump float;
+ attribute vec3 position;attribute vec3 color;attribute float size;attribute float shape;
+ uniform vec3 camera,entityPosition;uniform vec2 offset;uniform float aspect,time,entity,amplitude,bass,high,reduced,scale,mood;
+ varying vec3 tint;varying float opacity;varying float form;
+ void main(){vec3 p=position;if(entity>.5){float motion=1.-reduced;float radius=1.+(amplitude*.4+bass*.3+sin(time*1.4)*.018)*motion;if(mood>4.5&&mood<5.5)radius*=.88;if(mood>5.5&&mood<6.5)radius*=.72;if(mood>3.5&&mood<4.5)radius*=.8;float a=atan(p.z,p.x);p*=radius;p.y+=sin(a*7.+time*2.)*(.025+high*.12)*motion;p.xz=mat2(cos(time*.15*motion),-sin(time*.15*motion),sin(time*.15*motion),cos(time*.15*motion))*p.xz;p=p*scale+entityPosition;}p-=camera;p.z+=6.;float depth=max(1.,p.z);gl_Position=vec4(p.x*2.2/aspect+offset.x*depth,-p.y*2.2+offset.y*depth,(depth-6.)*.1,depth);gl_PointSize=max(2.,size*6./depth);tint=color;opacity=clamp(1.-(depth-3.)/8.,.15,1.);form=shape;}`));
+ gl.attachShader(program,shader(gl.FRAGMENT_SHADER,`precision mediump float;uniform float points,alpha;varying vec3 tint;varying float opacity;varying float form;
+ void main(){float edge=1.;if(points>.5){vec2 p=abs(gl_PointCoord-vec2(.5));float d=form>1.5?max(p.x,p.y):form>.5?p.x+p.y:length(p);if(d>.5)discard;edge=1.-smoothstep(.32,.5,d);}gl_FragColor=vec4(tint,alpha*opacity*edge);}`));
+ gl.linkProgram(program);if(!gl.getProgramParameter(program,gl.LINK_STATUS))throw Error(gl.getProgramInfoLog(program));gl.useProgram(program);
+ const attributes=['position','color','size','shape'].map(n=>gl.getAttribLocation(program,n)),uniforms=Object.fromEntries(['camera','entityPosition','offset','aspect','time','entity','amplitude','bass','high','reduced','scale','points','alpha','mood'].map(n=>[n,gl.getUniformLocation(program,n)]));attributes.forEach(a=>gl.enableVertexAttribArray(a));
+ function buffer(){const b=gl.createBuffer();resources.buffers.push(b);return b}
+ const lineBuffer=buffer(),nodeBuffer=buffer(),entityBuffer=buffer(),meshBuffer=buffer(),packetBuffer=buffer();const packetData=new Float32Array(200*8);let liveEdges=[];
+ let lineData=new Float32Array(0),nodeData=new Float32Array(0),entityData,meshData;
+ const rgb=h=>typeof h==='string'?h.slice(1).match(/../g).map(x=>parseInt(x,16)/255):[.5,.5,.5];
+ let tokens=window.luminariaAppearance?.current?.tokens||{},scene={nodes:[],edges:[]},positions=new Map(),projected=[],entityAt=[0,0,0],camera=[0,0,0],target=[0,0,0],selection=null,follow=true,quality=1,time=0,last=0,sampleStart=performance.now(),frames=0,stage={x:0,width:innerWidth,top:80,height:innerHeight-260};
+ const regionNames=['planning','memory','retrieval','files','tools','generation','verification'];
+ const centres=regionNames.map((_,i)=>{const angle=i/7*Math.PI*2;return [Math.cos(angle)*2,Math.sin(angle)*1.25,Math.sin(angle*2)*.8]});
+ const colorFor=n=>rgb(tokens[n.id===selection?'focus':n.status==='waiting'?'node-waiting':['error','failed','denied','cancelled','interrupted'].includes(n.status)?'node-failed':n.status==='done'?'node-done':['running','requested','allowed'].includes(n.status)?'node-active':'node-planned']);
+ const vertex=(p,c,size=5,shape=0)=>[...p,...c,size,shape];
+ const capacities=new Map();function upload(buf,data){gl.bindBuffer(gl.ARRAY_BUFFER,buf);if((capacities.get(buf)||0)<data.byteLength){const capacity=2**Math.ceil(Math.log2(Math.max(256,data.byteLength)));gl.bufferData(gl.ARRAY_BUFFER,capacity,gl.DYNAMIC_DRAW);capacities.set(buf,capacity)}gl.bufferSubData(gl.ARRAY_BUFFER,0,data)}
+ function build(){
+  liveEdges=scene.edges.filter(e=>{const node=scene.nodes.find(n=>n.id===e.to);return node&&(['running','requested'].includes(node.status)||(node.region==='retrieval'&&node.status==='done'&&Date.now()/1000-(node.events.at(-1)?.at||0)<2))}).slice(0,200);
+  const lines=[],dots=[],counts={};positions=new Map();
+  for(const n of scene.nodes){const r=Math.max(0,regionNames.indexOf(n.region)),i=counts[r]||0;counts[r]=i+1;let hash=2166136261;for(const letter of n.id)hash=Math.imul(hash^letter.charCodeAt(0),16777619)>>>0;const a=(hash%65536)/65536*Math.PI*2,rad=.14+Math.sqrt((hash>>>16)/65535)*.55,c=centres[r],p=[c[0]+Math.cos(a)*rad,c[1]+Math.sin(a)*rad*.7,c[2]+Math.sin(hash)*.4];positions.set(n.id,p);dots.push(...vertex(p,colorFor(n),n.id===selection?15:10,n.status==='waiting'?2:['failed','error','denied','interrupted','cancelled'].includes(n.status)?1:0))}
+  for(const edge of scene.edges){const from=positions.get(edge.from),to=positions.get(edge.to);if(!from||!to)continue;const c=rgb(tokens[edge.kind==='failure-followup'?'node-failed':'pathway']);let previous=from;for(let j=1;j<=16;j++){const t=j/16,p=from.map((v,k)=>v+(to[k]-v)*t+(k===2?Math.sin(t*Math.PI)*.45:0));lines.push(...vertex(previous,c),...vertex(p,c));previous=p}}
+  const base=rgb(tokens.bg),lattice=rgb(tokens.lattice).map((v,i)=>v*.35+base[i]*.65);for(const [r,c] of centres.entries()){const cloud=[];for(let j=0;j<80;j++){const a=j*2.39996,v=Math.acos(1-2*(j+.5)/80),fold=1+.1*Math.sin(a*3+v*7),p=[c[0]+Math.sin(v)*Math.cos(a)*.65*fold,c[1]+Math.cos(v)*.42,c[2]+Math.sin(v)*Math.sin(a)*.5];cloud.push(p);dots.push(...vertex(p,lattice,2.3));for(const k of [1,5])if(j>=k)lines.push(...vertex(cloud[j-k],lattice),...vertex(p,lattice))}}
+  lineData=new Float32Array(lines);nodeData=new Float32Array(dots);upload(lineBuffer,lineData);upload(nodeBuffer,nodeData);dirty=true;
  }
- for(let j=0;j<rings;j++)for(let i=0;i<steps;i++){const at=j*steps+i;links.push(...nodes[at],...nodes[j*steps+(i+1)%steps]);if(j<rings-1&&i%3===0)links.push(...nodes[at],...nodes[at+steps]);}
- const buffer=data=>{const b=gl.createBuffer();gl.bindBuffer(gl.ARRAY_BUFFER,b);gl.bufferData(gl.ARRAY_BUFFER,new Float32Array(data),gl.STATIC_DRAW);return b};
- const dots=buffer(nodes.flat()),lines=buffer(links),attrs=['brain','torus','cluster'].map(n=>gl.getAttribLocation(program,n));attrs.forEach(a=>gl.enableVertexAttribArray(a));
- const uniforms=Object.fromEntries(['time','morph','aspect','amplitude','bass','mid','high','reduced','pointer','tint','points','region','pulse','dock','center','entityScale','listen','think','speak','recoil','fault'].map(n=>[n,gl.getUniformLocation(program,n)]));
- gl.enable(gl.BLEND);gl.blendFuncSeparate(gl.SRC_ALPHA,gl.ONE_MINUS_SRC_ALPHA,gl.ONE,gl.ONE_MINUS_SRC_ALPHA);
- const label=()=>{button.textContent=reduce.matches?'System reduced motion':paused?'Resume background motion':'Pause background motion';button.disabled=reduce.matches;button.title=reduce.matches?'Your system preference disables spatial animation.':'';button.setAttribute('aria-pressed',String(paused))};
- const motionChanged=()=>{dirty=true;label();if(!failed)publish({...window.luminariaRenderStats,mode:'webgl',fps:paused?0:window.luminariaRenderStats?.fps||0,paused,reducedMotion:reduce.matches,width:canvas.width,height:canvas.height})};
- button.onclick=safe(async()=>{await savePrefs({motion:!studioPrefs.motion})});
- window.addEventListener('studio-preferences',e=>{paused=reduce.matches||!e.detail.motion;motionChanged()});
- window.addEventListener('studio-audio',e=>{const d=e.detail;if(d&&typeof d==='object'){if(d.source==='output')output=d;else microphone=d}else{microphone={rms:Number(d)||0,bass:0,mid:0,high:0};output={rms:0,bass:0,mid:0,high:0}}dirty=true});
- const moods={listen:0,think:0,speak:0,recoil:0,fault:0},moodTarget={...moods};let mood='idle';
- const classify=text=>/fail|error/i.test(text)?'error':/interrupted/i.test(text)?'interrupted':/^speaking/i.test(text)?'speaking':/^(thinking|transcribing|preparing)/i.test(text)?'generating':/^listening/i.test(text)?'listening':'idle';
- window.addEventListener('studio-voice-state',e=>{phase=e.detail;mood=classify(String(phase));Object.assign(moodTarget,{listen:+(mood==='listening'||mood==='interrupted'),think:+(mood==='generating'),speak:+(mood==='speaking'),fault:+(mood==='error')});if(mood==='interrupted')moods.recoil=1;document.body.dataset.voiceMood=mood;targetVoice=Number(document.body.dataset.voice==='conversation'&&!document.body.classList.contains('voice-review'));status.querySelector('strong').textContent=phase;dirty=true});
- window.addEventListener('studio-state',()=>{const r=state.run,action=(state.actions||[]).at(-1);region=-1;pulse=0;if(r&&!r.finished){phase=r.phase||'Working';region=/think|reason/i.test(phase)?0:/compact/i.test(phase)?1:3;pulse=.7;if(action&&['running','ready','pending'].includes(action.status)){region=/memory|history|remember/.test(action.name)?1:2;pulse=1}}dirty=true});
- window.addEventListener('mint-token',()=>{region=3;pulse=1;dirty=true});
- window.addEventListener('pointermove',e=>{px=e.clientX/innerWidth-.5;py=.5-e.clientY/innerHeight});
- let stage;
- function layoutStage(){const main=document.querySelector('.main').getBoundingClientRect(),top=document.querySelector('.topbar').getBoundingClientRect().bottom,bottom=document.querySelector('.composer-area').getBoundingClientRect().top;stage={x:main.x,width:main.width,top,height:Math.max(120,bottom-top)};status.style.left=(stage.x+stage.width/2)+'px';status.style.top=(stage.top+stage.height*.76)+'px';status.style.maxWidth=Math.max(240,stage.width-48)+'px';document.body.classList.toggle('voice-compact',stage.height<300);dirty=true}
- new ResizeObserver(layoutStage).observe(document.querySelector('.main'));new ResizeObserver(layoutStage).observe(document.querySelector('.composer-area'));layoutStage();
- window.addEventListener('resize',layoutStage);reduce.addEventListener('change',()=>{paused=reduce.matches||!studioPrefs.motion;motionChanged()});
- canvas.addEventListener('webglcontextlost',e=>{e.preventDefault();fallback('3D graphics stopped. Restart Luminaria to retry; voice and chat remain available.')});
- let sampleStart=performance.now(),sampleFrames=0;
- function frame(now){if(failed)return;requestAnimationFrame(frame);targetVoice=Number(document.body.dataset.voice==='conversation'&&!document.body.classList.contains('voice-review'));if(document.hidden){sampleStart=now;sampleFrames=0;return}const interval=targetVoice?1000/60:1000/30;if(now-last<interval||paused&&!dirty&&Math.abs(voice-targetVoice)<.001)return;const dt=Math.min((now-last)/1000,.05);last=now-(now-last)%interval;dirty=false;if(!paused)t+=dt;voice=paused?targetVoice:voice+(targetVoice-voice)*(1-Math.exp(-dt*6));pulse*=Math.exp(-dt*.25);for(const k of ['listen','think','speak','fault'])moods[k]=paused?moodTarget[k]:moods[k]+(moodTarget[k]-moods[k])*(1-Math.exp(-dt*4));moods.recoil*=paused?0:Math.exp(-dt*5);if(moods.recoil>.01)dirty=true;
- const ratio=Math.min(devicePixelRatio||1,1.5),w=Math.min(2560,Math.round(innerWidth*ratio)),h=Math.round(w*innerHeight/innerWidth);if(canvas.width!==w||canvas.height!==h){canvas.width=w;canvas.height=h;gl.viewport(0,0,w,h)}
- gl.clearColor(0,0,0,0);gl.clear(gl.COLOR_BUFFER_BIT);gl.uniform3f(uniforms.tint,...tint);
- const audio=envelope;for(const k of ['rms','bass','mid','high']){const target=Math.min(1,Math.max(microphone[k]||0,output[k]||0));envelope[k]=paused?target:envelope[k]+(target-envelope[k])*(1-Math.exp(-dt*(target>envelope[k]?18:7)))}
- for(const [k,v] of Object.entries({time:t,morph:voice,aspect:w/h,amplitude:audio.rms,bass:audio.bass,mid:audio.mid,high:audio.high,reduced:Number(paused),region,pulse,...moods}))gl.uniform1f(uniforms[k],v);
- gl.uniform2f(uniforms.pointer,px,py);
- gl.uniform2f(uniforms.dock,(stage.x+stage.width-90)/innerWidth*2-1,1-(stage.top+90)/innerHeight*2);
- gl.uniform2f(uniforms.center,(stage.x+stage.width/2)/innerWidth*2-1,1-(stage.top+stage.height*.40)/innerHeight*2);
- gl.uniform1f(uniforms.entityScale,Math.min(stage.width*.66,stage.height*.75)/(innerHeight*.58));
- for(const [buf,count,mode,point] of [[lines,links.length/7,gl.LINES,0],[dots,nodes.length,gl.POINTS,1]]){gl.bindBuffer(gl.ARRAY_BUFFER,buf);gl.vertexAttribPointer(attrs[0],3,gl.FLOAT,false,28,0);gl.vertexAttribPointer(attrs[1],3,gl.FLOAT,false,28,12);gl.vertexAttribPointer(attrs[2],1,gl.FLOAT,false,28,24);gl.uniform1f(uniforms.points,point);gl.drawArrays(mode,0,count)}
- sampleFrames++;if(now-sampleStart>=2000){publish({mode:'webgl',state:mood,fps:Math.round(sampleFrames*10000/(now-sampleStart))/10,paused,reducedMotion:reduce.matches,width:canvas.width,height:canvas.height});sampleStart=now;sampleFrames=0}
- }motionChanged();requestAnimationFrame(frame);
- }catch(error){console.error('Luminaria renderer unavailable',error);fallback('3D graphics could not start. Voice and chat remain available.')}
+ function organism(){const dots=[],mesh=[],c=rgb(tokens.entity),particle=rgb(tokens.particle),rings=32,steps=64;for(let j=0;j<rings;j++)for(let i=0;i<steps;i++){const a=i/steps*Math.PI*2,b=j/rings*Math.PI*2,r=.7+.24*Math.cos(b),p=[r*Math.cos(a),r*Math.sin(a),.24*Math.sin(b)];dots.push(...vertex(p,particle,2.6));if(i){const previous=dots.slice(dots.length-16,dots.length-8);if(j%4===0)mesh.push(...previous,...vertex(p,c,2))}}entityData=new Float32Array(dots);meshData=new Float32Array(mesh);upload(entityBuffer,entityData);upload(meshBuffer,meshData)}
+ const applyAppearance=e=>{tokens=e.detail.tokens;build();organism()};window.addEventListener('studio-appearance',applyAppearance);
+ window.addEventListener('studio-scene',e=>{scene=e.detail;selection=scene.selected;build()});
+ window.addEventListener('studio-spatial-control',e=>{if(e.detail.type==='follow')follow=e.detail.value;if(e.detail.type==='focus'){selection=e.detail.id;follow=false}dirty=true});
+ function layout(){const main=document.querySelector('.main').getBoundingClientRect(),top=document.querySelector('.topbar').getBoundingClientRect().bottom,bottom=document.querySelector('.composer-area').getBoundingClientRect().top;stage={x:main.x,width:main.width,top,height:Math.max(120,bottom-top)};caption.style.left=(stage.x+stage.width/2)+'px';caption.style.top=(stage.top+stage.height*.8)+'px';dirty=true}
+ const observer=new ResizeObserver(layout);observer.observe(document.querySelector('.main'));observer.observe(document.querySelector('.composer-area'));window.addEventListener('resize',layout);
+ window.luminariaSpatial={regions:()=>centres.map((p,i)=>{const z=Math.max(1,p[2]-camera[2]+6),offset=[(stage.x+stage.width/2)/innerWidth*2-1,1-(stage.top+stage.height*.48)/innerHeight*2];return {label:regionNames[i],x:((p[0]-camera[0])*2.2/(innerWidth/innerHeight)/z+offset[0]+1)*innerWidth/2,y:(1-(-(p[1]-camera[1])*2.2/z+offset[1]))*innerHeight/2}}),hit(x,y){let closest=null,distance=24;for(const n of projected){const d=Math.hypot(n.x-x,n.y-y);if(d<distance){closest=n.id;distance=d}}return closest},projected:()=>projected};
+ canvas.addEventListener('webglcontextlost',e=>{e.preventDefault();observer.disconnect();fallback('3D stopped · activity outline remains available')});
+ gl.enable(gl.DEPTH_TEST);gl.depthFunc(gl.LEQUAL);gl.enable(gl.BLEND);gl.blendFuncSeparate(gl.SRC_ALPHA,gl.ONE_MINUS_SRC_ALPHA,gl.ONE,gl.ONE_MINUS_SRC_ALPHA);
+ function draw(buf,count,mode,points,alpha,entity=0){gl.bindBuffer(gl.ARRAY_BUFFER,buf);for(const [i,a] of attributes.entries())gl.vertexAttribPointer(a,i<2?3:1,gl.FLOAT,false,32,i===0?0:i===1?12:i===2?24:28);gl.uniform1f(uniforms.points,points);gl.uniform1f(uniforms.alpha,alpha);gl.uniform1f(uniforms.entity,entity);gl.drawArrays(mode,0,count)}
+ function frame(now){if(failed)return;frameId=requestAnimationFrame(frame);if(document.hidden)return;voice=document.body.dataset.voice==='conversation';if(now-last<(voice?1000/60:1000/30)||paused&&!dirty)return;const elapsed=now-last,dt=Math.min(elapsed/1000,.05);last=now;dirty=false;if(!paused)time+=dt;
+  const activeNode=scene.nodes.find(n=>n.id===scene.focus),working=activeNode&&['running','waiting','requested','allowed'].includes(activeNode.status);target=working?(positions.get(activeNode.id)||target):[0,0,0];if(!voice&&!working)target=[1.8,-1,0];
+  for(let i=0;i<3;i++){entityAt[i]=paused?target[i]:entityAt[i]+(target[i]-entityAt[i])*(1-Math.exp(-dt*3));const destination=positions.get(selection)||[0,0,0],view=follow?(working?target[i]*.25:0):destination[i]*.65;camera[i]=paused?view:camera[i]+(view-camera[i])*(1-Math.exp(-dt*2))}
+  for(const k of ['rms','bass','mid','high']){const value=Math.min(1,Math.max(0,...Object.values(audioFrames).filter(a=>now-a.at<400).map(a=>a[k]||0)));audio[k]+= (value-audio[k])*(1-Math.exp(-dt*12))}
+  const ratio=Math.min(devicePixelRatio||1,1.5)*quality,w=Math.min(2560,Math.round(innerWidth*ratio)),h=Math.round(w*innerHeight/innerWidth);if(canvas.width!==w||canvas.height!==h){canvas.width=w;canvas.height=h;gl.viewport(0,0,w,h)}
+  const offset=[(stage.x+stage.width/2)/innerWidth*2-1,1-(stage.top+stage.height*.48)/innerHeight*2];gl.clearColor(0,0,0,0);gl.clear(gl.COLOR_BUFFER_BIT|gl.DEPTH_BUFFER_BIT);gl.uniform3f(uniforms.camera,...camera);gl.uniform3f(uniforms.entityPosition,...entityAt);gl.uniform2f(uniforms.offset,...offset);gl.uniform1f(uniforms.aspect,w/h);
+  for(const [key,value] of Object.entries({time,amplitude:audio.rms,bass:audio.bass,high:audio.high,reduced:Number(paused),mood:working?(activeNode.status==='waiting'?5:2):({idle:0,listening:1,generating:2,speaking:3,interrupted:4,error:6,complete:7}[mood]||0),scale:working?.23:voice?.75:.22}))gl.uniform1f(uniforms[key],value);
+  let packets=0;if(!paused)for(const edge of liveEdges){const from=positions.get(edge.from),to=positions.get(edge.to),node=scene.nodes.find(n=>n.id===edge.to);if(!from||!to)continue;const returning=node.region==='retrieval'&&node.status==='done';if(returning&&Date.now()/1000-(node.events.at(-1)?.at||0)>=2)continue;const fraction=(time*.55)%1,t=returning?1-fraction:fraction,p=from.map((v,k)=>v+(to[k]-v)*t+(k===2?Math.sin(t*Math.PI)*.45:0));packetData.set(vertex(p,rgb(tokens.glow),7),packets++*8)}if(packets)upload(packetBuffer,packetData.subarray(0,packets*8));
+  draw(lineBuffer,lineData.length/8,gl.LINES,0,document.body.classList.contains('task-overview')?.45:.14);draw(nodeBuffer,nodeData.length/8,gl.POINTS,1,.9);if(packets)draw(packetBuffer,packets,gl.POINTS,1,1);draw(meshBuffer,meshData.length/8,gl.LINES,0,.25,1);draw(entityBuffer,Math.floor(entityData.length/8*quality),gl.POINTS,1,.85,1);
+  projected=scene.nodes.map(n=>{const p=positions.get(n.id),z=Math.max(1,p[2]-camera[2]+6);return {id:n.id,x:((p[0]-camera[0])*2.2/(w/h)/z+offset[0]+1)*innerWidth/2,y:(1-(-(p[1]-camera[1])*2.2/z+offset[1]))*innerHeight/2}});
+  if(working&&!voice)caption.querySelector('strong').textContent=activeNode.label+' · '+activeNode.status;
+  frames++;if(now-sampleStart>=2000){const fps=frames*1000/(now-sampleStart);if(!paused){if(fps<(voice?38:22))quality=Math.max(.5,quality-.1);else if(fps>(voice?53:27))quality=Math.min(1,quality+.025)}publish({mode:'webgl',state:working?activeNode.status:mood,fps:paused?0:Math.round(fps*10)/10,quality:Math.round(quality*100)+'%',nodes:scene.nodes.length,paused,reducedMotion:reduce.matches,width:w,height:h});frames=0;sampleStart=now}
+ }
+ layout();build();organism();publish({mode:'webgl',fps:0,paused,reducedMotion:reduce.matches,quality:'100%',nodes:0});frameId=requestAnimationFrame(frame);
+ document.addEventListener?.('visibilitychange',()=>{if(document.hidden){if(typeof cancelAnimationFrame==='function')cancelAnimationFrame(frameId)}else{last=performance.now();sampleStart=last;frames=0;dirty=true;frameId=requestAnimationFrame(frame)}});
+ window.addEventListener('pagehide',()=>{if(typeof cancelAnimationFrame==='function')cancelAnimationFrame(frameId);observer.disconnect();dispose();failed=true});
+ }catch(error){console.error('Spatial renderer unavailable',error);fallback('3D could not start · use the activity outline')}
 })();
