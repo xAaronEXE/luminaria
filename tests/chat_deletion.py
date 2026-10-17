@@ -25,7 +25,7 @@ class ChatDeletionTests(unittest.TestCase):
   cls.client.__enter__()
  @classmethod
  def tearDownClass(cls):
-  cls.client.__exit__(None,None,None);FOLDER.cleanup()
+  cls.client.__exit__(None,None,None);server.store.db.close();FOLDER.cleanup()
 
  def checkpoint(self,run):
   saver=server.engine.graph.checkpointer
