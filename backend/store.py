@@ -27,6 +27,7 @@ class Store:
         CREATE TABLE IF NOT EXISTS schedules(id TEXT PRIMARY KEY,title TEXT,prompt TEXT,interval INTEGER,next_run REAL,enabled INTEGER);
         CREATE TABLE IF NOT EXISTS settings(key TEXT PRIMARY KEY,value TEXT);
         CREATE TABLE IF NOT EXISTS runs(id TEXT PRIMARY KEY,chat TEXT,payload TEXT,status TEXT,updated REAL);
+        CREATE TABLE IF NOT EXISTS retrieval_events(id TEXT PRIMARY KEY,run TEXT,tool TEXT,status TEXT,category TEXT,source TEXT,duration_ms INTEGER,attempts INTEGER,cached INTEGER,created REAL);
         ''')
         # A process restart must never resume previously approved side effects.
         self.db.execute("UPDATE actions SET status='interrupted' WHERE status='running'")

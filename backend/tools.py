@@ -16,8 +16,8 @@ BUILTINS=[
  schema('search_files','Search text files in the workspace for a literal string.',{'query':S},['query']),
  schema('run_command','Run a PowerShell command in the workspace. Full PC access after approval; not a sandbox. Use python/node configured paths from system prompt.',{'command':S,'timeout':I},['command'],'always','execution'),
  schema('run_code','Execute a Python or JavaScript script in the workspace. Saved as a file; no hidden REPL state.',{'language':{'type':'string','enum':['python','javascript']},'code':S,'timeout':I},['language','code'],'always','execution'),
- schema('web_search','Search the public web. Returns titles, snippets and source URLs.',{'query':S},['query'],'auto','research'),
- schema('web_fetch','Fetch an HTTP(S) page and extract text. Network request requires approval.',{'url':S},['url'],'approve','research'),
+ schema('web_search','Search the public web. Returns status, titles, snippets and source URLs. An empty result means no matches for these words, not that the information does not exist.',{'query':S},['query'],'auto','research'),
+ schema('web_fetch','Fetch a public HTTP(S) page or PDF and extract its main readable text. Returns status ok, empty or error with a category and guidance; follow the guidance instead of retrying blindly. Recent pages are reused for 10 minutes unless refresh is true. Network request requires approval.',{'url':S,'refresh':{'type':'boolean'}},['url'],'approve','research'),
  schema('discover_tools','Load MCP tool schemas for browser or windows. Call before using those tools. Use category all to list every connected tool.',{'category':{'type':'string','enum':['browser','windows','all']}},['category'],'auto','system'),
  schema('memory_search','Search durable cross-chat memory and full saved conversation text by literal query.',{'query':S},['query'],'auto','memory'),
  schema('history_read','Retrieve saved message or complete tool output by ID. Original history remains after compaction.',{'message_id':I,'action_id':S},[],'auto','memory'),
@@ -25,6 +25,13 @@ BUILTINS=[
  schema('update_plan','Share or revise your plan for a multi-step task. The user sees it as your stated plan, separate from executed actions, and it is saved with the chat. Send the full plan each time. Mark one step active while you work on it; list depends_on only for real dependencies.',{'goal':{'type':'string','description':'One sentence: what the finished work achieves.'},'steps':{'type':'array','minItems':1,'maxItems':24,'items':{'type':'object','properties':{'id':S,'title':S,'detail':{'type':'string','description':'What will be done and how it will be checked.'},'status':{'type':'string','enum':['pending','active','done','blocked','skipped']},'depends_on':{'type':'array','items':S}},'required':['id','title','status'],'additionalProperties':False}}},['steps'],'auto','planning'),
  schema('create_schedule','Schedule a recurring prompt while Studio is running. Every side effect still needs its normal approval. Minimum interval 5 minutes.',{'title':S,'prompt':S,'interval_minutes':I},['title','prompt','interval_minutes'],'approve','automation'),
 ]
+
+RETRIEVAL={'web_search':'web search','web_fetch':'web','memory_search':'memory','search_files':'workspace files','history_read':'history'}
+
+def host_of(url):
+    from urllib.parse import urlsplit
+    try: return urlsplit(url).hostname or ''
+    except ValueError: return ''
 
 def mcp_tier(group,name):
     # Only an explicit read-only allowlist is automatic. Dynamic/unknown tools always ask.
@@ -68,6 +75,25 @@ class Toolbox:
                 await proc.wait()
             raise
     async def call(self,name,a,run):
+        if name not in RETRIEVAL: return await self.dispatch(name,a,run)
+        import time
+        from .store import uid
+        started=time.monotonic(); result=None
+        try:
+            result=await self.dispatch(name,a,run)
+            if isinstance(result,dict):
+                result.setdefault('duration_ms',int((time.monotonic()-started)*1000)); result.setdefault('retrieved_at',round(time.time(),3)); result.setdefault('attempts',1); result.setdefault('truncated',False)
+            return result
+        except asyncio.CancelledError:
+            result={'status':'cancelled'}; raise
+        except Exception as e:
+            result={'status':'error','category':type(e).__name__}; raise
+        finally:
+            r=result if isinstance(result,dict) else {}
+            # Diagnostics never store queries, URLs or content; only the source host for web fetches.
+            try: self.store.execute('INSERT INTO retrieval_events VALUES(?,?,?,?,?,?,?,?,?,?)',(uid(),(run or {}).get('id'),name,r.get('status','ok'),r.get('category'),RETRIEVAL[name] if name!='web_fetch' else host_of(r.get('source') or a.get('url','')),r.get('duration_ms',int((time.monotonic()-started)*1000)),r.get('attempts',1),1 if r.get('cached') else 0,time.time()))
+            except Exception: pass
+    async def dispatch(self,name,a,run):
         if (name in ('run_command','run_code') or '__' in name) and not external_tools_enabled():
             raise ValueError('Computer and command tools are disabled. Enable them in Settings first.')
         if name=='update_plan':
@@ -119,19 +145,22 @@ class Toolbox:
                 try:
                     for n,line in enumerate(p.read_text('utf-8').splitlines(),1):
                         if a['query'].lower() in line.lower(): result.append({'path':str(p.relative_to(root)),'line':n,'text':line[:500]})
-                        if len(result)>=80: return result
+                        if len(result)>=80: return {'status':'ok','source':'workspace files','matches':result,'truncated':True,'message':'Showing the first 80 matches; search a more specific phrase for the rest.'}
                 except (UnicodeError,OSError): continue
-            return result
+            if result: return {'status':'ok','source':'workspace files','matches':result,'truncated':False}
+            return {'status':'empty','source':'workspace files','matches':[],'scanned_entries':min(count,10000),'message':'No workspace text file contains this exact text. Try a shorter phrase or list_files to check the folder.'}
         if name=='run_command': return await self.process(['powershell.exe','-NoProfile','-NonInteractive','-Command',a['command']],a.get('timeout',60))
         if name=='run_code':
             folder=workspace_path('.studio-scripts'); folder.mkdir(exist_ok=True)
             p=folder/(run['id']+'-'+str(__import__('time').time_ns())+('.py' if a['language']=='python' else '.js'))
             p.write_text(a['code'],encoding='utf-8')
             return await self.process([CONFIG['python'] if a['language']=='python' else CONFIG['node'],str(p)],a.get('timeout',60))
-        if name in ['web_search','web_fetch']:
-            # Use the configured execution runtime so packaged apps need no bundled research engine.
-            script=Path(__file__).parent/'research.py'
-            return await self.process([CONFIG['python'],str(script),'search' if name=='web_search' else 'fetch',a.get('query',a.get('url'))],45)
+        if name=='web_search':
+            from .retrieval import search
+            return await search(a['query'])
+        if name=='web_fetch':
+            from .retrieval import fetch
+            return await fetch(a['url'],bool(a.get('refresh')))
         if name=='discover_tools':
             cats=list(self.connectors) if a['category']=='all' else [a['category']]
             run['enabled'].update(cats)
@@ -140,14 +169,16 @@ class Toolbox:
             q=a['query'].lower()
             memories=[m for m in self.store.memory() if q in (m['title']+' '+m['content']).lower()]
             rows=self.store.rows('SELECT id,chat,payload FROM messages WHERE instr(lower(payload),?)>0 ORDER BY id DESC LIMIT 15',(q,))
-            return {'memories':memories,'history':[dict(id=r['id'],chat=r['chat'],excerpt=json.loads(r['payload']).get('content','')[:1500]) for r in rows]}
+            history=[dict(id=r['id'],chat=r['chat'],excerpt=str(json.loads(r['payload']).get('content',''))[:1500]) for r in rows]
+            found=bool(memories or history)
+            return {'status':'ok' if found else 'empty','source':'memory and saved history','memories':memories,'history':history,**({} if found else {'message':'No saved memory or message contains this exact text. Try a shorter or different phrase.'})}
         if name=='history_read':
             if a.get('message_id'):
-                rows=self.store.rows('SELECT payload FROM messages WHERE id=?',(a['message_id'],)); return json.loads(rows[0]['payload']) if rows else {'error':'Not found'}
+                rows=self.store.rows('SELECT payload FROM messages WHERE id=?',(a['message_id'],)); return {'status':'ok','source':'saved message','message':json.loads(rows[0]['payload'])} if rows else {'status':'error','category':'not_found','source':'saved message','message':'No saved message has this ID.'}
             if a.get('action_id'):
                 id=a['action_id']
                 if not re.fullmatch('[a-f0-9]{32}',id): raise ValueError('Invalid action ID')
-                p=DATA/'tool-outputs'/(id+'.json'); return json.loads(p.read_text('utf-8')) if p.exists() else {'error':'Not found'}
+                p=DATA/'tool-outputs'/(id+'.json'); return {'status':'ok','source':'saved tool output','output':json.loads(p.read_text('utf-8'))} if p.exists() else {'status':'error','category':'not_found','source':'saved tool output','message':'No saved output exists for this action ID.'}
             raise ValueError('Supply message_id or action_id')
         if name=='remember':
             if len(a['content'])>6000 or sum(len(m['content']) for m in self.store.memory())+len(a['content'])>16000: raise ValueError('Pinned memory is full; shorten existing memories in the UI')

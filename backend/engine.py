@@ -344,7 +344,7 @@ class Engine:
                 else:
                     self.store.execute("UPDATE actions SET status='running' WHERE id=?",(id,)); run['phase']='Running '+name; self.emit('changed',chat=run['chat'])
                     self.work(run,'tool.started',id,label=name.replace('__',' · '),status='running',**base)
-                    result=await self.tools.call(name,args,run); status='error' if isinstance(result,dict) and (result.get('isError') or result.get('exit_code',0)!=0) else 'done'
+                    result=await self.tools.call(name,args,run); status='error' if isinstance(result,dict) and (result.get('isError') or result.get('exit_code',0)!=0 or result.get('status')=='error') else 'done'
             except asyncio.CancelledError:
                 self.store.execute("UPDATE actions SET status='interrupted' WHERE id=?",(id,))
                 self.work(run,'tool.interrupted',id,node=id,tool=name,region=region_for(name),status='interrupted',label='Stopped before finishing',evidence={'action':id})
