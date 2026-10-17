@@ -330,6 +330,11 @@ async def settings():
     public['access_status']=access_status()
     public['data_directory']=str(DATA); public['mcp_configured']=list(CONFIG.get('mcp',{})); return public
 
+@app.post('/api/workspace/browse')
+async def browse_workspace():
+    from .folder_picker import pick
+    return await asyncio.to_thread(pick,CONFIG['workspace'])
+
 @app.post('/api/settings')
 async def settings_save(request:Request):
     if any(not r.get('finished') for r in engine.runs.values()): raise ValueError('Finish or stop active tasks before changing settings')
