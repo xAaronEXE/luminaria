@@ -778,6 +778,33 @@ async def identity_cancel(request:Request):
     from .identity import cancel
     return cancel((await request.json()).get('flow_id',''))
 
+@app.get('/api/identity/devices')
+async def identity_devices():
+    from .identity import devices
+    return await identity_call(devices())
+
+@app.post('/api/identity/devices/{id}/revoke')
+async def identity_revoke(id:str):
+    from .identity import revoke_device
+    return await identity_call(revoke_device(id))
+
+@app.post('/api/identity/devices/revoke-others')
+async def identity_revoke_others():
+    from .identity import revoke_others
+    return await identity_call(revoke_others())
+
+@app.post('/api/accounts/{id}/migration')
+async def account_migration(id:str,request:Request):
+    from .profiles import migrate
+    from .identity import status as identity_status
+    choice=(await request.json()).get('choice')
+    account=None
+    if choice=='attach':
+        info=await identity_status()
+        if not info.get('signed_in'):raise ValueError('Sign in before attaching a profile to your account')
+        account=info.get('account') or {'id':info['user']['id']}
+    return migrate(id,choice,account)
+
 @app.post('/api/accounts')
 async def account_create(request:Request):
     from .profiles import create
