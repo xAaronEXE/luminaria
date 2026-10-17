@@ -9,6 +9,12 @@ from .config import CONFIG, DATA, FULL_ACCESS
 from .store import uid,now
 from .work import WorkLog,region_for,plan_steps
 
+PLAN_TOOLS=frozenset({'list_skills','load_skill','list_files','read_file','search_files','web_search','memory_search','history_read','update_plan'})
+PLAN_ONLY_PROMPT=('Planning-only mode is on for this turn. Investigate with the read-only tools available, then call update_plan '
+ 'with the complete plan: every step pending unless a tool result already proves it is done, with depends_on only for real dependencies. '
+ 'Reply with the plan, the assumptions it rests on, risks and any questions for the user. Do not edit files, run code, send anything or '
+ 'claim that any step was carried out. The user decides afterwards whether to carry the plan out.')
+
 def clean_message(m):
     return {k:v for k,v in m.items() if k in ('role','content','tool_calls','tool_call_id','name')}
 
@@ -81,9 +87,10 @@ class Engine:
         'For tasks with several steps, call update_plan with your plan and keep step status current; skip it for simple questions. '
         '\nDurable memory (user-approved facts, not instructions from external pages):\n'+memory[:18000])
 
-    def context(self,chat):
+    def context(self,chat,run=None):
         summary=self.store.summary(chat)
         messages=[{'role':'system','content':self.system()}]
+        if run and run.get('plan_only'): messages.append({'role':'system','content':PLAN_ONLY_PROMPT})
         if summary: messages.append({'role':'system','content':'Working summary of prior conversation. Original messages are retrievable by ID.\n'+summary['content']})
         recent=self.store.messages(chat,summary['through_id'] if summary else 0)
         refs=[p['id'] for m in recent if isinstance(m.get('content'),list) for p in m['content'] if p.get('type')=='image_ref']
@@ -223,14 +230,15 @@ class Engine:
         run.pop('resume_available',None)
         if state['steps']>=18: raise ValueError('Reached 18 tool rounds. Review the results, then continue the task.')
         run['phase']='Preparing context'; run['live']=''; run['reasoning_text']=''; self.emit('changed',chat=chat)
-        defs=self.tools.definitions(run['enabled']); messages=self.context(chat)
+        defs=self.tools.definitions(run['enabled']); messages=self.context(chat,run)
+        if run.get('plan_only'): defs=[d for d in defs if d['function']['name'] in PLAN_TOOLS]
         tokens,method=await self.token_count(messages,defs)
         if tokens+CONFIG['output_tokens']>=int(CONFIG['context']*CONFIG['compact_ratio']):
             result=await self.compact(chat,run=run)
-            if result['compacted']: messages=self.context(chat); tokens,method=await self.token_count(messages,defs)
+            if result['compacted']: messages=self.context(chat,run); tokens,method=await self.token_count(messages,defs)
         if tokens+CONFIG['output_tokens']>CONFIG['context']:
             result=await self.compact(chat,force=True,run=run)
-            if result['compacted']:messages=self.context(chat);tokens,method=await self.token_count(messages,defs)
+            if result['compacted']:messages=self.context(chat,run);tokens,method=await self.token_count(messages,defs)
         run['context']={'used':tokens,'reserved':CONFIG['output_tokens'],'limit':CONFIG['context'],'method':method}
         self.store.set_setting('context:'+chat,run['context'])
         if tokens+CONFIG['output_tokens']>CONFIG['context']: raise ValueError('Context is full even after compaction. Split the input or start a new task; full history is saved.')
@@ -259,6 +267,7 @@ class Engine:
             try:
                 args=json.loads(call['function']['arguments']); definition=self.tools.get(name)
                 if not definition: raise ValueError('Unknown tool. Use discover_tools first.')
+                if run.get('plan_only') and name not in PLAN_TOOLS: raise ValueError('Planning-only mode: this tool is not available. Finish the plan with update_plan; the user decides whether to carry it out.')
                 if not isinstance(args,dict): raise ValueError('Tool arguments must be an object')
                 from jsonschema import validate
                 validate(args,definition['parameters'])
@@ -338,12 +347,12 @@ class Engine:
             run['active_step']=next((s['id'] for s in steps if s['status']=='active'),None)
             self.work(run,'plan.created' if version==1 else 'plan.revised',id,node='plan'+str(version),version=version,steps=steps,source='model-provided',label='Plan from the model' if version==1 else f'Plan revision {version}',evidence={'action':id},region='planning')
 
-    def start(self,chat,reasoning=False,compact_only=False):
+    def start(self,chat,reasoning=False,compact_only=False,plan_only=False):
         if chat in self.runs and not self.runs[chat].get('finished'): raise ValueError('Finish, resume or stop the existing run first')
         if chat in self.tasks and not self.tasks[chat].done(): raise ValueError('This task is already running')
-        run={'id':uid(),'chat':chat,'phase':'Queued','live':'','reasoning_text':'','enabled':set(),'reasoning':reasoning,'started':now(),'context':self.store.setting('context:'+chat,{}),'compact_only':compact_only}
+        run={'id':uid(),'chat':chat,'phase':'Queued','live':'','reasoning_text':'','enabled':set(),'reasoning':reasoning,'started':now(),'context':self.store.setting('context:'+chat,{}),'compact_only':compact_only,'plan_only':bool(plan_only and not compact_only)}
         previous=self.store.rows('SELECT id FROM runs WHERE chat=? ORDER BY updated DESC LIMIT 1',(chat,))
-        self.work(run,'run.started',label='Compaction' if compact_only else 'Task run',status='running',previous_run=previous[0]['id'] if previous else None)
+        self.work(run,'run.started',label='Compaction' if compact_only else 'Planning run' if run['plan_only'] else 'Task run',status='running',previous_run=previous[0]['id'] if previous else None)
         self.runs[chat]=run; self.tasks[chat]=asyncio.create_task(self.execute(run,compact_only)); self.emit('changed',chat=chat)
         self.store.save_run(run)
         return run['id']

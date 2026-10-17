@@ -195,7 +195,7 @@ async def run_chat(id:str,request:Request):
         content.append({'type':'image_ref','id':ref['id'],'mime':{'png':'image/png','jpg':'image/jpeg','webp':'image/webp'}[p.suffix[1:]]})
     if not store.messages(id): store.execute('UPDATE chats SET title=? WHERE id=?',(text[:70] or 'Image analysis',id))
     store.add(id,{'role':'user','content':content if attachments else text})
-    return {'run_id':engine.start(id,bool(b.get('reasoning',False)))}
+    return {'run_id':engine.start(id,bool(b.get('reasoning',False)),plan_only=bool(b.get('plan_only',False)))}
 
 @app.post('/api/chats/{id}/stop')
 async def stop_chat(id:str):
@@ -524,7 +524,7 @@ async def chat_stream(request:Request):
     if id in engine.runs and not engine.runs[id].get('finished'): raise ValueError('Session already active')
     queue=asyncio.Queue(maxsize=500);subscribers.add(queue)
     store.add(id,{'role':'user','content':str(b.get('message',b.get('text','')))})
-    engine.start(id,bool(b.get('reasoning',False)))
+    engine.start(id,bool(b.get('reasoning',False)),plan_only=bool(b.get('plan_only',False)))
     async def generate():
         yield 'event: session\ndata: '+json.dumps({'session_id':id})+'\n\n'
         try:
