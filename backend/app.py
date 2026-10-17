@@ -1,7 +1,7 @@
 import asyncio, base64, contextlib, json, os, re, secrets, time
 from pathlib import Path
 from contextlib import asynccontextmanager
-from fastapi import FastAPI, Request, HTTPException
+from fastapi import FastAPI, Request, HTTPException, BackgroundTasks
 from fastapi.responses import JSONResponse, FileResponse, StreamingResponse, Response
 from fastapi.staticfiles import StaticFiles
 from .config import ROOT, DATA, CONFIG, save_config, workspace_path
@@ -392,9 +392,14 @@ async def updates():
     return await check()
 
 @app.post('/api/updates/install')
-async def update_install():
+async def update_install(background_tasks:BackgroundTasks):
+    if any(not r.get('finished') for r in engine.runs.values()):raise HTTPException(409,'Finish or stop active tasks before installing an update.')
     from .updates import install
-    return await install()
+    result=await install()
+    if result.get('closing'):
+        from .lifecycle import request_shutdown
+        background_tasks.add_task(request_shutdown)
+    return result
 
 @app.get('/api/skills')
 async def skills():

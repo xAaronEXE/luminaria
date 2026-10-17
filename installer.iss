@@ -5,6 +5,7 @@
 [Setup]
 AppId={{C1DD4A29-1B64-433C-A69E-352D1DB9E575}
 AppName=Luminaria
+AppMutex=Local\LuminariaDesktop
 AppVersion={#AppVersion}
 VersionInfoVersion={#AppVersion}
 AppPublisher=Luminaria Project

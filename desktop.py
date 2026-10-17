@@ -11,6 +11,14 @@ def main():
     parser.add_argument('--safe-graphics',action='store_true',help='Disable WebGL and use the static voice interface for this launch')
     parser.add_argument('--version',action='version',version='Luminaria '+VERSION)
     options=parser.parse_args()
+    if os.name=='nt':
+        import ctypes
+        from ctypes import wintypes
+        kernel=ctypes.WinDLL('kernel32',use_last_error=True)
+        kernel.CreateMutexW.argtypes=[ctypes.c_void_p,wintypes.BOOL,wintypes.LPCWSTR]
+        kernel.CreateMutexW.restype=wintypes.HANDLE
+        guard=kernel.CreateMutexW(None,False,'Local\\LuminariaDesktop')
+        if not guard:raise ctypes.WinError(ctypes.get_last_error())
     if options.safe_graphics:
         os.environ['WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS']=(os.environ.get('WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS','')+' --disable-webgl').strip()
     from backend.config import DATA,ROOT
@@ -37,12 +45,18 @@ def main():
             if not thread.is_alive():raise RuntimeError('Backend failed. See desktop.log')
             time.sleep(.1)
     if options.server:
+        from backend.lifecycle import shutdown
         try:
-            while True:time.sleep(1)
+            shutdown.wait()
         except KeyboardInterrupt:pass
     else:
         import webview
-        webview.create_window('Luminaria',url,width=1440,height=940,min_size=(780,620),background_color='#141A17',text_select=True)
+        window=webview.create_window('Luminaria',url,width=1440,height=940,min_size=(780,620),background_color='#141A17',text_select=True)
+        from backend.lifecycle import shutdown
+        def close_for_update():
+            shutdown.wait()
+            window.destroy()
+        threading.Thread(target=close_for_update,daemon=True).start()
         webview.start(gui='edgechromium',debug=False,private_mode=False,storage_path=str(DATA/'webview'))
     if server:
         server.should_exit=True;thread.join(timeout=12)

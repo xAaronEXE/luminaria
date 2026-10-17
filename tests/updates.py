@@ -50,5 +50,29 @@ class UpdateTests(unittest.IsolatedAsyncioTestCase):
   with patch.object(updates.httpx,'AsyncClient',lambda *a,**k:original(transport=httpx.MockTransport(fail))):
    result=await updates.check()
   self.assertFalse(result['reachable']);self.assertIn('Could not reach',result['message'])
+ def test_packaged_handoff_waits_for_owned_processes_before_setup(self):
+  import sys
+  from backend import update_handoff,runtime
+  with tempfile.TemporaryDirectory() as folder:
+   target=Path(folder)/NAME;target.write_bytes(PAYLOAD)
+   with patch.object(sys,'frozen',True,create=True),patch.object(runtime,'swap_process') as manager,patch.object(update_handoff.subprocess,'Popen') as launch:
+    manager.pid=12345;manager.poll.return_value=None
+    self.assertTrue(update_handoff.launch(target))
+    args=launch.call_args.args[0]
+    self.assertIn('-ParentId',args);self.assertIn('-ManagerId',args)
+    self.assertEqual(args[args.index('-ManagerId')+1],'12345')
+    self.assertEqual(args[args.index('-Digest')+1],hashlib.sha256(PAYLOAD).hexdigest())
+    script=(Path(folder)/'update-handoff.ps1').read_text('utf-8-sig')
+    self.assertLess(script.index('WaitForExit(30000)'),script.index('Start-Process -FilePath $Installer'))
+    self.assertIn('Process identity changed',script);self.assertIn('Installer checksum changed',script)
+ def test_unowned_model_server_is_not_targeted(self):
+  import sys
+  from backend import update_handoff,runtime
+  with tempfile.TemporaryDirectory() as folder:
+   target=Path(folder)/NAME;target.write_bytes(PAYLOAD)
+   with patch.object(sys,'frozen',True,create=True),patch.object(runtime,'swap_process',None),patch.object(update_handoff.subprocess,'Popen') as launch:
+    update_handoff.launch(target)
+    args=launch.call_args.args[0]
+    self.assertEqual(args[args.index('-ManagerId')+1],'0')
 
 if __name__=='__main__':unittest.main()
