@@ -17,6 +17,7 @@ TYPES = {
     'tool.requested', 'tool.started', 'tool.completed', 'tool.failed', 'tool.denied', 'tool.interrupted',
     'approval.requested', 'approval.allowed', 'approval.denied',
     'compaction.started', 'compaction.completed', 'compaction.skipped',
+    'routing.started', 'routing.completed',
 }
 REGIONS = ('planning', 'memory', 'retrieval', 'files', 'tools', 'generation', 'verification')
 PLAN_STATUSES = ('pending', 'active', 'done', 'blocked', 'skipped')

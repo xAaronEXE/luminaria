@@ -51,3 +51,9 @@ body[data-voice=conversation]:not(.voice-review) .inspector-content,body[data-vo
 .markdown a{color:var(--accent);text-decoration-color:color-mix(in srgb,var(--accent) 45%,transparent);text-underline-offset:2px}.markdown a:hover{text-decoration-color:currentColor}
 [data-accent=on] .chat-item.active{background:var(--accent-soft);box-shadow:inset 2px 0 0 var(--accent)}
 [data-accent=on] .message.user{background:var(--accent-soft)}
+/* Anchored task actions, with the same keyboard behavior as desktop menus. */
+.chat-context-menu{position:fixed;z-index:160;width:190px;padding:5px;background:var(--panel);border:1px solid var(--line);border-radius:9px;box-shadow:0 12px 32px #0003}
+.chat-context-menu button{display:flex;align-items:center;gap:10px;width:100%;padding:10px;border:0;border-radius:5px;background:transparent;color:var(--text);text-align:left;cursor:pointer}
+.chat-context-menu button:hover,.chat-context-menu button:focus-visible{background:var(--hover)}
+.profile{width:100%;text-align:left;color:var(--text);cursor:pointer;background:none;border:0;gap:10px}
+#profile-label{flex:1}#profile-label small{display:block;color:var(--muted)}

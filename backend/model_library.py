@@ -282,6 +282,7 @@ def library(store):
             benchmarks = history(registered['id'], registered.get('benchmarks', [])) if registered else []
             quants.append({**quant, 'installed': installed, 'registered': bool(registered),
                            'registry_id': registered['id'] if registered else quant['id'],
+                           'context':registered.get('context') if registered else entry['context'],
                            'verified': verified, 'bytes_on_disk': path.stat().st_size if installed else None,
                            'benchmarks': benchmarks, 'evaluations': evaluations(registered['id']) if registered else [], 'active': bool(registered) and _active(registered['id'], path),
                            'job': downloads.get(quant['id']), 'downloadable': True, 'managed': True})

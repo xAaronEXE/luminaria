@@ -22,7 +22,7 @@ class PlanningModeTests(unittest.IsolatedAsyncioTestCase):
    offered={t['function']['name'] for t in bodies[0]['tools']}
    self.assertIn('update_plan',offered);self.assertIn('read_file',offered)
    for name in ('write_file','edit_file','delete_file','run_command','run_code','web_fetch','remember','create_schedule'):self.assertNotIn(name,offered)
-   self.assertIn('Planning-only mode is on',bodies[0]['messages'][1]['content'])
+   self.assertIn('Planning-only mode is on',bodies[0]['messages'][0]['content'])
    self.assertFalse(h.store.rows("SELECT id FROM actions WHERE name='write_file'"))
    refusal=[m for m in h.store.messages(chat) if m['role']=='tool' and m.get('tool_call_id')=='c3']
    self.assertEqual(len(refusal),1);self.assertIn('Planning-only mode',refusal[0]['content'])

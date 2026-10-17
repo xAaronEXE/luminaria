@@ -61,3 +61,5 @@
 @keyframes entity-status-pulse{50%{box-shadow:0 0 0 6px color-mix(in srgb,var(--state,var(--text)) 10%,transparent)}}
 .task-overview .entity-status,body[data-voice=conversation] .entity-status,.entity-fallback .entity-status{opacity:0}
 @media(prefers-reduced-motion:reduce){.entity-status i{animation:none!important}}
+.spatial-toolbar [hidden],.spatial-footer [hidden]{display:none!important}
+#spatial-canvas-target{cursor:grab}#spatial-canvas-target:active{cursor:grabbing}

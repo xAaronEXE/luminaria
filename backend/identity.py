@@ -31,18 +31,29 @@ def validate_user(user):
     return {'id':user['id'],'provider':user['provider'],'name':str(user.get('name','Account'))[:120],'expires':user.get('expires')}
 
 async def status():
-    result={'providers':[],'signed_in':False,'message':'Sign-in service is unavailable. Try again later.'}
+    result={'providers':[],'connections':[],'signed_in':False,'message':'Sign-in service is unavailable. Try again later.'}
     try:
         async with httpx.AsyncClient(timeout=12,follow_redirects=False) as client:
             response=await client.get(ORIGIN+'/health');response.raise_for_status()
             available={p['id']:p.get('configured') is True for p in response.json().get('providers',[]) if isinstance(p,dict) and p.get('id') in PROVIDERS}
             result.update(providers=[{'id':p,'configured':available.get(p,False)} for p in PROVIDERS],message='Provider registration is still in progress.' if not any(available.values()) else 'Sign in in your browser. Your chats and files stay on this PC.')
-            token=read_session()
-            if token:
+            # Each provider keeps its own encrypted session. Signing in with a
+            # second provider no longer switches or creates a local data profile.
+            seen=set()
+            for path in [SESSION]+[DATA/f'identity-{p}.bin' for p in PROVIDERS]:
+                try:token=read_session(path)
+                except ValueError:
+                    result.setdefault('session_errors',[]).append('A saved sign-in could not be unlocked. Sign in again for that provider.')
+                    continue
+                if not token or token in seen:continue
+                seen.add(token)
                 response=await client.get(ORIGIN+'/session',headers={'Authorization':'Bearer '+token})
-                if response.status_code==401:result['message']='Your sign-in expired or was revoked. Sign in again.'
-                else:
-                    response.raise_for_status();result.update(signed_in=True,user=validate_user(response.json()['user']),message='Session verified by the identity server.')
+                if response.status_code==401:continue
+                response.raise_for_status();user=validate_user(response.json()['user'])
+                if any(u['provider']==user['provider'] for u in result['connections']):continue
+                result['connections'].append(user)
+            if result['connections']:
+                result.update(signed_in=True,user=result['connections'][0],message='Sign-ins verified by the identity server. These sign-in methods stay on this PC; they do not grant service-tool access.')
     except ValueError as error:result['message']=str(error)
     except (httpx.HTTPError,KeyError,TypeError,AttributeError):result['message']='Cannot verify sign-in right now. Check your connection and try again.'
     return result
@@ -83,16 +94,17 @@ async def poll(id):
                 if pending.get(id) is not flow:raise ValueError('Sign-in was cancelled')
                 user=validate_user(checked.json()['user'])
                 if user['provider']!=flow['provider']:raise ValueError('Sign-in provider did not match the request')
-                from .profiles import identity_profile,select
-                profile=identity_profile(user)
-                save_session(BASE_DATA/'profiles'/profile['id']/'identity-session.bin',token)
-                select(profile['id'])
+                save_session(DATA/f'identity-{user["provider"]}.bin',token)
+                # Keep a primary session for the existing startup gate. Adding a
+                # method must not replace a working primary or its local history.
+                if not SESSION.exists():save_session(SESSION,token)
+                forget_gate()
             except Exception:
                 try:await client.post(ORIGIN+'/logout',headers={'Authorization':'Bearer '+token})
                 except httpx.HTTPError:pass
                 raise
             finally:pending.pop(id,None)
-        return {'status':'complete','profile':profile,'restart_required':True,'message':'Signed in. Restart Luminaria to open your account profile. Existing local chats remain in their original profile.'}
+        return {'status':'complete','restart_required':False,'message':'Signed in. Your other sign-ins, chats and settings stay in place.'}
 
 OFFLINE_GRACE=7*86400
 GATE_OPEN=['/api/bootstrap','/api/gate','/api/events','/api/accounts','/api/identity/start','/api/identity/poll','/api/identity/cancel']
@@ -124,7 +136,7 @@ async def gate(force=False):
     from .profiles import registry
     profile=next((p for p in registry()['profiles'] if p['id']==PROFILE_ID),None)
     result={'required':True,'unlocked':False,'profile':PROFILE_ID}
-    if not profile or profile.get('provider')=='local':
+    if not profile:
         result['reason']='Sign in with Google, GitHub or Discord to use Luminaria on this PC.'
     else:
         try:token=read_session()
@@ -138,7 +150,8 @@ async def gate(force=False):
                     _verified_path().unlink(missing_ok=True);result['reason']='Your sign-in expired or was revoked. Sign in again.'
                 else:
                     response.raise_for_status();user=validate_user(response.json()['user'])
-                    if user['id']!=profile.get('identity_id') or user['provider']!=profile.get('provider'):result['reason']='This sign-in belongs to a different account. Sign in again.'
+                    if profile.get('identity_id') and (user['id']!=profile['identity_id'] or user['provider']!=profile.get('provider')):
+                        result['reason']='This sign-in belongs to a different account. Sign in again.'
                     else:
                         import json
                         _verified_path().write_text(json.dumps({'at':time.time(),'name':user['name']}),encoding='utf-8')
@@ -167,12 +180,14 @@ async def set_required(enabled):
 
 async def logout():
     forget_gate()
-    token=read_session()
-    if token:
-        async with httpx.AsyncClient(timeout=15,follow_redirects=False) as client:
-            response=await client.post(ORIGIN+'/logout',headers={'Authorization':'Bearer '+token})
-            if response.status_code!=401:response.raise_for_status()
-        SESSION.unlink(missing_ok=True)
+    paths=[SESSION]+[DATA/f'identity-{p}.bin' for p in PROVIDERS]
+    async with httpx.AsyncClient(timeout=15,follow_redirects=False) as client:
+        for path in paths:
+            token=read_session(path)
+            if token:
+                response=await client.post(ORIGIN+'/logout',headers={'Authorization':'Bearer '+token})
+                if response.status_code!=401:response.raise_for_status()
+                path.unlink(missing_ok=True)
     _verified_path().unlink(missing_ok=True)
     return {'signed_out':True,'locked':required()}
 
