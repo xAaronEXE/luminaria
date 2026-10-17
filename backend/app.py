@@ -50,6 +50,7 @@ async def lifespan(app):
     yield
     task.cancel()
     with contextlib.suppress(asyncio.CancelledError): await task
+    if tuning is not None: await tuning.cancel()
     await engine.close()
     await conn.close()
     for c in connectors.values(): await c.close()
@@ -908,6 +909,57 @@ async def insights_delete(request:Request):
         state=sync_state(store); state['enabled']=False; store.set_setting('insights_sync',state); store.set_setting('insights_account',None)
     if scope in ('local','all'): result['local']=usage.delete()
     return result
+
+tuning=None
+
+def tuning_service():
+    global tuning
+    if tuning is None:
+        from .hardware import Tuning
+        tuning=Tuning(store)
+    return tuning
+
+@app.get('/api/hardware')
+async def hardware_info():
+    from .hardware import information
+    from .models import registry
+    return {**await asyncio.to_thread(information),'models':[{'id':m['id'],'name':m['name']} for m in registry() if Path(m.get('model_file','')).is_file()]}
+
+@app.get('/api/tuning')
+async def tuning_status():
+    return {'job':tuning_service().public(),'history':store.setting('tuning_history',[]),'rollback_available':bool(store.setting('tuning_rollback',None))}
+
+@app.post('/api/tuning/start')
+async def tuning_start(request:Request):
+    global benchmarking
+    if benchmarking or any(not r.get('finished') for r in engine.runs.values()): raise ValueError('Finish active work before starting a tuning benchmark.')
+    body=await request.json()
+    if body.get('consent') is not True:raise ValueError('Explicit benchmark consent is required.')
+    from .models import registry
+    from .hardware import information
+    model=next((m for m in registry() if m['id']==body.get('model') and Path(m.get('model_file','')).is_file()),None)
+    if not model:raise ValueError('Select an installed model; no weights are downloaded.')
+    benchmarking=True
+    try:
+        result=tuning_service().start(model,body,await asyncio.to_thread(information))
+        def finished(task):
+            global benchmarking
+            benchmarking=False
+            broadcast({'type':'changed'})
+        tuning_service().task.add_done_callback(finished)
+        return result
+    except BaseException:
+        benchmarking=False;raise
+
+@app.post('/api/tuning/stop')
+async def tuning_stop():return await tuning_service().cancel()
+
+@app.post('/api/tuning/apply')
+async def tuning_apply(request:Request):
+    if benchmarking or any(not r.get('finished') for r in engine.runs.values()):raise ValueError('Finish active work before selecting tuning settings.')
+    from .hardware import information,apply_profile
+    body=await request.json()
+    return apply_profile(store,body.get('job'),await asyncio.to_thread(information),body.get('rollback') is True)
 
 app.mount('/',StaticFiles(directory=ROOT/'web',html=True),name='ui')
 

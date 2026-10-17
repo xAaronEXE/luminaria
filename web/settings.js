@@ -1,6 +1,6 @@
 /* Categorized settings backed by the local API. */
 (()=>{
- const sections=['Profile','Insights','Models','Orchestration','Voice','Tools & permissions','Memory & context','Appearance','Updates'];
+ const sections=['Profile','Insights','Models','Orchestration','Hardware & tuning','Voice','Tools & permissions','Memory & context','Appearance','Updates'];
  let library,selectedKey,selectedQuant,modelFilter='all',capabilityFilter='',benchmarkOpen=false,libraryGeneration=0,libraryTimer;
  const original=openPanel;
  openPanel=async function(name){if(['settings','models'].includes(name))return settingsView(name==='models'?'Models':({Account:'Profile',Accounts:'Profile'}[window.studioSettingsCategory]||window.studioSettingsCategory||'Profile'));$('.sheet').classList.remove('settings-sheet');return original(name)};
