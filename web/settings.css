@@ -73,3 +73,14 @@
 .folder-picker-row{display:flex;align-items:end;gap:12px}.folder-picker-row .field{flex:1;margin:0}.folder-picker-row>.btn{margin-bottom:0;flex-shrink:0;min-height:40px}@media(max-width:720px){.folder-picker-row{align-items:stretch;flex-direction:column}}
 
 .connection-guide{padding-left:22px;margin:16px 0 24px}.connection-guide li{padding:0 0 18px 8px}.connection-guide li::marker{color:var(--accent)}.connection-guide p{margin:5px 0 10px;color:var(--muted);line-height:1.6}.connection-guide .btn{display:inline-flex;text-decoration:none}
+.pool-modes{display:grid;gap:6px;margin:6px 0 12px}
+.pool-modes label{display:flex;gap:10px;align-items:flex-start;padding:9px 10px;border:1px solid var(--line);border-radius:8px;cursor:pointer}
+.pool-modes label:has(input:checked){border-color:var(--accent)}
+.pool-modes small{display:block;color:var(--muted);font-size:11px}
+.pool-picker{display:grid;gap:10px;margin-bottom:12px}
+.pool-picker fieldset{border:1px solid var(--line);border-radius:8px;padding:8px 10px;margin:0}
+.pool-picker legend{display:flex;align-items:center;gap:6px;padding:0 4px;font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:.06em;color:var(--dim)}
+.pool-picker legend button{margin-left:6px;text-transform:none;letter-spacing:0;font-weight:400}
+.pool-picker label{display:flex;gap:8px;align-items:center;padding:4px 0;font-size:12px}
+.pool-picker label small{color:var(--muted)}
+.pool-picker.muted{opacity:.55}
