@@ -11,10 +11,34 @@ from .store import uid,now
 from .work import WorkLog,region_for,plan_steps
 
 PLAN_TOOLS=frozenset({'list_skills','load_skill','list_files','read_file','search_files','web_search','memory_search','history_read','update_plan'})
-PLAN_ONLY_PROMPT=('Planning-only mode is on for this turn. Investigate with the read-only tools available, then call update_plan '
- 'with the complete plan: every step pending unless a tool result already proves it is done, with depends_on only for real dependencies. '
- 'Reply with the plan, the assumptions it rests on, risks and any questions for the user. Do not edit files, run code, send anything or '
- 'claim that any step was carried out. The user decides afterwards whether to carry the plan out.')
+PLAN_ONLY_PROMPT=('Planning-only mode is on for this turn. Build a concrete plan around what the user described. '
+ '1) Restate the goal in one sentence. 2) Draft the plan straight away from the description and call update_plan with a goal and '
+ 'specific, ordered steps; give each step a short detail saying what will be done and how it will be checked. Every step is pending '
+ 'unless a tool result already proves it is done; list depends_on only for real dependencies. 3) Use read-only tools only when the plan '
+ 'depends on facts you do not have (existing files, current versions, documentation); keep it to a few targeted reads, then revise with '
+ 'update_plan. If something is ambiguous, make a reasonable assumption and state it instead of stalling. '
+ 'Finish by presenting the plan to the user: the goal, the numbered steps, assumptions, risks and at most three questions. '
+ 'Do not edit files, run code, send anything or claim that any step was carried out. The user decides afterwards whether to carry it out.')
+PLAN_FINALIZE=('Investigation budget for this plan is used up. Do not call more read-only tools. Call update_plan with the final plan '
+ 'if you have not already, then present it to the user.')
+
+PLAN_ROUND_LIMIT=4
+
+def routing_evidence(model_id):
+    """Latest measured speed and quality check on this PC, if any."""
+    try:
+        from .benchmark_store import history,evaluations
+        speed=next((b.get('tps') for b in history(model_id) if b.get('tps')),None)
+        quality=next(iter(evaluations(model_id)),None)
+        return {'tps':speed,'quality':quality}
+    except Exception:
+        return {}
+
+def plan_text(plan):
+    lines=[('Goal: '+plan['goal']) if plan.get('goal') else '']
+    for i,s in enumerate(plan.get('steps',[]),1):
+        lines.append(f"{i}. [{s['status']}] {s['title']}"+(f" — {s['detail']}" if s.get('detail') else '')+(f" (after {', '.join(s['depends_on'])})" if s.get('depends_on') else ''))
+    return '\n'.join(l for l in lines if l)
 
 def clean_message(m):
     return {k:v for k,v in m.items() if k in ('role','content','tool_calls','tool_call_id','name')}
@@ -97,6 +121,11 @@ class Engine:
         # Qwen templates require one initial system message. Separate system
         # entries broke both token counting and generation after compaction.
         if run and run.get('plan_only'): messages[0]['content']+='\n\n'+PLAN_ONLY_PROMPT
+        plan=self.store.setting('plan:'+chat,None)
+        if plan and plan.get('steps'):
+            messages[0]['content']+=('\n\nSaved plan for this chat (version '+str(plan.get('version',1))+'). When the user asks to see, review or '
+            'continue the plan, present it from here with current statuses. Keep it current with update_plan as work progresses.\n'+plan_text(plan))
+        if run and run.get('plan_only') and run.get('plan_finalize'): messages[0]['content']+='\n\n'+PLAN_FINALIZE
         if summary: messages[0]['content']+='\n\nWorking summary of prior conversation. Original messages are retrievable by ID.\n'+summary['content']
         recent=self.store.messages(chat,summary['through_id'] if summary else 0)
         refs=[p['id'] for m in recent if isinstance(m.get('content'),list) for p in m['content'] if p.get('type')=='image_ref']
@@ -236,8 +265,13 @@ class Engine:
         run.pop('resume_available',None)
         if state['steps']>=18: raise ValueError('Reached 18 tool rounds. Review the results, then continue the task.')
         run['phase']='Preparing context'; run['live']=''; run['reasoning_text']=''; self.emit('changed',chat=chat)
-        defs=self.tools.definitions(run['enabled']); messages=self.context(chat,run)
-        if run.get('plan_only'): defs=[d for d in defs if d['function']['name'] in PLAN_TOOLS]
+        defs=self.tools.definitions(run['enabled'])
+        if run.get('plan_only'):
+            run['plan_finalize']=state['steps']>=PLAN_ROUND_LIMIT
+            allowed={'update_plan'} if run['plan_finalize'] else PLAN_TOOLS
+            if run['plan_finalize'] and run.get('plan_version'): allowed=set()
+            defs=[d for d in defs if d['function']['name'] in allowed]
+        messages=self.context(chat,run)
         tokens,method=await self.token_count(messages,defs)
         if tokens+CONFIG['output_tokens']>=int(self.context_limit()*CONFIG['compact_ratio']):
             result=await self.compact(chat,run=run)
@@ -274,6 +308,7 @@ class Engine:
                 args=json.loads(call['function']['arguments']); definition=self.tools.get(name)
                 if not definition: raise ValueError('Unknown tool. Use discover_tools first.')
                 if run.get('plan_only') and name not in PLAN_TOOLS: raise ValueError('Planning-only mode: this tool is not available. Finish the plan with update_plan; the user decides whether to carry it out.')
+                if run.get('plan_finalize') and name!='update_plan': raise ValueError('Planning-only mode: the investigation budget is used up. Present the plan now.')
                 if not isinstance(args,dict): raise ValueError('Tool arguments must be an object')
                 from jsonschema import validate
                 validate(args,definition['parameters'])
@@ -352,6 +387,9 @@ class Engine:
             steps=plan_steps(plan_args); version=run.get('plan_version',0)+1; run['plan_version']=version
             run['active_step']=next((s['id'] for s in steps if s['status']=='active'),None)
             self.work(run,'plan.created' if version==1 else 'plan.revised',id,node='plan'+str(version),version=version,steps=steps,source='model-provided',label='Plan from the model' if version==1 else f'Plan revision {version}',evidence={'action':id},region='planning')
+            saved=self.store.setting('plan:'+run['chat'],None) or {}
+            goal=str(plan_args.get('goal') or '').strip()[:300] or saved.get('goal','')
+            self.store.set_setting('plan:'+run['chat'],{'goal':goal,'steps':steps,'version':saved.get('version',0)+1,'run':run['id'],'planning_only':bool(run.get('plan_only')),'updated':now()})
 
     def start(self,chat,reasoning=False,compact_only=False,plan_only=False):
         if chat in self.runs and not self.runs[chat].get('finished'): raise ValueError('Finish, resume or stop the existing run first')
@@ -369,30 +407,29 @@ class Engine:
             async with self.gpu:
                 from .models import registry
                 models=registry();selected=next((m for m in models if m['id']==run.get('model_id')),None)
-                router=CONFIG.get('orchestrator_model','')
+                router=CONFIG.get('orchestrator_model','') if CONFIG.get('orchestration_enabled',True) else ''
+                routed=False
                 if router and not compact_only and not selected:
                     run['phase']='Choosing a model';self.emit('changed',chat=chat)
                     self.work(run,'routing.started',node='router',label='Choose a local specialist',region='planning',status='running')
                     try:
                         from .orchestration import choose
                         messages=self.store.messages(chat);last_user=next((m for m in reversed(messages) if m['role']=='user'),{})
-                        eligible=models
-                        if any(isinstance(m.get('content'),list) and any(p.get('type')=='image_url' for p in m['content']) for m in self.context(chat,run)):
-                            eligible=[m for m in models if m.get('projector_file') and Path(m['projector_file']).is_file()]
+                        vision=any(isinstance(m.get('content'),list) and any(p.get('type')=='image_url' for p in m['content']) for m in self.context(chat,run))
                         content=last_user.get('content','')
                         task='\n'.join(p.get('text','') for p in content if p.get('type')=='text') if isinstance(content,list) else str(content)
-                        decision=await choose(self.client,CONFIG['endpoint'],router,models,task,CONFIG['model'])
-                        selected=next((m for m in eligible if m['id']==decision['model_id']),None)
-                        if selected is None:raise ValueError('Selected model does not support this conversation’s images')
-                        run['routing']=decision
+                        if run.get('plan_only'): task='[Planning request] '+task
+                        decision=await choose(self.client,CONFIG['endpoint'],router,models,task,CONFIG['model'],CONFIG.get('orchestration_pool'),routing_evidence,vision)
+                        selected=next((m for m in models if m['id']==decision['model_id']),None)
+                        run['routing']=decision;routed=True
                     except (ValueError,KeyError,TypeError,httpx.HTTPError) as error:
                         selected=next((m for m in models if m['id']==CONFIG['model']),None)
                         run['routing']={'model_id':CONFIG['model'],'reason':'Using your selected model because routing failed.','error':str(error)[:200]}
-                    self.work(run,'routing.completed',node='router',label='Selected '+run['routing']['model_id'],region='planning',status='done',evidence={'model':run['routing']['model_id'],'reason':run['routing']['reason']})
+                    self.work(run,'routing.completed',node='router',label='Selected '+run['routing']['model_id'],region='planning',status='done',evidence={k:run['routing'][k] for k in ('model_id','reason','ranking','profile','method') if k in run['routing']}|{'model':run['routing']['model_id']})
                     run['last_tool_node']='router'
                 if selected:
                     self.inference.set(selected);run['model_id']=selected['id']
-                if router and not compact_only:
+                if routed and run['routing'].get('router_called') and run['model_id']!=router:
                     # The single llama-swap slot evicts the router before the
                     # specialist loads. Warm it before using its tokenizer.
                     warm=await self.client.post(CONFIG['endpoint']+'/chat/completions',json={'model':self.model_id(),'messages':[{'role':'user','content':'Ready'}],'max_tokens':1,'stream':False,'chat_template_kwargs':{'enable_thinking':False}},timeout=240)

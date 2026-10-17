@@ -89,7 +89,7 @@ async def bootstrap(): return {'token':TOKEN,'version':CONFIG['version'],'name':
 @app.get('/api/state')
 async def state(chat:str=''):
     if chat: require_chat(chat)
-    return {'chats':store.chats(),'chat':chat,'messages':store.messages(chat) if chat else [],'actions':store.actions(chat) if chat else [],'summary':store.summary(chat) if chat else None,'summaries':store.rows('SELECT id,through_id,created FROM summaries WHERE chat=? ORDER BY id',(chat,)) if chat else [],'run':engine.public_run(chat),'context':store.setting('context:'+chat,{}),'memories':store.memory(),'schedules':store.rows('SELECT * FROM schedules ORDER BY next_run'),'workspace':CONFIG['workspace'],'model':CONFIG['model'],'context_limit':CONFIG['context'],'connectors':{n:{'status':c.status,'tools':len(c.tools)} for n,c in connectors.items()},'tool_count':len(engine.tools.catalog()),'active_runs':[{'chat':k,'phase':v['phase']} for k,v in engine.runs.items() if not v.get('finished')]}
+    return {'chats':store.chats(),'chat':chat,'messages':store.messages(chat) if chat else [],'actions':store.actions(chat) if chat else [],'summary':store.summary(chat) if chat else None,'summaries':store.rows('SELECT id,through_id,created FROM summaries WHERE chat=? ORDER BY id',(chat,)) if chat else [],'run':engine.public_run(chat),'context':store.setting('context:'+chat,{}),'plan':store.setting('plan:'+chat,None) if chat else None,'orchestration':{'router':CONFIG.get('orchestrator_model',''),'enabled':bool(CONFIG.get('orchestrator_model')) and CONFIG.get('orchestration_enabled',True)},'memories':store.memory(),'schedules':store.rows('SELECT * FROM schedules ORDER BY next_run'),'workspace':CONFIG['workspace'],'model':CONFIG['model'],'context_limit':CONFIG['context'],'connectors':{n:{'status':c.status,'tools':len(c.tools)} for n,c in connectors.items()},'tool_count':len(engine.tools.catalog()),'active_runs':[{'chat':k,'phase':v['phase']} for k,v in engine.runs.items() if not v.get('finished')]}
 
 @app.get('/api/chats/{id}/work')
 async def work_events(id:str,runs:int=12):
@@ -339,7 +339,11 @@ async def browse_workspace():
 async def settings_save(request:Request):
     if any(not r.get('finished') for r in engine.runs.values()): raise ValueError('Finish or stop active tasks before changing settings')
     b=await request.json(); allowed={'workspace','endpoint','tokenizer','model','context','output_tokens','compact_ratio','python','node','llama_executable','model_file','projector_file','external_tools','ask_reads'}
-    allowed.update({'access_mode','orchestrator_model','compact_keep_turns'})
+    allowed.update({'access_mode','orchestrator_model','compact_keep_turns','orchestration_pool','orchestration_enabled'})
+    if 'orchestration_pool' in b:
+        from .orchestration import normalize_pool
+        b['orchestration_pool']=normalize_pool(b['orchestration_pool'])
+    if 'orchestration_enabled' in b and not isinstance(b['orchestration_enabled'],bool): raise ValueError('Boolean setting required')
     if b.get('orchestrator_model'):
         from .models import registry
         if not any(m['id']==b['orchestrator_model'] and Path(m['model_file']).is_file() for m in registry()):raise ValueError('Choose an installed orchestration model')
@@ -441,6 +445,16 @@ async def session(id:str): return await state(id)
 @app.delete('/api/sessions/{id}')
 async def delete_session(id:str):
     await stop_chat(id); store.execute('UPDATE chats SET archived=1 WHERE id=?',(id,));return {'archived':True,'history_preserved':True}
+
+@app.get('/api/chats/{id}/plan')
+async def chat_plan(id:str):
+    require_chat(id); return {'plan':store.setting('plan:'+id,None)}
+
+@app.delete('/api/chats/{id}/plan')
+async def clear_chat_plan(id:str):
+    require_chat(id)
+    if id in engine.runs and not engine.runs[id].get('finished'): raise ValueError('Finish or stop the current run first')
+    store.execute('DELETE FROM settings WHERE key=?',('plan:'+id,)); broadcast({'type':'changed','chat':id}); return {'ok':True}
 
 @app.post('/api/chats/{id}/resume')
 async def resume_chat(id:str): return {'run_id':engine.resume(id)}

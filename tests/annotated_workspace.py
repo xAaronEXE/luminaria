@@ -84,8 +84,10 @@ class RoutingTests(unittest.IsolatedAsyncioTestCase):
    async with httpx.AsyncClient(transport=httpx.MockTransport(lambda r:httpx.Response(200,json={'choices':[{'message':{'content':'{"model_id":"code","reason":"coding task"}'}}]}))) as client:
     result=await choose(client,'http://local/v1','small',registry,'write code','code')
     self.assertEqual(result['model_id'],'code')
-   async with httpx.AsyncClient(transport=httpx.MockTransport(lambda r:httpx.Response(200,json={'choices':[{'message':{'content':'{"model_id":"download-something"}'}}]}))) as client:
-    with self.assertRaises(ValueError):await choose(client,'http://local/v1','small',registry,'task','code')
+   async with httpx.AsyncClient(transport=httpx.MockTransport(lambda r:httpx.Response(200,json={'choices':[{'message':{'content':'{"model_id":"download-something","needs":["coding"],"complexity":"high"}'}}]}))) as client:
+    result=await choose(client,'http://local/v1','small',registry,'task','code')
+    self.assertIn(result['model_id'],{'small','code'})
+   with self.assertRaises(ValueError):await choose(None,'http://local/v1','missing',registry,'task','code')
  async def test_truncated_compaction_is_retried_without_accepting_partial_result(self):
   calls=[]
   async def count(messages):return 200,'fixture'
