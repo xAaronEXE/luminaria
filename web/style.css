@@ -85,3 +85,11 @@ body[data-voice=conversation]:not(.voice-review) .inspector-content,body[data-vo
 .badge.good{color:var(--success)}
 .badge.warn{color:var(--warning)}
 .message.checkpoint .markdown{border-left-color:var(--warning)}
+.update-notice{position:fixed;top:64px;right:20px;z-index:60;display:flex;align-items:center;gap:12px;max-width:min(420px,calc(100vw - 40px));padding:12px 12px 12px 14px;background:var(--raised);color:var(--text);border:1px solid var(--line);border-radius:10px;box-shadow:0 10px 32px var(--shadow);opacity:0;transform:translateY(-6px);transition:opacity .2s,transform .2s}
+.update-notice.shown{opacity:1;transform:none}
+.update-notice div{display:flex;flex-direction:column;gap:2px;min-width:0}
+.update-notice strong{font-size:13px}
+.update-notice small{font-size:11px;color:var(--muted)}
+.update-notice-mark{color:var(--info);display:grid;place-items:center}
+.update-notice .btn{padding:6px 12px;font-size:12px}
+@media (prefers-reduced-motion:reduce){.update-notice{transition:none;transform:none}}
