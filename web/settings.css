@@ -118,3 +118,9 @@
 .eligibility-row small{grid-column:2/4;color:var(--dim)}
 .eligibility-row .tags{font-size:11px;color:var(--dim)}
 .eligibility-summary{font-size:12px;color:var(--muted);margin:10px 0 0}
+.profile-row{padding:14px 0;border-bottom:1px solid var(--line);display:flex;flex-direction:column;gap:10px}
+.profile-row-head{display:flex;justify-content:space-between;align-items:center;gap:16px}
+.profile-row h3{font-size:14px;margin:0}
+.profile-row p{margin:2px 0 0;font-size:12px;color:var(--muted)}
+.profile-row .segmented input:disabled+span{opacity:.45;cursor:not-allowed}
+.device-row h3 .badge{margin-left:6px;vertical-align:middle}

@@ -141,15 +141,20 @@ async function showGate(g){if(gateShown&&!g)return;gateShown=true;g=g||await api
  const names={google:'Google',github:'GitHub',discord:'Discord'},ready=id=>accounts.identity?.providers?.some(p=>p.id===id&&p.configured);
  let el=$('#sign-in-gate');if(!el){el=document.createElement('div');el.id='sign-in-gate';el.setAttribute('role','dialog');el.setAttribute('aria-modal','true');el.setAttribute('aria-labelledby','gate-title');document.body.append(el)}
  $('.app').inert=true;$('#panel-backdrop').hidden=true;
- el.innerHTML=`<div class="gate-card"><img src="/brand/luminaria.png" alt="" width="56" height="56"><h1 id="gate-title">Sign in to Luminaria</h1><p class="gate-reason" role="status">${esc(g.reason||'Sign in to continue.')}</p><div class="gate-providers">${Object.entries(names).map(([id,name])=>`<button class="btn ${ready(id)?'primary':''}" data-gate-signin="${id}" ${ready(id)?'':'disabled title="Not set up by the publisher yet"'}>Continue with ${name}</button>`).join('')}</div><div id="gate-progress" role="status" aria-live="polite"></div><button class="text-button" id="gate-retry">Check again</button><p class="small-note">Signing in identifies you. Your chats, files and models stay on this PC, and it does not connect email, repositories or Drive.</p></div>`;
+ el.innerHTML=`<div class="gate-card"><img src="/brand/luminaria.png" alt="" width="56" height="56"><h1 id="gate-title">Sign in to Luminaria</h1><p class="gate-reason" role="status">${esc(g.reason||'Sign in to continue.')}</p><div class="gate-providers">${Object.entries(names).map(([id,name])=>`<button class="btn ${ready(id)?'primary':''}" data-gate-signin="${id}" ${ready(id)?'':'disabled title="Not set up by the publisher yet"'}>Continue with ${name}</button>`).join('')}</div><div id="gate-progress" role="status" aria-live="polite"></div><button class="text-button" id="gate-retry">Check again</button><p class="small-note">This PC stays signed in for 30 days after you last use it. Signing in identifies you; your chats, files and models stay on this PC, and it does not connect email, repositories or Drive.</p></div>`;
  const out=$('#gate-progress');
  $('#gate-retry').onclick=safe(async()=>{out.textContent='Checking…';const n=await api('/gate?force=true');if(n.unlocked)location.reload();else{out.textContent='';$('.gate-reason').textContent=n.reason||'Still locked.'}});
  el.querySelectorAll('[data-gate-signin]').forEach(b=>b.onclick=safe(async()=>{let flow;el.querySelectorAll('[data-gate-signin]').forEach(x=>x.disabled=true);
   try{out.textContent='Starting secure sign-in…';flow=await api('/identity/start','POST',{provider:b.dataset.gateSignin});
-   out.innerHTML=`<p>Finish signing in with ${esc(names[b.dataset.gateSignin])} in your browser.</p><a class="btn" href="${esc(flow.url)}" target="_blank" rel="noopener noreferrer">Open sign-in page</a>`;
+   let cancelled=false;
+   out.innerHTML=`<p>Finish signing in with ${esc(names[b.dataset.gateSignin])} in your browser.</p><a class="btn" href="${esc(flow.url)}" target="_blank" rel="noopener noreferrer">Open sign-in page</a> <button type="button" class="btn" id="gate-cancel">Cancel</button>`;
+   $('#gate-cancel').onclick=()=>{cancelled=true;out.textContent='Sign-in cancelled.'};
    const deadline=Date.now()+flow.expires_in*1000;
-   while(Date.now()<deadline){await new Promise(r=>setTimeout(r,flow.interval*1000));const r=await api('/identity/poll','POST',{flow_id:flow.flow_id});if(r.status==='complete'){flow=null;out.innerHTML='<p><strong>Signed in.</strong> Close Luminaria completely and open it again to enter your account.</p>';return}}
-   out.textContent='Sign-in expired. Start again.'}
+   while(Date.now()<deadline&&!cancelled){await new Promise(r=>setTimeout(r,flow.interval*1000));if(cancelled)break;const r=await api('/identity/poll','POST',{flow_id:flow.flow_id});
+    if(r.status==='complete'){flow=null;out.innerHTML='<p><strong>Signed in.</strong> Opening your workspace…</p>';const n=await api('/gate?force=true');
+     if(n.unlocked){location.reload();return}
+     out.innerHTML=`<p><strong>Signed in, but this profile is still locked.</strong></p><p>${esc(n.reason||'')}</p>`;$('.gate-reason').textContent=n.reason||'';return}}
+   if(!cancelled)out.textContent='Sign-in expired. Start again.'}
   catch(e){out.textContent=e.message}
   finally{if(flow)api('/identity/cancel','POST',{flow_id:flow.flow_id}).catch(()=>{});el.querySelectorAll('[data-gate-signin]').forEach(x=>x.disabled=!ready(x.dataset.gateSignin))}}));
  el.querySelector('[data-gate-signin]:not([disabled])')?.focus()}

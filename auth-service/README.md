@@ -127,3 +127,23 @@ session 401; GitHub device start 503. Secrets have not been provisioned.
 Provider references: [GitHub OAuth](https://docs.github.com/en/apps/oauth-apps/building-oauth-apps/authorizing-oauth-apps),
 [Google OAuth](https://developers.google.com/identity/protocols/oauth2/web-server),
 [Discord OAuth](https://docs.discord.com/developers/topics/oauth2).
+
+## Remembered devices (desktop 0.2.16)
+
+Sessions now record a device label (the PC name sent by the desktop app), when they
+were created and when they were last used. A session stays valid for 30 days after
+its last use and never longer than 90 days after sign-in. `GET /sessions` lists the
+signed-in devices of the caller's account; `POST /sessions/revoke` signs out one
+device (`{"id": "<16 hex>"}`) or every other device (`{"others": true}`). Devices of
+other accounts can never be listed or revoked.
+
+The deployed database predates these columns. Apply the migration once, then deploy:
+
+```
+npx wrangler d1 execute luminaria-identity --remote --file migrations/0002_device_sessions.sql
+npx wrangler deploy
+```
+
+Until this is deployed, desktop 0.2.16 shows "Device management needs the updated
+sign-in service" and sign-in keeps working as before. Existing sessions keep working
+after the migration and become 30-day sessions on their next use.
