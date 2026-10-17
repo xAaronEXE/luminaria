@@ -42,3 +42,21 @@ class HardwareTuningTests(unittest.IsolatedAsyncioTestCase):
  def test_invalid_thread_and_layer_inputs_are_rejected(self):
   for body in ({'threads':[True]},{'threads':[0]},{'gpu_layers':[-2]},{'gpu_layers':'all'}):
    with self.subTest(body=body),self.assertRaises(ValueError):hardware.choices(body)
+ async def test_immediate_and_repeated_stop_do_not_leave_a_running_record(self):
+  job=hardware.Tuning(self.store)
+  with patch.object(hardware,'measure_variant',AsyncMock(side_effect=AssertionError('must not load a model'))):
+   job.start(self.model,{'threads':[1],'gpu_layers':[0]},self.info)
+   await job.cancel();await job.cancel()
+  self.assertEqual(job.job['state'],'Cancelled')
+  self.assertEqual(len(self.store.setting('tuning_history')),1)
+ async def test_repeated_stop_allows_inflight_cleanup_to_finish(self):
+  started=asyncio.Event();cleaned=asyncio.Event()
+  async def measure(*args):
+   started.set()
+   try:await asyncio.Event().wait()
+   finally:await asyncio.sleep(.05);cleaned.set()
+  job=hardware.Tuning(self.store)
+  with patch.object(hardware,'measure_variant',measure):
+   job.start(self.model,{'threads':[1],'gpu_layers':[0]},self.info)
+   await started.wait();await asyncio.gather(job.cancel(),job.cancel())
+  self.assertTrue(cleaned.is_set());self.assertEqual(job.job['state'],'Cancelled')

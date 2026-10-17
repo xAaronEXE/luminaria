@@ -11,7 +11,7 @@ FLAGS=subprocess.CREATE_NO_WINDOW if os.name=='nt' else 0
 def command(argv,timeout=8):
     try:
         result=subprocess.run(argv,capture_output=True,text=True,timeout=timeout,creationflags=FLAGS)
-        return result.stdout.strip() if result.returncode==0 else None
+        return (result.stdout.strip() or result.stderr.strip()) if result.returncode==0 else None
     except (OSError,subprocess.TimeoutExpired):return None
 
 def gpu_memory():
@@ -87,10 +87,11 @@ async def measure_variant(model,threads,layers,progress):
         gpus_before=await asyncio.to_thread(gpu_memory)
         results=[]
         async with httpx.AsyncClient(timeout=httpx.Timeout(300,connect=5),trust_env=False,headers={'Authorization':'Bearer '+token}) as client:
-            for _ in range(240):
+            deadline=time.monotonic()+120
+            while time.monotonic()<deadline:
                 if proc.returncode is not None:raise ValueError('Temporary runtime exited; this configuration may not fit or be supported.')
                 try:
-                    response=await client.get(url+'/health')
+                    response=await client.get(url+'/health',timeout=2)
                     if response.status_code==200:break
                 except httpx.HTTPError:pass
                 await asyncio.sleep(.5)
@@ -116,14 +117,17 @@ async def measure_variant(model,threads,layers,progress):
                 'gpu_before':gpus_before,'gpu_after':gpus_after,'gpu_memory_scope':'Driver snapshots for the whole GPU, not per-process peak VRAM.',
                 'maximum_event_loop_delay_seconds':max(jitter,default=None),'responsiveness_scope':'Backend event-loop scheduling; browser/render performance is separate.'}
     finally:
-        stop.set();await watcher;await terminate(proc)
+        stop.set()
+        try:await watcher
+        finally:await terminate(proc)
 
 class Tuning:
-    def __init__(self,store):self.store=store;self.task=None;self.job=None
+    def __init__(self,store):self.store=store;self.task=None;self.job=None;self.cancel_requested=False
     def public(self):return self.job or {'state':'Idle'}
     def start(self,model,body,hardware):
         if self.task and not self.task.done():raise ValueError('A tuning benchmark is already running.')
         threads,layers=choices(body);identity=provenance(model,hardware)
+        self.cancel_requested=False
         self.job={'id':uid(),'state':'Running','model':model['id'],'started':now(),'variants':[],'progress':{},'provenance':identity}
         self.task=asyncio.create_task(self.run(model,threads,layers));return self.public()
     async def run(self,model,threads,layers):
@@ -143,7 +147,14 @@ class Tuning:
             self.job['finished']=now();history=self.store.setting('tuning_history',[])
             self.store.set_setting('tuning_history',(history+[self.job])[-30:])
     async def cancel(self):
-        if self.task and not self.task.done():self.task.cancel();await self.task
+        if self.task and not self.task.done():
+            if not self.cancel_requested:self.cancel_requested=True;self.task.cancel()
+            try:await asyncio.shield(self.task)
+            except asyncio.CancelledError:
+                if not self.task.cancelled():raise
+                self.job.update(state='Cancelled',finished=now())
+                history=[j for j in self.store.setting('tuning_history',[]) if j['id']!=self.job['id']]
+                self.store.set_setting('tuning_history',(history+[self.job])[-30:])
         return self.public()
 
 def apply_profile(store,job_id,hardware,rollback=False):
