@@ -85,7 +85,34 @@ class ChooseTests(unittest.IsolatedAsyncioTestCase):
   d=await o.choose(client('{"needs":["writing"],"complexity":"low"}',[]),'http://x','qwen3-4b',MODELS,'What is in this picture? Describe it nicely for a caption','qwen3-4b',vision=True)
   self.assertEqual(d['model_id'],'gemma-12b')
  async def test_empty_pool_is_an_error(self):
-  with self.assertRaises(ValueError):await o.choose(client('{}',[]),'http://x','qwen3-4b',MODELS,'hi','qwen3-4b',{'mode':'custom','models':['missing']})
+  with self.assertRaises(o.NoEligibleModel) as caught:await o.choose(client('{}',[]),'http://x','qwen3-4b',MODELS,'hi','qwen3-4b',{'mode':'custom','models':['missing']})
+  self.assertIn('never routes outside your selection',str(caught.exception));self.assertIn('not downloaded',str(caught.exception))
+ async def test_missing_router_still_routes_within_the_pool_by_keywords(self):
+  calls=[];d=await o.choose(client('{}',calls),'http://x','gone-router',MODELS,'Explain how this works and write a summary of it','qwen3-4b',{'mode':'abliterated'})
+  self.assertEqual(calls,[]);self.assertIn(d['model_id'],{'qwen3-8b-abl','coder-7b-abl'});self.assertIn('keywords only',d['note'])
+ async def test_router_network_failure_falls_back_to_keywords(self):
+  async def down(request):raise httpx.ConnectError('refused')
+  d=await o.choose(httpx.AsyncClient(transport=httpx.MockTransport(down)),'http://x','qwen3-4b',MODELS,'Explain how this works and write a summary of it','qwen3-4b')
+  self.assertEqual(d['method'],'keywords');self.assertIn('refused',d['note'])
+ async def test_long_conversations_exclude_small_context_models(self):
+  small=[{**m,'context':8192} if m['id']=='coder-7b' else {**m,'context':32768} for m in MODELS]
+  d=await o.choose(client('{}',[]),'http://x','qwen3-4b',small,'```py\nprint(1)\n```','qwen3-4b',{'mode':'custom','models':['coder-7b','coder-30b']},context_needed=20000)
+  self.assertEqual(d['model_id'],'coder-30b')
+
+class EligibilityTests(unittest.TestCase):
+ def reasons(self,setting,**kw):return {r['id']:r['reasons'] for r in o.eligibility(MODELS,setting,**kw)}
+ def test_each_exclusion_has_a_reason(self):
+  r=self.reasons({'mode':'standard'})
+  self.assertEqual(r['qwen3-4b'],[]);self.assertEqual(r['qwen3-8b-abl'],['Standard models only']);self.assertIn('Not downloaded',r['missing'])
+  r=self.reasons({'mode':'custom','models':['coder-7b']});self.assertEqual(r['coder-7b'],[]);self.assertEqual(r['qwen3-4b'],['Not in your selected models'])
+  r=self.reasons(None,vision=True);self.assertEqual(r['gemma-12b'],[]);self.assertEqual(r['coder-7b'],['Cannot read images'])
+  r={x['id']:x for x in o.eligibility([{**MODELS[0],'context':8192}],None,context_needed=20000)};self.assertIn('Context 8k is smaller',r['qwen3-4b']['reasons'][0])
+ def test_router_is_marked_and_pool_matches_included(self):
+  rows=o.eligibility(MODELS,{'mode':'abliterated'},router='qwen3-4b')
+  self.assertTrue(next(r for r in rows if r['id']=='qwen3-4b')['router'])
+  self.assertEqual({r['id'] for r in rows if r['included']},{m['id'] for m in o.pool(MODELS,{'mode':'abliterated'})})
+ def test_no_models_explains_how_to_fix(self):
+  self.assertIn('Model library',o.explain_none([],None))
 
 class EngineTests(unittest.IsolatedAsyncioTestCase):
  async def run_with(self,config):
@@ -107,5 +134,24 @@ class EngineTests(unittest.IsolatedAsyncioTestCase):
   chooser,run,types=await self.run_with({'orchestration_enabled':True,'orchestration_pool':pool})
   args=chooser.call_args.args;self.assertEqual(args[6],pool);self.assertTrue(callable(args[7]));self.assertFalse(args[8])
   self.assertEqual(run['model_id'],'coder-7b');self.assertIn('routing.completed',types)
+ async def routing_error(self,chooser,config):
+  from backend import models
+  from backend.config import CONFIG
+  h=Harness([stream([{'choices':[{'delta':{'content':'ok'}}]}])]*2)
+  try:
+   with patch.dict(CONFIG,{'orchestrator_model':'qwen3-4b','orchestration_enabled':True,**config}),patch.object(models,'registry',return_value=MODELS),patch('backend.orchestration.choose',new=chooser):
+    chat=h.store.create_chat();h.store.add(chat,{'role':'user','content':'fix my code'})
+    h.engine.start(chat);await h.engine.tasks[chat]
+    return h.engine.runs[chat],h.store.messages(chat)[-1],len(h.responses)
+  finally:h.close()
+ async def test_failure_never_uses_a_model_outside_the_pool(self):
+  run,last,left=await self.routing_error(AsyncMock(side_effect=KeyError('broken')),{'model':'qwen3-4b','orchestration_pool':{'mode':'abliterated','models':[]}})
+  self.assertEqual(run['phase'],'Error');self.assertTrue(last['error']);self.assertIn('outside your orchestration selection',last['content']);self.assertEqual(left,2)
+ async def test_failure_uses_the_selected_model_when_it_is_in_the_pool(self):
+  run,last,left=await self.routing_error(AsyncMock(side_effect=KeyError('broken')),{'model':'qwen3-4b','orchestration_pool':{'mode':'standard','models':[]}})
+  self.assertEqual(run['model_id'],'qwen3-4b');self.assertIn('in your orchestration selection',run['routing']['reason']);self.assertEqual(last['content'],'ok')
+ async def test_no_eligible_model_stops_with_the_explanation(self):
+  run,last,left=await self.routing_error(AsyncMock(side_effect=o.NoEligibleModel('No model in your orchestration selection can handle this task')),{'model':'qwen3-4b'})
+  self.assertEqual(run['phase'],'Error');self.assertIn('No model in your orchestration selection',last['content']);self.assertEqual(left,2)
 
 if __name__=='__main__':unittest.main()

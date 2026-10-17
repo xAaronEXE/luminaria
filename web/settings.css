@@ -108,3 +108,13 @@
 .save-state.ok{color:var(--success)}
 .save-state.error{color:var(--danger)}
 .save-state.dirty{color:var(--warning)}
+.eligibility{margin:8px 0 4px;border:1px solid var(--line);border-radius:8px}
+.eligibility-row{display:grid;grid-template-columns:18px 1fr auto;gap:4px 10px;align-items:start;padding:9px 12px;border-bottom:1px solid var(--line);font-size:12px}
+.eligibility-row:last-child{border-bottom:0}
+.eligibility-row .mark{font-weight:700}
+.eligibility-row.in .mark{color:var(--success)}
+.eligibility-row.out{color:var(--muted)}
+.eligibility-row.out .mark{color:var(--dim)}
+.eligibility-row small{grid-column:2/4;color:var(--dim)}
+.eligibility-row .tags{font-size:11px;color:var(--dim)}
+.eligibility-summary{font-size:12px;color:var(--muted);margin:10px 0 0}

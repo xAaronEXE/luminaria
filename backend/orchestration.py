@@ -8,6 +8,7 @@ restrictions remain on the specialist's execution loop.
 """
 import functools, json, math, re, subprocess, sys
 from pathlib import Path
+import httpx
 
 NEEDS = ('coding', 'reasoning', 'writing', 'tools', 'vision', 'chat')
 COMPLEXITY = ('low', 'medium', 'high')
@@ -41,12 +42,41 @@ def normalize_pool(value):
     if value['mode'] == 'custom' and not ids: raise ValueError('Pick at least one model for orchestration')
     return {'mode': value['mode'], 'models': list(dict.fromkeys(ids))}
 
-def pool(models, setting):
+class NoEligibleModel(ValueError):
+    pass
+
+def has_vision(model):
+    return bool(model.get('projector_file')) and Path(model['projector_file']).is_file()
+
+def eligibility(models, setting, vision=False, context_needed=0, router=''):
+    """Every registered model with whether Auto may route to it and, if not, why."""
     setting = normalize_pool(setting)
-    choices = installed(models)
-    if setting['mode'] == 'custom': return [m for m in choices if m['id'] in setting['models']]
-    if setting['mode'] in ('standard', 'abliterated'): return [m for m in choices if variant(m) == setting['mode']]
-    return choices
+    rows = []
+    for m in models:
+        reasons = []
+        if not Path(m.get('model_file', '')).is_file(): reasons.append('Not downloaded')
+        if setting['mode'] == 'custom' and m['id'] not in setting['models']: reasons.append('Not in your selected models')
+        if setting['mode'] in ('standard', 'abliterated') and variant(m) != setting['mode']:
+            reasons.append(('Standard' if setting['mode'] == 'standard' else 'Abliterated') + ' models only')
+        if vision and not has_vision(m): reasons.append('Cannot read images')
+        size = int(m.get('context') or 0)
+        if context_needed and size and size < context_needed: reasons.append(f'Context {size // 1024}k is smaller than this conversation needs (about {context_needed // 1024}k)')
+        rows.append({'id': m['id'], 'name': m.get('name', m['id']), 'variant': variant(m), 'included': not reasons, 'reasons': reasons, 'router': m['id'] == router})
+    return rows
+
+def explain_none(rows, setting):
+    setting = normalize_pool(setting)
+    if not rows: return 'No models are registered. Add one in Model library.'
+    counts = {}
+    for r in rows:
+        for reason in r['reasons']: key = reason.split(' is smaller')[0] if reason.startswith('Context') else reason; counts[key] = counts.get(key, 0) + 1
+    detail = '; '.join(f'{k.lower()} ({v})' for k, v in sorted(counts.items(), key=lambda x: -x[1])[:4])
+    return ('No model in your orchestration selection can handle this task' + (f': {detail}' if detail else '') +
+            '. Auto never routes outside your selection. Change it in Settings → Orchestration, or pick a model in the composer.')
+
+def pool(models, setting, vision=False, context_needed=0):
+    allowed = {r['id'] for r in eligibility(models, setting, vision, context_needed) if r['included']}
+    return [m for m in models if m['id'] in allowed]
 
 def billions(model):
     """Total and per-token parameter counts in billions, estimated from file size when not recorded."""
@@ -154,16 +184,15 @@ async def describe(client, endpoint, router, task):
     response.raise_for_status()
     return parse_profile(response.json()['choices'][0]['message']['content'])
 
-async def choose(client, endpoint, router, models, task, fallback, setting=None, evidence_for=None, vision=False, vram=None):
-    available = installed(models)
-    if router not in {m['id'] for m in available}: raise ValueError('The orchestration model is not installed')
-    choices = pool(models, setting)
-    if vision: choices = [m for m in choices if m.get('projector_file') and Path(m['projector_file']).is_file()]
-    if not choices: raise ValueError('No installed model in your orchestration selection can handle this task')
+async def choose(client, endpoint, router, models, task, fallback, setting=None, evidence_for=None, vision=False, vram=None, context_needed=0):
+    router_ready = router in {m['id'] for m in installed(models)}
+    choices = pool(models, setting, vision, context_needed)
+    if not choices: raise NoEligibleModel(explain_none(eligibility(models, setting, vision, context_needed), setting))
     profile = keyword_profile(task)
     if vision and 'vision' not in profile['needs']: profile['needs'] = ['vision'] + profile['needs']
     method, called = 'keywords', False
-    if len(choices) > 1 and not profile['confident']:
+    if not router_ready: profile['router_error'] = 'The orchestration model is not downloaded, so the choice used keywords only.'
+    if len(choices) > 1 and not profile['confident'] and router_ready:
         called = True
         try:
             described = await describe(client, endpoint, router, task)
@@ -172,7 +201,7 @@ async def choose(client, endpoint, router, models, task, fallback, setting=None,
             profile = {**described, 'needs': described['needs'] + extra[:1], 'confident': False}
             if vision and 'vision' not in profile['needs']: profile['needs'] = ['vision'] + profile['needs']
             method = 'router'
-        except (ValueError, KeyError, TypeError, json.JSONDecodeError) as error:
+        except (ValueError, KeyError, TypeError, json.JSONDecodeError, httpx.HTTPError) as error:
             profile['router_error'] = str(error)[:160]
     ranking = rank(choices, profile, evidence_for, vram if vram is not None else gpu_memory())
     best = ranking[0]
@@ -182,4 +211,4 @@ async def choose(client, endpoint, router, models, task, fallback, setting=None,
     reason = f"{profile['complexity'].capitalize()} {need_text} task. " + ('; '.join(best['factors']) or 'best match in your selection') + '.'
     return {'model_id': best['id'], 'reason': reason[:300], 'profile': {k: profile[k] for k in ('needs', 'complexity')},
             'method': method, 'ranking': [{k: r[k] for k in ('id', 'name', 'score')} for r in ranking[:4]],
-            'pool_size': len(choices), 'router_called': called}
+            'pool_size': len(choices), 'router_called': called, **({'note': profile['router_error']} if profile.get('router_error') else {})}

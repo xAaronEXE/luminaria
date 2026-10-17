@@ -9,6 +9,7 @@ from langgraph.types import interrupt, Command
 from .config import CONFIG, DATA, FULL_ACCESS
 from .store import uid,now
 from .work import WorkLog,region_for,plan_steps
+from .orchestration import NoEligibleModel
 from .checkpoint import ROUND_LIMIT,REPEAT_LIMIT,SIDE_EFFECTS,call_key,report
 
 class AlreadyDone(Exception):pass
@@ -453,12 +454,20 @@ class Engine:
                         content=last_user.get('content','')
                         task='\n'.join(p.get('text','') for p in content if p.get('type')=='text') if isinstance(content,list) else str(content)
                         if run.get('plan_only'): task='[Planning request] '+task
-                        decision=await choose(self.client,CONFIG['endpoint'],router,models,task,CONFIG['model'],CONFIG.get('orchestration_pool'),routing_evidence,vision)
+                        known=run.get('context') or {};needed=(known.get('used') or 0)+CONFIG['output_tokens'] if known.get('used') else 0
+                        decision=await choose(self.client,CONFIG['endpoint'],router,models,task,CONFIG['model'],CONFIG.get('orchestration_pool'),routing_evidence,vision,context_needed=needed)
                         selected=next((m for m in models if m['id']==decision['model_id']),None)
                         run['routing']=decision;routed=True
+                    except NoEligibleModel as error:
+                        self.work(run,'routing.completed',node='router',label='No eligible model',region='planning',status='error',evidence={'reason':str(error)[:300]})
+                        raise
                     except (ValueError,KeyError,TypeError,httpx.HTTPError) as error:
+                        from .orchestration import pool
+                        if not any(m['id']==CONFIG['model'] for m in pool(models,CONFIG.get('orchestration_pool'),vision)):
+                            self.work(run,'routing.completed',node='router',label='Routing failed',region='planning',status='error',evidence={'reason':str(error)[:300]})
+                            raise ValueError('Auto could not choose a model ('+str(error)[:160]+') and your selected model is outside your orchestration selection, so nothing was run. Pick a model in the composer or change Settings → Orchestration.') from error
                         selected=next((m for m in models if m['id']==CONFIG['model']),None)
-                        run['routing']={'model_id':CONFIG['model'],'reason':'Using your selected model because routing failed.','error':str(error)[:200]}
+                        run['routing']={'model_id':CONFIG['model'],'reason':'Routing failed, so Auto used your selected model, which is in your orchestration selection.','error':str(error)[:200]}
                     self.work(run,'routing.completed',node='router',label='Selected '+run['routing']['model_id'],region='planning',status='done',evidence={k:run['routing'][k] for k in ('model_id','reason','ranking','profile','method') if k in run['routing']}|{'model':run['routing']['model_id']})
                     run['last_tool_node']='router'
                 if selected:
