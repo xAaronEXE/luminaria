@@ -3,7 +3,7 @@ const vm=require('node:vm'),fs=require('node:fs'),assert=require('node:assert/st
 const source=fs.readFileSync(path.join(__dirname,'../web/core.js'),'utf8');
 function fixture({available=true,reduced=false}={}){
  const events=new Map(),frames=[],draws=[],uniforms=[];
- const el=()=>({style:{},listeners:{},setAttribute(){},prepend(){},append(){},remove(){this.removed=true},addEventListener(name,callback){this.listeners[name]=callback},querySelector(){return this.child??=el()},getBoundingClientRect(){return {x:200,width:900,bottom:100,top:700}}});
+ const el=()=>({style:{setProperty(name,value){this[name]=value}},listeners:{},setAttribute(){},prepend(){},append(){},remove(){this.removed=true},addEventListener(name,callback){this.listeners[name]=callback},querySelector(){return this.child??=el()},getBoundingClientRect(){return {x:200,width:900,bottom:100,top:700}}});
  const gl=new Proxy({getShaderParameter:()=>true,getProgramParameter:()=>true,getAttribLocation:()=>0,getUniformLocation:(_,name)=>name,drawArrays:(...args)=>draws.push(args),uniform1f:(...args)=>uniforms.push(args)},{get:(object,key)=>key in object?object[key]:()=>({})});
  const canvas=el();canvas.getContext=()=>available?gl:null;canvas.width=300;canvas.height=150;
  const elements=[],classes=new Set(),media={matches:reduced,addEventListener(name,fn){this.change=fn}};
@@ -28,6 +28,6 @@ function fixture({available=true,reduced=false}={}){
  f.send('studio-preferences',{motion:false});assert.equal(f.context.window.luminariaRenderStats.paused,true);assert.equal(f.context.window.luminariaRenderStats.fps,0);
 }
 {
- const f=fixture();f.send('studio-audio',{source:'output',rms:.7,bass:.6,mid:.3,high:.2});f.tick(100);assert(f.uniforms.some(([name,value])=>name==='amplitude'&&value>0));f.send('studio-appearance',{tokens:{entity:'#101010',particle:'#202020',lattice:'#303030',pathway:'#404040',glow:'#505050',bg:'#FFFFFF'}});f.tick(200);assert.equal(f.context.window.luminariaRenderStats.mode,'webgl');
+ const f=fixture();f.send('studio-audio',{source:'output',rms:.7,bass:.6,mid:.3,high:.2});f.tick(100);assert(f.uniforms.some(([name,value])=>name==='amplitude'&&value>0));f.send('studio-appearance',{tokens:{entity:'#101010',particle:'#202020',lattice:'#303030',pathway:'#404040',glow:'#505050',bg:'#FFFFFF'}});f.tick(200);assert.equal(f.context.window.luminariaRenderStats.mode,'webgl');assert.equal(f.canvas.style['--spatial-opacity'],'.85');assert(f.uniforms.some(([name,value])=>name==='alpha'&&value===.38));f.send('studio-appearance',{tokens:{bg:'#000000'}});f.tick(300);assert.equal(f.canvas.style['--spatial-opacity'],'.55');assert(f.uniforms.some(([name,value])=>name==='alpha'&&value===.14));
 }
 console.log('Renderer lifecycle passed: unavailable WebGL, context-loss loop termination, initial reduced motion, preference updates. DOM/WebGL boundaries are stubbed; native rendering remains a separate check.');
