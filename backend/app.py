@@ -559,8 +559,8 @@ async def voice_install_choice(id:str):
 
 @app.get('/api/preferences')
 async def preferences():
-    from .preferences import DEFAULTS
-    return DEFAULTS | store.setting('preferences',{})
+    from .preferences import DEFAULTS,migrate
+    return DEFAULTS | migrate(store.setting('preferences',{}))
 
 @app.post('/api/models/{id}/benchmark')
 async def benchmark_model(id:str):
@@ -635,7 +635,9 @@ async def model_remove(id:str, request:Request):
 @app.post('/api/preferences')
 async def preferences_save(request:Request):
     from .preferences import validate
-    values=store.setting('preferences',{}) | validate(await request.json())
+    values=validate(await request.json())
+    if 'appearance' in values: values['theme_mode']=values['appearance']['mode']
+    values=store.setting('preferences',{}) | values
     store.set_setting('preferences',values); return {'ok':True}
 
 @app.get('/api/accounts')

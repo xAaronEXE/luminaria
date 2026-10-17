@@ -9,6 +9,8 @@
  function fallback(reason){if(failed)return;failed=true;canvas.remove();button.remove();document.body.classList.add('entity-fallback');publish({mode:'fallback',reason,fps:0,paused:true,reducedMotion:reduce.matches});const layout=()=>{const main=document.querySelector('.main').getBoundingClientRect(),top=document.querySelector('.topbar').getBoundingClientRect().bottom,bottom=document.querySelector('.composer-area').getBoundingClientRect().top;status.style.left=(main.x+main.width/2)+'px';status.style.top=(top+Math.max(120,bottom-top)*.5)+'px';status.style.maxWidth=Math.max(240,main.width-48)+'px'};new ResizeObserver(layout).observe(document.querySelector('.main'));new ResizeObserver(layout).observe(document.querySelector('.composer-area'));window.addEventListener('resize',layout);layout();window.addEventListener('studio-voice-state',e=>status.querySelector('strong').textContent=e.detail)}
  if(!gl){fallback('3D graphics are unavailable. Voice and chat remain available.');return}
  let voice=0,targetVoice=0,t=0,last=0,dirty=true,paused=reduce.matches,px=0,py=0,region=-1,pulse=0,phase='idle';
+ const rgbOf=h=>h.slice(1,7).match(/../g).map(x=>parseInt(x,16)/255);let tint=rgbOf(window.luminariaAppearance?.current?.tokens.entity||'#808080');
+ window.addEventListener('studio-appearance',e=>{tint=rgbOf(e.detail.tokens.entity);dirty=true});
  let microphone={rms:0,bass:0,mid:0,high:0},output={rms:0,bass:0,mid:0,high:0};
  const envelope={rms:0,bass:0,mid:0,high:0};
  function shader(type,code){const s=gl.createShader(type);gl.shaderSource(s,code);gl.compileShader(s);if(!gl.getShaderParameter(s,gl.COMPILE_STATUS))throw Error(gl.getShaderInfoLog(s));return s}
@@ -82,7 +84,7 @@
  let sampleStart=performance.now(),sampleFrames=0;
  function frame(now){if(failed)return;requestAnimationFrame(frame);targetVoice=Number(document.body.dataset.voice==='conversation'&&!document.body.classList.contains('voice-review'));if(document.hidden){sampleStart=now;sampleFrames=0;return}const interval=targetVoice?1000/60:1000/30;if(now-last<interval||paused&&!dirty&&Math.abs(voice-targetVoice)<.001)return;const dt=Math.min((now-last)/1000,.05);last=now-(now-last)%interval;dirty=false;if(!paused)t+=dt;voice=paused?targetVoice:voice+(targetVoice-voice)*(1-Math.exp(-dt*6));pulse*=Math.exp(-dt*.25);for(const k of ['listen','think','speak','fault'])moods[k]=paused?moodTarget[k]:moods[k]+(moodTarget[k]-moods[k])*(1-Math.exp(-dt*4));moods.recoil*=paused?0:Math.exp(-dt*5);if(moods.recoil>.01)dirty=true;
  const ratio=Math.min(devicePixelRatio||1,1.5),w=Math.min(2560,Math.round(innerWidth*ratio)),h=Math.round(w*innerHeight/innerWidth);if(canvas.width!==w||canvas.height!==h){canvas.width=w;canvas.height=h;gl.viewport(0,0,w,h)}
- const styles=getComputedStyle(document.documentElement),color=styles.getPropertyValue('--glow').trim()||'#D4CEB8',rgb=color.slice(1).match(/../g).map(x=>parseInt(x,16)/255);gl.clearColor(0,0,0,0);gl.clear(gl.COLOR_BUFFER_BIT);gl.uniform3f(uniforms.tint,...rgb);
+ gl.clearColor(0,0,0,0);gl.clear(gl.COLOR_BUFFER_BIT);gl.uniform3f(uniforms.tint,...tint);
  const audio=envelope;for(const k of ['rms','bass','mid','high']){const target=Math.min(1,Math.max(microphone[k]||0,output[k]||0));envelope[k]=paused?target:envelope[k]+(target-envelope[k])*(1-Math.exp(-dt*(target>envelope[k]?18:7)))}
  for(const [k,v] of Object.entries({time:t,morph:voice,aspect:w/h,amplitude:audio.rms,bass:audio.bass,mid:audio.mid,high:audio.high,reduced:Number(paused),region,pulse,...moods}))gl.uniform1f(uniforms[k],v);
  gl.uniform2f(uniforms.pointer,px,py);
