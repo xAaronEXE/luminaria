@@ -49,11 +49,18 @@ async def status():
                 seen.add(token)
                 response=await client.get(ORIGIN+'/session',headers={'Authorization':'Bearer '+token})
                 if response.status_code==401:continue
-                response.raise_for_status();user=validate_user(response.json()['user'])
-                if any(u['provider']==user['provider'] for u in result['connections']):continue
-                result['connections'].append(user)
+                response.raise_for_status();payload=response.json();user=validate_user(payload['user'])
+                account=payload.get('account')
+                if account:
+                    if not re.fullmatch(r'[a-f0-9-]{32,36}',str(account.get('id',''))):raise ValueError('Invalid account returned by identity server')
+                    if result.get('account') and result['account']['id']!=account['id']:
+                        result.setdefault('unlinked_sessions',[]).append(user);continue
+                    result['account']={'id':account['id'],'name':str(account.get('name','Luminaria account'))[:120]}
+                for member in payload.get('connections',[user]):
+                    member=validate_user(member)
+                    if not any(u['provider']==member['provider'] for u in result['connections']):result['connections'].append(member)
             if result['connections']:
-                result.update(signed_in=True,user=result['connections'][0],message='Sign-ins verified by the identity server. These sign-in methods stay on this PC; they do not grant service-tool access.')
+                result.update(signed_in=True,user=result['connections'][0],message='Account verified by the identity server. Connected sign-in methods open the same Luminaria account; service tools require separate permission.')
     except ValueError as error:result['message']=str(error)
     except (httpx.HTTPError,KeyError,TypeError,AttributeError):result['message']='Cannot verify sign-in right now. Check your connection and try again.'
     return result
@@ -65,7 +72,9 @@ async def start(provider):
             if pending[key]['deadline']<time.monotonic():pending.pop(key)
         if len(pending)>=3:raise ValueError('Finish an existing sign-in or wait for it to expire')
         async with httpx.AsyncClient(timeout=15,follow_redirects=False) as client:
-            response=await client.post(ORIGIN+'/device/start',json={'provider':provider})
+            primary=read_session()
+            response=await client.post(ORIGIN+'/device/start',json={'provider':provider},headers={'Authorization':'Bearer '+primary} if primary else {})
+            if response.status_code==401:raise ValueError('Your current sign-in expired. Sign out, sign in again, then connect another method.')
             if response.status_code==503:raise ValueError('This sign-in provider has not been configured by the publisher yet')
             response.raise_for_status();flow=response.json()
         id=flow.get('device_id','');secret=flow.get('device_secret','')

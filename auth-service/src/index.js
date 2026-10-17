@@ -109,8 +109,17 @@ async function route(request,env){
  if(path==='/device/start'&&request.method==='POST'){
   const input=await body(request),provider=input.provider;
   if(!configured(env,provider))return json({error:'Sign-in provider is not configured'},503);
+  const authorization=request.headers.get('Authorization');let parentHash=null;
+  if(authorization){
+   const parent=authorization.match(/^Bearer ([a-f0-9]{64})$/)?.[1];
+   if(!parent)return json({error:'Valid sign-in required to link accounts'},401);
+   parentHash=await hash(parent);
+   const session=await env.DB.prepare('SELECT identity_id FROM sessions WHERE token_hash=? AND expires>?').bind(parentHash,time).first();
+   if(!session)return json({error:'Sign in again before connecting another sign-in method'},401);
+  }
   const id=random(),secret=random();
   await env.DB.prepare('INSERT INTO devices(id,secret_hash,provider,expires) VALUES(?,?,?,?)').bind(id,await hash(secret),provider,time+600).run();
+  if(parentHash)await env.DB.prepare('INSERT INTO device_links VALUES(?,?,?)').bind(id,parentHash,time+600).run();
   return json({device_id:id,device_secret:secret,verification_uri:url.origin+'/authorize?device='+id,expires_in:600,interval:5});
  }
  if(path==='/authorize'&&request.method==='GET'){
@@ -155,13 +164,24 @@ async function route(request,env){
   if(!device)return json({error:'Device request expired or consumed'},400);
   if(!device.identity_id)return json({status:'pending'},202);
   if(device.identity_id===DENIED){await env.DB.prepare('DELETE FROM devices WHERE id=? AND secret_hash=?').bind(input.device_id,digest).run();return json({error:'Sign-in was cancelled in the browser'},403);}
+  const link=await env.DB.prepare('SELECT session_hash FROM device_links WHERE device_id=? AND expires>?').bind(input.device_id,time).first();
+  await env.DB.prepare('INSERT OR IGNORE INTO account_members VALUES(?,?,?)').bind(device.identity_id,device.identity_id,device.provider).run();
+  const statements=[];
+  if(link){
+   const parent=await env.DB.prepare('SELECT i.id,i.provider FROM sessions s JOIN identities i ON i.id=s.identity_id WHERE s.token_hash=? AND s.expires>?').bind(link.session_hash,time).first();
+   if(!parent)return json({error:'Original sign-in expired; account was not connected'},403);
+   await env.DB.prepare('INSERT OR IGNORE INTO account_members VALUES(?,?,?)').bind(parent.id,parent.id,parent.provider).run();
+   statements.push(env.DB.prepare('UPDATE account_members SET account_id=(SELECT account_id FROM account_members WHERE identity_id=?) WHERE account_id=(SELECT account_id FROM account_members WHERE identity_id=?) AND EXISTS(SELECT 1 FROM sessions WHERE token_hash=? AND expires>?)').bind(parent.id,device.identity_id,link.session_hash,time));
+  }
   const token=random(),tokenHash=await hash(token),expires=time+7*86400;
   // Insertion and deletion share a transaction. Only one poll can obtain a session.
-  const results=await env.DB.batch([
-   env.DB.prepare('INSERT INTO sessions SELECT ?,identity_id,? FROM devices WHERE id=? AND secret_hash=? AND expires>? AND identity_id IS NOT NULL AND identity_id<>?').bind(tokenHash,expires,input.device_id,digest,time,DENIED),
-   env.DB.prepare('DELETE FROM devices WHERE id=? AND secret_hash=? AND identity_id IS NOT NULL').bind(input.device_id,digest)
-  ]);
-  if(results[0].meta.changes!==1)return json({error:'Device request already consumed'},400);
+  const sessionIndex=statements.length;let results;
+  try{results=await env.DB.batch([...statements,
+   env.DB.prepare('INSERT INTO sessions SELECT ?,identity_id,? FROM devices WHERE id=? AND secret_hash=? AND expires>? AND identity_id IS NOT NULL AND identity_id<>? AND (? IS NULL OR EXISTS(SELECT 1 FROM sessions WHERE token_hash=? AND expires>?))').bind(tokenHash,expires,input.device_id,digest,time,DENIED,link?.session_hash||null,link?.session_hash||null,time),
+   env.DB.prepare('DELETE FROM devices WHERE id=? AND secret_hash=? AND identity_id IS NOT NULL').bind(input.device_id,digest),
+   env.DB.prepare('DELETE FROM device_links WHERE device_id=?').bind(input.device_id)
+  ]);}catch{return json({error:'Account already has a different identity for this provider. No account was changed.'},409);}
+  if(results[sessionIndex].meta.changes!==1)return json({error:'Device request already consumed'},400);
   return json({access_token:token,token_type:'Bearer',expires_at:expires});
  }
  if(path==='/session'&&request.method==='GET'||path==='/logout'&&request.method==='POST'){
@@ -170,7 +190,11 @@ async function route(request,env){
   const digest=await hash(token);
   if(path==='/logout'){await env.DB.prepare('DELETE FROM sessions WHERE token_hash=?').bind(digest).run();return json({signed_out:true});}
   const user=await env.DB.prepare('SELECT i.id,i.provider,i.name,s.expires FROM sessions s JOIN identities i ON i.id=s.identity_id WHERE s.token_hash=? AND s.expires>?').bind(digest,time).first();
-  return user?json({user}):json({error:'Session expired or revoked'},401);
+  if(!user)return json({error:'Session expired or revoked'},401);
+  await env.DB.prepare('INSERT OR IGNORE INTO account_members VALUES(?,?,?)').bind(user.id,user.id,user.provider).run();
+  const account=await env.DB.prepare('SELECT i.id,i.name FROM account_members m JOIN identities i ON i.id=m.account_id WHERE m.identity_id=?').bind(user.id).first();
+  const connections=await env.DB.prepare('SELECT i.id,i.provider,i.name FROM identities i JOIN account_members m ON m.identity_id=i.id WHERE m.account_id=? ORDER BY i.created,i.id').bind(account.id).all();
+  return json({user,account,connections:connections.results});
  }
  return json({error:'Not found'},404);
 }
@@ -180,5 +204,5 @@ export default {
   console.error(JSON.stringify({event:release?'release_request_failed':'auth_request_failed',kind:error.name}));
   if(path.startsWith('/callback/'))return page('Sign-in could not be completed','The provider did not confirm your account. Start sign-in again from Luminaria.',400,clearCookie);
   return release?json({error:'The update service could not read the release. Try again later.'},502):json({error:'Sign-in could not be completed. Please start again.'},400);}},
- async scheduled(controller,env){await env.DB.batch(['devices','oauth_states','sessions','rate_limits'].map(table=>env.DB.prepare(`DELETE FROM ${table} WHERE expires<?`).bind(now())));}
+ async scheduled(controller,env){await env.DB.batch(['devices','device_links','oauth_states','sessions','rate_limits'].map(table=>env.DB.prepare(`DELETE FROM ${table} WHERE expires<?`).bind(now())));}
 };

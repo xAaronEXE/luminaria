@@ -13,18 +13,18 @@ const mf=new Miniflare(convertV4MiniflareOptions({modules:true,scriptPath:fileUR
  throw new Error('Unexpected outbound request');
 }}));
 const send=(path,body,headers={})=>mf.dispatchFetch('https://identity.test'+path,{method:body===undefined?'GET':'POST',headers:{...(body===undefined?{}:{'Content-Type':'application/json'}),...headers},body:body===undefined?undefined:JSON.stringify(body),redirect:'manual'});
-async function begin(provider){
- const started=await (await send('/device/start',{provider})).json();
+async function begin(provider,headers={}){
+ const started=await (await send('/device/start',{provider},headers)).json();
  const redirected=await send('/authorize?device='+started.device_id);
  assert.equal(redirected.status,302);
  return {started,oauth:new URL(redirected.headers.get('location')),cookie:redirected.headers.get('set-cookie').split(';')[0]};
 }
-async function signIn(provider){
- const {started,oauth,cookie}=await begin(provider);
+async function signIn(provider,headers={}){
+ const {started,oauth,cookie}=await begin(provider,headers);
  const page=await send(`/callback/${provider}?code=code-${provider}&state=${oauth.searchParams.get('state')}`,undefined,{Cookie:cookie});
  assert.equal(page.status,200);assert.match(page.headers.get('content-type'),/text\/html/);assert.match(await page.text(),/Signed in to Luminaria/);
  const session=await (await send('/device/poll',started)).json();
- return {oauth,user:(await (await send('/session',undefined,{Authorization:'Bearer '+session.access_token})).json()).user};
+ return {oauth,session,...await (await send('/session',undefined,{Authorization:'Bearer '+session.access_token})).json()};
 }
 try{
  const db=await mf.getD1Database('DB');
@@ -87,5 +87,27 @@ try{
  assert.equal((await db.prepare("SELECT count(*) AS n FROM sessions WHERE identity_id='denied'").first()).n,0);
 
  assert.deepEqual(intercepted,['https://github.com/login/oauth/access_token','https://api.github.com/user','https://oauth2.googleapis.com/token','https://openidconnect.googleapis.com/v1/userinfo','https://discord.com/api/oauth2/token','https://discord.com/api/users/@me']);
+ // Account linking proves both sessions and creates one canonical account.
+ assert.equal((await send('/device/start',{provider:'google'},{Authorization:'Bearer '+'0'.repeat(64)})).status,401);
+ const linked=await signIn('google',{Authorization:'Bearer '+discord.session.access_token});
+ assert.equal(linked.account.id,discord.account.id);
+ assert.deepEqual(new Set(linked.connections.map(x=>x.provider)),new Set(['discord','google']));
+ const googleAgain=await signIn('google');
+ assert.equal(googleAgain.account.id,discord.account.id);
+ const revokedParent=await begin('github',{Authorization:'Bearer '+linked.session.access_token});
+ await send('/logout',{}, {Authorization:'Bearer '+linked.session.access_token});
+ const deniedLink=await send(`/callback/github?code=code-github&state=${revokedParent.oauth.searchParams.get('state')}`,undefined,{Cookie:revokedParent.cookie});
+ assert.equal(deniedLink.status,200);
+ assert.equal((await send('/device/poll',revokedParent.started)).status,403);
+ const foreignId=crypto.randomUUID(),foreignToken='e'.repeat(64);
+ const foreignHash=Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256',new TextEncoder().encode(foreignToken))),x=>x.toString(16).padStart(2,'0')).join('');
+ await db.prepare('INSERT INTO identities VALUES(?,?,?,?,?)').bind(foreignId,'google','another-google-user','Other account',1).run();
+ await db.prepare('INSERT INTO account_members VALUES(?,?,?)').bind(foreignId,foreignId,'google').run();
+ await db.prepare('INSERT INTO sessions VALUES(?,?,?)').bind(foreignHash,foreignId,Math.floor(Date.now()/1000)+600).run();
+ const conflict=await begin('google',{Authorization:'Bearer '+foreignToken});
+ const conflictPage=await send(`/callback/google?code=code-google&state=${conflict.oauth.searchParams.get('state')}`,undefined,{Cookie:conflict.cookie});
+ assert.equal(conflictPage.status,200);assert.equal((await send('/device/poll',conflict.started)).status,409);
+ assert.equal((await db.prepare('SELECT account_id FROM account_members WHERE identity_id=?').bind(foreignId).first()).account_id,foreignId);
+
  console.log('Identity flow passed: GitHub, Google and Discord pairing, cookie, PKCE, callback replay, one-time claim, server session, hashed storage, logout, expiry, browser cancellation and forged refusal. Provider responses were mocked; no real provider login claimed.');
 }finally{await mf.dispose();}

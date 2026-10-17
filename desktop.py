@@ -26,7 +26,9 @@ def main():
     # Webview/uvicorn may write diagnostics even from a windowed executable.
     if sys.stdout is None: sys.stdout=open(DATA/'stdout.log','a',encoding='utf-8')
     if sys.stderr is None: sys.stderr=open(DATA/'stderr.log','a',encoding='utf-8')
-    url='http://127.0.0.1:3210'
+    port=int(os.environ.get('STUDIO_PORT','3210'))
+    if not 1024<=port<=65535:raise ValueError('STUDIO_PORT must be between 1024 and 65535')
+    url=f'http://127.0.0.1:{port}'
     already=False
     try:
         with urllib.request.urlopen(url+'/api/bootstrap',timeout=2) as r: already='token' in json.load(r)
@@ -38,7 +40,7 @@ def main():
         except Exception as e: logging.warning('Model manager: %s',e)
         import uvicorn
         from backend.app import app
-        server=uvicorn.Server(uvicorn.Config(app,host='127.0.0.1',port=3210,log_level='warning',access_log=False,log_config=None))
+        server=uvicorn.Server(uvicorn.Config(app,host='127.0.0.1',port=port,log_level='warning',access_log=False,log_config=None))
         thread=threading.Thread(target=server.run,daemon=True);thread.start()
         for _ in range(200):
             if server.started:break
