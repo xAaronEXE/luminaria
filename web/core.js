@@ -1,7 +1,6 @@
 (()=>{
  const canvas=document.createElement('canvas');canvas.id='ambient-field';canvas.setAttribute('aria-hidden','true');document.body.prepend(canvas);
  const caption=document.createElement('div');caption.className='entity-caption';caption.setAttribute('aria-hidden','true');caption.innerHTML='<span>Local activity</span><strong>Idle</strong><small>Observed execution, not hidden thoughts</small>';document.body.append(caption);
- const button=document.createElement('button');button.id='ambient-motion';button.className='text-button';document.querySelector('.sidebar-bottom').prepend(button);
  const status=document.createElement('div');status.className='entity-status';status.setAttribute('aria-hidden','true');status.innerHTML='<i></i><span>Ready</span>';document.body.append(status);
  const reduce=matchMedia('(prefers-reduced-motion: reduce)'),gl=canvas.getContext('webgl',{alpha:true,antialias:true,powerPreference:'low-power'});
  const publish=detail=>{window.luminariaRenderStats=detail;window.dispatchEvent(new CustomEvent('studio-render-stats',{detail}))};
@@ -9,14 +8,12 @@
  const resources={buffers:[],shaders:[],program:null};
  const dispose=()=>{if(!gl)return;for(const b of resources.buffers)gl.deleteBuffer(b);for(const s of resources.shaders)gl.deleteShader(s);if(resources.program)gl.deleteProgram(resources.program)};
  function fallback(reason){if(failed)return;failed=true;if(typeof cancelAnimationFrame==='function')cancelAnimationFrame(frameId);dispose();canvas.remove();document.body.classList.add('entity-fallback');caption.querySelector('strong').textContent=reason;publish({mode:'fallback',reason,fps:0,paused:true,reducedMotion:reduce.matches});window.dispatchEvent(new CustomEvent('studio-spatial-fallback',{detail:reason}))}
- const label=()=>{button.textContent=reduce.matches?'System reduced motion':paused?'Resume background motion':'Pause background motion';button.disabled=reduce.matches;button.setAttribute('aria-pressed',String(paused))};
- button.onclick=safe(async()=>savePrefs({motion:!studioPrefs.motion}));
- window.addEventListener('studio-preferences',e=>{paused=reduce.matches||e.detail.motion===false;dirty=true;label();publish({...window.luminariaRenderStats,paused,fps:paused?0:window.luminariaRenderStats?.fps||0})});
- reduce.addEventListener('change',()=>{paused=reduce.matches||window.studioPrefs?.motion===false;dirty=true;label()});
+ window.addEventListener('studio-preferences',e=>{paused=reduce.matches||e.detail.motion===false;dirty=true;publish({...window.luminariaRenderStats,paused,fps:paused?0:window.luminariaRenderStats?.fps||0})});
+ reduce.addEventListener('change',()=>{paused=reduce.matches||window.studioPrefs?.motion===false;dirty=true});
  let mood='idle',voiceText='',audio={rms:0,bass:0,mid:0,high:0},audioFrames={},voice=false;
  window.addEventListener('studio-audio',e=>{const d=e.detail;if(d&&typeof d==='object')audioFrames[d.source]={...d,at:performance.now()};else audioFrames={};if(!paused)dirty=true});
  window.addEventListener('studio-voice-state',e=>{const text=String(e.detail);mood=/error|fail/i.test(text)?'error':/interrupted/i.test(text)?'interrupted':/^speaking/i.test(text)?'speaking':/^listening/i.test(text)?'listening':/thinking|preparing|transcribing/i.test(text)?'generating':'idle';voiceText=text;caption.querySelector('strong').textContent=text;dirty=true});
- label();if(!gl){fallback('3D unavailable · use the activity outline');return}
+ if(!gl){fallback('3D unavailable · use the activity outline');return}
  try{
  function shader(type,code){const s=gl.createShader(type);resources.shaders.push(s);gl.shaderSource(s,code);gl.compileShader(s);if(!gl.getShaderParameter(s,gl.COMPILE_STATUS))throw Error(gl.getShaderInfoLog(s));return s}
  const program=gl.createProgram();resources.program=program;

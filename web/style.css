@@ -13,7 +13,7 @@
 .sidebar,.inspector{background:color-mix(in srgb,var(--bg) 94%,transparent)}.topbar{background:color-mix(in srgb,var(--bg) 90%,transparent)}
 .composer-area{background:linear-gradient(transparent,var(--bg) 26%)}
 .welcome{padding-top:clamp(54px,12vh,160px)}.welcome h1{font-size:clamp(36px,4vw,58px)}
-#ambient-motion{font-size:12px;justify-content:flex-start;padding:10px}
+
 .voice-toggle{border:1px solid var(--line);border-radius:8px;background:transparent;color:var(--text);padding:7px 10px;cursor:pointer;font:inherit;font-size:12px}
 .voice-toggle[aria-pressed=true]{color:var(--accent);border-color:var(--accent)}
 .voice-bar{display:flex;align-items:center;gap:10px;padding:10px 12px;margin-bottom:9px;border:1px solid var(--line);border-radius:10px;background:var(--raised);font-size:12px}
@@ -78,3 +78,10 @@ body[data-voice=conversation]:not(.voice-review) .inspector-content,body[data-vo
 .plan-steps li p{grid-column:2/4;margin:0;color:var(--muted);font-size:12px}
 .plan-steps li small{grid-column:2/4;color:var(--dim);font-size:11px}
 .message.checkpoint .markdown{border-left:2px solid var(--accent);padding-left:12px}
+.sidebar-bottom [data-panel=memory] .icon{color:var(--memory)}
+.sidebar-bottom [data-panel=tools] .icon,.sidebar-bottom [data-panel=integrations] .icon,.sidebar-bottom [data-panel=skills] .icon{color:var(--tools)}
+.tool-state.done{color:var(--success)}
+.tool-state.running,.tool-state.waiting,.tool-state.requested,.tool-state.interrupted{color:var(--warning)}
+.badge.good{color:var(--success)}
+.badge.warn{color:var(--warning)}
+.message.checkpoint .markdown{border-left-color:var(--warning)}
