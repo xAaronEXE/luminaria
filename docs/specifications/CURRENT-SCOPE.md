@@ -204,7 +204,9 @@ Release blockers:
 - Aaron's packaged Windows acceptance: real model/tool workflow, real microphone and
   output reactivity, voice/task continuity, barge-in and sustained performance.
 - Real OS reduced-motion changes and update/persistence acceptance on Windows.
-- 0.2.8 must remain unpublished until implementation is accepted.
+- 0.2.8 was published as an unsigned testing release; it does not certify the
+  checks above. 0.2.9 (update handoff, light-mode lattice, task overview redesign)
+  remains a testing release until the same acceptance is done.
 
 ## Locations
 
