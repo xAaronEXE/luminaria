@@ -194,8 +194,11 @@ async def _fetch_once(client, url, started, attempts):
     from .sources import document
     source=document(text,final,limit=TEXT_LIMIT)
     source.pop('status');source.pop('source')
-    policy=response.headers.get('cache-control','').lower()
-    cacheable=not response.headers.get('set-cookie') and not any(v in policy for v in ('private','no-store','no-cache')) and not urlsplit(final).query
+    source.update(representation='extracted_text',revision_kind='extracted_text_sha256')
+    def sensitive(hop):
+        policy=hop.headers.get('cache-control','').lower()
+        return hop.headers.get('set-cookie') or hop.request.headers.get('cookie') or hop.request.headers.get('authorization') or any(v in policy for v in ('private','no-store','no-cache')) or urlsplit(str(hop.url)).query
+    cacheable=not any(sensitive(hop) for hop in [*response.history,response])
     return envelope('ok', final, started, attempts, content_type='application/pdf' if pdf else (kind or 'text/html'), title=title or None,
                     redirected=final != url or None, _cacheable=cacheable, **source, **extra)
 

@@ -98,3 +98,6 @@ body[data-voice=conversation]:not(.voice-review) .inspector-content,body[data-vo
 .task-progress[hidden]{display:none}
 .approval-effect,.approval-target{font-size:13px;line-height:1.55;overflow-wrap:anywhere}
 .approval details summary{cursor:pointer;font-size:var(--task-label-size);padding:8px 0}
+.session-meter,.tool-state,.activity-item>small{font-size:12px}
+.workflow-step{margin:16px 0;padding:16px;border:1px solid var(--line);border-radius:var(--radius)}
+.skill-runtime-detail{margin-top:8px;font-size:12px}

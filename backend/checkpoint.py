@@ -7,9 +7,9 @@ import hashlib, json
 
 ROUND_LIMIT = 18
 REPEAT_LIMIT = 3
-SIDE_EFFECTS = frozenset({'write_file', 'edit_file', 'delete_file', 'run_command', 'run_code', 'web_fetch', 'remember', 'create_schedule'})
+SIDE_EFFECTS = frozenset({'write_file', 'edit_file', 'delete_file', 'run_command', 'run_code', 'web_fetch', 'remember', 'create_schedule','create_file_workflow'})
 CHANGES = frozenset({'write_file', 'edit_file', 'delete_file'})
-OTHER_EFFECTS = frozenset({'run_command', 'run_code', 'remember', 'create_schedule', 'update_brief'})
+OTHER_EFFECTS = frozenset({'run_command', 'run_code', 'remember', 'create_schedule', 'update_brief','create_file_workflow'})
 
 def result_data(action):
     result = action.get('result')

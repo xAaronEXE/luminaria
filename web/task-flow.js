@@ -15,7 +15,7 @@
   if(status){
    let progress=document.querySelector('#task-progress');
    if(!progress){progress=document.createElement('div');progress.id='task-progress';progress.className='task-progress';progress.setAttribute('role','status');progress.setAttribute('aria-live','polite');status.before(progress)}
-   const run=state.run,actions=state.actions||[],current=actions.find(a=>a.status==='running'),latest=[...actions].reverse().find(a=>['done','error','interrupted'].includes(a.status));
+   const run=state.run,actions=(state.actions||[]).filter(a=>!run||a.created>=run.started),current=actions.find(a=>a.status==='running'),latest=[...actions].reverse().find(a=>['done','error','interrupted'].includes(a.status));
    progress.hidden=!run||Boolean(run.finished);
    const label=current?'Running '+current.name.replaceAll('__',' · '):run?.phase||'';
    const result=latest?' · Last action '+(latest.status==='done'?'reported success':latest.status==='interrupted'?'has an uncertain outcome':'failed'):'';
@@ -34,4 +34,20 @@
   if(path&&filePath==='.'&&/^[a-f0-9]{32}$/i.test(path.textContent)){path.title=state.workspace||'';path.textContent='This profile’s files'}
  }
  window.addEventListener('studio-state',update);
+ const originalSkills=renderSkills;
+ renderSkills=async function(){
+  await originalSkills();const rows=await api('/skills');
+  if(!document.querySelector('#skill-groups'))return;
+  function annotate(){
+   document.querySelectorAll('.skill-row').forEach(card=>{
+    if(card.querySelector('.skill-runtime-detail'))return;
+    const name=card.querySelector('[data-skill]')?.dataset.skill,row=rows.find(s=>s.name===name);if(!row)return;
+    const details=document.createElement('details');details.className='skill-runtime-detail';const title=document.createElement('summary');title.textContent=row.last_run?'Last workflow: '+row.last_run.state:'Prerequisites and output checks';details.append(title);
+    for(const text of [row.last_run?.reason,row.reason,'Inputs: '+row.inputs,'Outputs: '+row.outputs,row.permissions].filter(Boolean)){const p=document.createElement('p');p.className='small-note';p.textContent=text;details.append(p)}
+    card.append(details);
+   });
+  }
+  annotate();document.querySelector('#filter-skills')?.addEventListener('input',annotate);
+  document.querySelectorAll('[data-skill-show]').forEach(b=>b.addEventListener('click',annotate));
+ };
 })();

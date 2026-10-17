@@ -19,6 +19,12 @@ class SourceTests(unittest.TestCase):
   self.assertEqual(result['representation'],'verbatim')
  def test_blank_queries_are_rejected(self):
   with self.assertRaises(ValueError):matches('anything','a',' ')
+ def test_saved_json_can_be_retrieved_in_bounded_original_passages(self):
+  from backend.sources import saved_object
+  raw=json.dumps({'text':'prefix '*5000+'exact original reference'})
+  first=saved_object(raw,'action:1','output',0,1000);later=saved_object(raw,'action:1','output',len(raw)-100,100)
+  self.assertNotIn('output',first);self.assertTrue(first['truncated'])
+  self.assertIn('exact original reference',later['text']);self.assertEqual(first['revision'],later['revision'])
 
 class ContinuationTests(unittest.IsolatedAsyncioTestCase):
  async def test_reordered_arguments_do_not_repeat_a_successful_write(self):
@@ -54,6 +60,17 @@ class ContinuationTests(unittest.IsolatedAsyncioTestCase):
   finally:await h.engine.client.aclose();h.close()
 
 class CacheTests(unittest.IsolatedAsyncioTestCase):
+ async def test_redirect_cookie_is_not_cached_as_a_public_page(self):
+  original=httpx.AsyncClient;hits=[]
+  def handler(request):
+   hits.append(str(request.url))
+   if request.url.path=='/start':return httpx.Response(302,headers={'location':'/article','set-cookie':'session=fixture; Path=/'})
+   return httpx.Response(200,text='Account-dependent extracted page content. '*8,headers={'content-type':'text/plain'})
+  def client(**kwargs):return original(transport=httpx.MockTransport(handler),**kwargs)
+  retrieval._cache.clear()
+  with patch.object(retrieval.httpx,'AsyncClient',client):
+   await retrieval.fetch('https://site.test/start');await retrieval.fetch('https://site.test/start')
+  self.assertEqual(len(hits),4);self.assertEqual(retrieval._cache,{})
  async def test_public_default_client_caches_and_refreshes_but_sensitive_responses_do_not(self):
   original=httpx.AsyncClient;hits=[]
   def handler(request):

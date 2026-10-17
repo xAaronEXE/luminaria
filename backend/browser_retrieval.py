@@ -17,5 +17,5 @@ async def fetch(connector,url):
     if result.get('isError'):return {'status':'error','category':'browser_snapshot','source':url,'message':'The browser could not read the page. Complete any sign-in or permission dialog yourself.'}
     text='\n'.join(p.get('text','') for p in result.get('content',[]) if p.get('type')=='text').strip()
     if not text:return {'status':'empty','source':url,'message':'The browser returned no readable snapshot.'}
-    return {**document(text,url,limit=24000),'retrieval_method':'authorized_browser_snapshot','cached':False,
+    return {**document(text,url,limit=24000),'representation':'browser_snapshot','retrieval_method':'authorized_browser_snapshot','cached':False,
             'note':'Snapshot from the connected browser after requested navigation. No login or access-control bypass was performed.'}

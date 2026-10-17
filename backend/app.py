@@ -51,6 +51,7 @@ async def lifespan(app):
     task.cancel()
     with contextlib.suppress(asyncio.CancelledError): await task
     if tuning is not None: await tuning.cancel()
+    if file_workflows is not None: await file_workflows.close()
     await engine.close()
     await conn.close()
     for c in connectors.values(): await c.close()
@@ -911,6 +912,60 @@ async def insights_delete(request:Request):
     return result
 
 tuning=None
+file_workflows=None
+
+def workflow_service():
+    global file_workflows
+    if file_workflows is None:
+        from .file_workflows import Workflows
+        file_workflows=Workflows(store)
+    return file_workflows
+
+@app.get('/api/file-workflows')
+async def workflow_list():
+    from .config import FULL_ACCESS
+    service=workflow_service()
+    return {'workflows':service.list(),'active':service.active,'full_access':FULL_ACCESS}
+
+@app.post('/api/file-workflows')
+async def workflow_create(request:Request):
+    from .file_workflows import create
+    return create(store,await request.json())
+
+@app.post('/api/file-workflows/{id}/run')
+async def workflow_run(id:str,request:Request):
+    global benchmarking
+    if benchmarking or any(not r.get('finished') for r in engine.runs.values()):raise ValueError('Finish active work before starting a file workflow.')
+    body=await request.json()
+    if body.get('approved') is not True:raise ValueError('Review the saved steps and explicitly approve execution.')
+    result=workflow_service().start(id,body.get('all_steps') is True)
+    # Reuse the existing inference/model-management exclusion while files are changing.
+    benchmarking=True
+    def finished(task):
+        global benchmarking
+        benchmarking=False;broadcast({'type':'changed'})
+    workflow_service().task.add_done_callback(finished)
+    return result
+
+@app.post('/api/file-workflows/{id}/stop')
+async def workflow_stop(id:str):
+    if workflow_service().active not in (None,id):raise ValueError('A different workflow is active.')
+    return workflow_service().stop()
+
+@app.post('/api/file-workflows/{id}/inspect')
+async def workflow_inspect(id:str):
+    if workflow_service().busy():raise ValueError('Stop or finish the active workflow before inspecting recovery.')
+    from .file_workflows import get
+    return workflow_service().recover(get(store,id))
+
+@app.post('/api/file-workflows/{id}/accept')
+async def workflow_accept(id:str):return workflow_service().accept(id)
+
+@app.post('/api/file-workflows/{id}/restore')
+async def workflow_restore(id:str,request:Request):
+    body=await request.json()
+    if body.get('approved') is not True:raise ValueError('Explicit restoration approval is required.')
+    return workflow_service().restore(id,body.get('step'))
 
 def tuning_service():
     global tuning

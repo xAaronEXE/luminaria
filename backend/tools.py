@@ -9,6 +9,7 @@ BUILTINS=[
  schema('list_skills','List installed reusable workflow skills.',{},[],'auto','skills'),
  schema('load_skill','Read a named workflow skill before using it.',{'name':S},['name'],'auto','skills'),
  schema('finish_skill','Verify output files and finish a loaded skill. Supply successful evidence action IDs from this run. File readback/hashes establish existence, not semantic correctness.',{'name':S,'outputs':{'type':'array','items':S,'minItems':1,'maxItems':10},'evidence_actions':{'type':'array','items':S,'minItems':1,'maxItems':30}},['name','outputs','evidence_actions'],'auto','skills'),
+ schema('create_file_workflow','Propose a bounded file workflow for user review in Tools → File workflows. Does not execute file steps. Declare the user objective, allowed workspace locations, completion criteria, and read/create/edit/trash steps. No shell, permanent deletion, or application control.',{'objective':S,'completion_criteria':S,'allowed_locations':{'type':'array','items':S,'minItems':1,'maxItems':10},'steps':{'type':'array','minItems':1,'maxItems':50,'items':{'type':'object','properties':{'action':{'type':'string','enum':['read','create','edit','trash']},'path':S,'content':S,'old_text':S,'new_text':S},'required':['action','path'],'additionalProperties':False}}},['objective','completion_criteria','allowed_locations','steps'],'approve','planning'),
  schema('list_files','List a workspace directory.',{'path':S}),
  schema('read_file','Read a UTF-8 workspace file, with optional offset and limit in characters.',{'path':S,'offset':I,'limit':I},['path']),
  schema('write_file','Create or replace a UTF-8 workspace file. Requires user approval.',{'path':S,'content':S},['path','content'],'approve'),
@@ -21,7 +22,7 @@ BUILTINS=[
  schema('web_fetch','Fetch a public HTTP(S) page or PDF. Network request requires approval. browser_fallback explicitly authorizes navigation and snapshot in the connected browser if JavaScript or sign-in is needed; never completes login dialogs or bypasses blocks. Public cache is bypassed for sensitive responses.',{'url':S,'refresh':{'type':'boolean'},'browser_fallback':{'type':'boolean'}},['url'],'approve','research'),
  schema('discover_tools','Load MCP tool schemas for browser or windows. Call before using those tools. Use category all to list every connected tool.',{'category':{'type':'string','enum':['browser','windows','all']}},['category'],'auto','system'),
  schema('memory_search','Search durable cross-chat memory and full saved conversation text by literal query.',{'query':S},['query'],'auto','memory'),
- schema('history_read','Retrieve saved message or complete tool output by ID. Original history remains after compaction.',{'message_id':I,'action_id':S},[],'auto','memory'),
+ schema('history_read','Retrieve bounded verbatim saved message or tool-output JSON by ID, offset and limit in characters. Small results include parsed original data; large results return excerpts with stable references. Original history remains on disk.',{'message_id':I,'action_id':S,'offset':I,'limit':I},[],'auto','memory'),
  schema('remember','Save an explicit durable fact, preference or project decision with provenance. Requires approval.',{'title':S,'content':S},['title','content'],'approve','memory'),
  schema('update_plan','Share or revise your plan for a multi-step task. The user sees it as your stated plan, separate from executed actions, and it is saved with the chat. Send the full plan each time. Mark one step active while you work on it; list depends_on only for real dependencies.',{'goal':{'type':'string','description':'One sentence: what the finished work achieves.'},'steps':{'type':'array','minItems':1,'maxItems':24,'items':{'type':'object','properties':{'id':S,'title':S,'detail':{'type':'string','description':'What will be done and how it will be checked.'},'status':{'type':'string','enum':['pending','active','done','blocked','skipped']},'depends_on':{'type':'array','items':S}},'required':['id','title','status'],'additionalProperties':False}}},['steps'],'auto','planning'),
  schema('update_brief','Propose changes to the pinned working brief for this chat when the user states a goal, constraint, decision, pending item or reference to keep. The user sees and can edit it. You cannot add permissions or change entries the user wrote. Never copy passwords, keys or tokens; record where they are kept instead.',{'changes':{'type':'array','minItems':1,'maxItems':8,'items':{'type':'object','properties':{'op':{'type':'string','enum':['add','replace','remove']},'id':{'type':'string','description':'Entry id for replace or remove.'},'section':{'type':'string','enum':['goals','constraints','decisions','pending','references']},'text':{'type':'string','description':'One short sentence, under 300 characters.'}},'required':['op'],'additionalProperties':False}}},['changes'],'auto','planning'),
@@ -90,7 +91,7 @@ class Toolbox:
             result={'status':'cancelled'}; raise
         except Exception as e:
             category='not_found' if isinstance(e,FileNotFoundError) else 'permissions' if isinstance(e,PermissionError) else 'unsupported' if isinstance(e,UnicodeError) else 'invalid_input' if isinstance(e,ValueError) else 'retrieval_failed'
-            result={'status':'error','category':category,'source':RETRIEVAL[name],'message':str(e)[:300],'attempts':1,'truncated':False}
+            result={'status':'error','category':category,'source':RETRIEVAL[name],'message':str(e)[:300],'attempts':1,'truncated':False,'retrieved_at':round(time.time(),3),'duration_ms':int((time.monotonic()-started)*1000)}
             return result
         finally:
             r=result if isinstance(result,dict) else {}
@@ -124,6 +125,10 @@ class Toolbox:
         if name=='finish_skill':
             from .skill_runs import complete
             return complete(self.store,a['name'],a['outputs'],a['evidence_actions'],run)
+        if name=='create_file_workflow':
+            from .file_workflows import create
+            plan=create(self.store,a)
+            return {'workflow':plan['id'],'state':plan['state'],'steps':len(plan['steps']),'message':'Plan saved, not executed. Review it in Tools → File workflows before running steps.'}
         if '__' in name:
             group,tool=name.split('__',1)
             return await self.connectors[group].call(tool,a)
@@ -133,7 +138,7 @@ class Toolbox:
         if name=='read_file':
             p=workspace_path(a['path'])
             if p.stat().st_size>8_000_000: raise ValueError('File is larger than 8 MB; use a targeted script')
-            text=p.read_text('utf-8'); offset=max(0,a.get('offset',0)); limit=min(max(a.get('limit',16000),1),32000)
+            text=p.read_bytes().decode('utf-8'); offset=max(0,a.get('offset',0)); limit=min(max(a.get('limit',16000),1),32000)
             from .sources import document
             return {'path':a['path'],**document(text,'workspace:'+a['path'],offset,limit)}
         if name=='write_file':
@@ -154,23 +159,8 @@ class Toolbox:
             backup=DATA/'backups'/run['id']; backup.mkdir(parents=True,exist_ok=True)
             shutil.copy2(p,backup/(str(time.time_ns())+'-'+p.name)); p.unlink(); return {'deleted':str(p),'backup':str(backup)}
         if name=='search_files':
-            from .sources import matches
-            if not isinstance(a.get('query'),str) or not a['query'].strip() or len(a['query'])>500: raise ValueError('Provide a non-empty literal query of at most 500 characters')
-            root=workspace_path(); result=[]; count=0
-            unreadable=0
-            for p in root.rglob('*'):
-                count+=1
-                if count>10000: break
-                if any(v in p.parts for v in ['node_modules','.git','.venv','venv']): continue
-                if not p.is_file() or p.stat().st_size>1_000_000 or not p.resolve().is_relative_to(root): continue
-                try:
-                    relative=str(p.relative_to(root))
-                    result.extend({'path':relative,**m} for m in matches(p.read_text('utf-8'),'workspace:'+relative,a['query'],80-len(result)))
-                    if len(result)>=80: return {'status':'ok','source':'workspace files','matches':result,'truncated':True,'message':'Showing the first 80 matches; search a more specific phrase for the rest.'}
-                except (UnicodeError,OSError): unreadable+=1;continue
-            if result: return {'status':'ok','source':'workspace files','matches':result,'truncated':False}
-            if count>10000 or unreadable: return {'status':'error','category':'incomplete_scan','source':'workspace files','matches':[],'truncated':count>10000,'unreadable':unreadable,'message':'No match in the readable files scanned; the scan was incomplete. Narrow the folder or inspect unreadable sources.'}
-            return {'status':'empty','source':'workspace files','matches':[],'scanned_entries':min(count,10000),'message':'No workspace text file contains this exact text. Try a shorter phrase or list_files to check the folder.'}
+            from .sources import search_workspace
+            return await search_workspace(workspace_path(),a['query'])
         if name=='run_command': return await self.process(['powershell.exe','-NoProfile','-NonInteractive','-Command',a['command']],a.get('timeout',60))
         if name=='run_code':
             folder=workspace_path('.studio-scripts'); folder.mkdir(exist_ok=True)
@@ -202,12 +192,17 @@ class Toolbox:
             found=bool(memories or history)
             return {'status':'ok' if found else 'empty','source':'memory and saved history','memories':memories,'history':history,**({} if found else {'message':'No saved memory or message contains this exact text. Try a shorter or different phrase.'})}
         if name=='history_read':
+            from .sources import saved_object
+            offset=a.get('offset',0);limit=a.get('limit',6000)
             if a.get('message_id'):
-                rows=self.store.rows('SELECT payload FROM messages WHERE id=?',(a['message_id'],)); return {'status':'ok','source':'saved message','message':json.loads(rows[0]['payload'])} if rows else {'status':'error','category':'not_found','source':'saved message','message':'No saved message has this ID.'}
+                rows=self.store.rows('SELECT payload FROM messages WHERE id=?',(a['message_id'],)); return saved_object(rows[0]['payload'],'message:'+str(a['message_id']),'message',offset,limit) if rows else {'status':'error','category':'not_found','source':'saved message','message':'No saved message has this ID.'}
             if a.get('action_id'):
                 id=a['action_id']
                 if not re.fullmatch('[a-f0-9]{32}',id): raise ValueError('Invalid action ID')
-                p=DATA/'tool-outputs'/(id+'.json'); return {'status':'ok','source':'saved tool output','output':json.loads(p.read_text('utf-8'))} if p.exists() else {'status':'error','category':'not_found','source':'saved tool output','message':'No saved output exists for this action ID.'}
+                p=DATA/'tool-outputs'/(id+'.json')
+                if not p.exists():return {'status':'error','category':'not_found','source':'saved tool output','message':'No saved output exists for this action ID.'}
+                if p.stat().st_size>32_000_000:return {'status':'error','category':'too_large','source':'saved tool output','message':'Saved output exceeds 32 MB. Download it from Activity and inspect a targeted part.'}
+                return saved_object(p.read_bytes().decode('utf-8'),'action:'+id,'output',offset,limit)
             raise ValueError('Supply message_id or action_id')
         if name=='remember':
             if len(a['content'])>6000 or sum(len(m['content']) for m in self.store.memory())+len(a['content'])>16000: raise ValueError('Pinned memory is full; shorten existing memories in the UI')

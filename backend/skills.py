@@ -1,5 +1,5 @@
 import json,re
-from .config import DATA,ROOT,external_tools_enabled
+from .config import DATA,ROOT,CONFIG,external_tools_enabled
 
 NEEDS={'execution':'Computer and command tools (Settings → Tools & permissions)',
        'github':'GitHub integration','browser':'Browser connector','windows':'Windows desktop connector'}
@@ -36,6 +36,10 @@ def preflight(name,connectors=None):
     if not isinstance(name,str) or not re.fullmatch(r'[a-z0-9-]{1,60}',name): raise ValueError('Invalid skill name')
     row=next((s for s in catalog(connectors) if s['name']==name),None)
     if row is None:raise ValueError('Skill not found')
+    from pathlib import Path
+    try:next(Path(CONFIG['workspace']).iterdir(),None)
+    except (OSError,ValueError):
+        row={**row,'available':False,'state':'Needs setup','missing':[*row['missing'],'Readable working folder'],'reason':'The configured working folder is missing or cannot be read. Choose an accessible folder in Settings.'}
     return row
 
 def load_skill(name):

@@ -18,9 +18,13 @@ class Connector:
         p=StdioServerParameters(command=self.config['command'],args=self.config.get('args',[]),env={**os.environ,**self.config.get('env',{})},cwd=self.config.get('cwd'))
         return stdio_client(p)
     async def worker(self):
+        async def message_handler(message):
+            if getattr(getattr(message,'root',message),'method',None)=='notifications/tools/list_changed':
+                self.tools=[];self.changed()
+                await self.queue.put((None,None,None))
         try:
             async with self.transport() as (read,write):
-                async with ClientSession(read,write) as session:
+                async with ClientSession(read,write,message_handler=message_handler) as session:
                     await session.initialize()
                     result=await session.list_tools()
                     self.tools=[t.model_dump(by_alias=True) for t in result.tools]; self.status='connected'; self.ready.set()
@@ -29,6 +33,10 @@ class Connector:
                         item=await self.queue.get()
                         if item is None: return
                         name,args,future=item
+                        if future is None:
+                            result=await session.list_tools()
+                            self.tools=[t.model_dump(by_alias=True) for t in result.tools];self.changed()
+                            continue
                         if future.cancelled(): continue
                         try:
                             call=asyncio.create_task(session.call_tool(name,args,read_timeout_seconds=120))
@@ -48,6 +56,8 @@ class Connector:
                             if not future.done(): future.set_result(result.model_dump(by_alias=True))
                         except Exception as e:
                             if not future.done(): future.set_exception(RuntimeError(str(e)))
+                            self.status='unavailable: tool request failed; reconnect to verify access'
+                            return
         except asyncio.CancelledError: raise
         except BaseException as e:
             while isinstance(e,BaseExceptionGroup) and e.exceptions: e=e.exceptions[0]
@@ -58,7 +68,7 @@ class Connector:
             self.ready.set()
             while not self.queue.empty():
                 item=self.queue.get_nowait()
-                if item and not item[2].done(): item[2].set_exception(RuntimeError('Connector stopped'))
+                if item and item[2] is not None and not item[2].done(): item[2].set_exception(RuntimeError('Connector stopped'))
     async def call(self,name,args):
         await asyncio.wait_for(self.ready.wait(),25)
         if self.status!='connected': raise RuntimeError(self.status)
