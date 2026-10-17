@@ -107,4 +107,7 @@ class MiddlewareTests(unittest.TestCase):
   self.assertEqual(self.client.get('/api/bootstrap').status_code,200)
   self.assertEqual(self.client.get('/').status_code,200)
 
+def tearDownModule():
+ server.store.db.close();FOLDER.cleanup()
+
 if __name__=='__main__':unittest.main()

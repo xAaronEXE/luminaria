@@ -411,7 +411,8 @@ class Engine:
                 result={'skipped':True,'already_done':str(done),'message':'This exact step already succeeded before the checkpoint, so it was not repeated.'}; status='done'; duration='skipped'
             except Exception as e:
                 result={'error':str(e)}; status='error'
-                self.store.execute('INSERT OR IGNORE INTO actions VALUES(?,?,?,?,?,?,?,?)',(id,run['chat'],name,json.dumps(args if isinstance(args,dict) else {}),'approve','error',None,now()))
+                if not run.get('plan_only') or name in PLAN_TOOLS:
+                    self.store.execute('INSERT OR IGNORE INTO actions VALUES(?,?,?,?,?,?,?,?)',(id,run['chat'],name,json.dumps(args if isinstance(args,dict) else {}),'approve','error',None,now()))
             folder=DATA/'tool-outputs'; folder.mkdir(exist_ok=True)
             (folder/(id+'.json')).write_text(json.dumps(result,ensure_ascii=False),encoding='utf-8')
             artifact=DATA/'runs'/run['id']/'artifacts'; artifact.mkdir(parents=True,exist_ok=True)
