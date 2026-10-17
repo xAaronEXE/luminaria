@@ -8,7 +8,7 @@ function fixture({available=true,reduced=false}={}){
  const canvas=el();canvas.getContext=()=>available?gl:null;canvas.width=300;canvas.height=150;
  const elements=[],classes=new Set(),media={matches:reduced,addEventListener(name,fn){this.change=fn}};
  const body={prepend(){},append(){},dataset:{},classList:{add:x=>classes.add(x),contains:x=>classes.has(x),toggle(){}}};
- const context={console,Uint8Array,Float32Array,Math,Number,Object,document:{body,hidden:false,documentElement:{},createElement(type){const node=type==='canvas'?canvas:el();elements.push(node);return node},querySelector:()=>el()},window:{addEventListener(name,fn){events.set(name,[...(events.get(name)||[]),fn])},dispatchEvent(e){for(const fn of events.get(e.type)||[])fn(e)}},matchMedia:()=>media,ResizeObserver:class{observe(){}disconnect(){}},CustomEvent:class{constructor(type,{detail}){this.type=type;this.detail=detail}},performance:{now:()=>0},requestAnimationFrame:fn=>frames.push(fn),getComputedStyle:()=>({getPropertyValue:()=>'#EAE6D9'}),devicePixelRatio:1,innerWidth:1200,innerHeight:900,studioPrefs:{motion:true},state:{},safe:fn=>fn,savePrefs:async()=>{}};
+ const context={console,Uint8Array,Float32Array,Math,Number,Object,document:{body,hidden:false,documentElement:{},createElement(type){const node=type==='canvas'?canvas:el();elements.push(node);return node},querySelector:()=>el()},window:{addEventListener(name,fn){events.set(name,[...(events.get(name)||[]),fn])},dispatchEvent(e){for(const fn of events.get(e.type)||[])fn(e)}},matchMedia:()=>media,ResizeObserver:class{observe(){}disconnect(){}},CustomEvent:class{constructor(type,{detail}){this.type=type;this.detail=detail}},performance:{now:()=>0},requestAnimationFrame:fn=>frames.push(fn),getComputedStyle:()=>{throw Error('Renderer must consume appearance events, not computed styles')},devicePixelRatio:1,innerWidth:1200,innerHeight:900,studioPrefs:{motion:true},state:{},safe:fn=>fn,savePrefs:async()=>{}};
  vm.runInNewContext(source,context,{filename:'core.js'});
  return {context,canvas,classes,frames,draws,uniforms,media,elements,tick(time){const next=frames.shift();if(next)next(time)},send(type,detail){context.window.dispatchEvent({type,detail})}};
 }
@@ -26,5 +26,8 @@ function fixture({available=true,reduced=false}={}){
  f.tick(100);const baseline=f.draws.length;f.tick(200);assert.equal(f.draws.length,baseline);assert(f.uniforms.some(([name,value])=>name==='reduced'&&value===1));
  f.media.matches=false;f.media.change();f.tick(300);assert(f.draws.length>baseline);
  f.send('studio-preferences',{motion:false});assert.equal(f.context.window.luminariaRenderStats.paused,true);assert.equal(f.context.window.luminariaRenderStats.fps,0);
+}
+{
+ const f=fixture();f.send('studio-audio',{source:'output',rms:.7,bass:.6,mid:.3,high:.2});f.tick(100);assert(f.uniforms.some(([name,value])=>name==='amplitude'&&value>0));f.send('studio-appearance',{tokens:{entity:'#101010',particle:'#202020',lattice:'#303030',pathway:'#404040',glow:'#505050',bg:'#FFFFFF'}});f.tick(200);assert.equal(f.context.window.luminariaRenderStats.mode,'webgl');
 }
 console.log('Renderer lifecycle passed: unavailable WebGL, context-loss loop termination, initial reduced motion, preference updates. DOM/WebGL boundaries are stubbed; native rendering remains a separate check.');

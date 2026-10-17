@@ -25,8 +25,7 @@
       for(const dependency of step.depends_on||[])links.push({from:run.id+':step:'+dependency,to:id,kind:'dependency'});
      }
     }
-    if(!e.node)continue;
-    const id=run.id+':'+e.node,n=put(id,{kind:e.tool?'tool':e.type.split('.')[0],region:regions.includes(e.region)?e.region:(e.type.startsWith('reasoning.')?'generation':local.get(id)?.region||'generation'),seq:e.seq});
+    const id=run.id+':'+(e.node||'event:'+e.id),n=put(id,{kind:e.tool?'tool':e.type.split('.')[0],region:regions.includes(e.region)?e.region:(e.type.startsWith('reasoning.')?'generation':local.get(id)?.region||'generation'),seq:e.seq});
     n.events.push(e);for(const key of ['label','status','evidence','error','tool','approval_tier','source','metrics'])if(e[key]!==undefined)n[key]=e[key];
     if(e.type==='reasoning.started')n.reasoning=true;
     if(e.parent)links.push({from:run.id+':'+e.parent,to:id,kind:'execution'});
