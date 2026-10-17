@@ -48,3 +48,6 @@ body[data-voice=conversation]:not(.voice-review) #ambient-field{opacity:1}body[d
 .voice-bar{box-shadow:none;gap:14px}.voice-bar #voice-status{min-width:0;line-height:1.4}.voice-bar button{flex-shrink:0}
 body.voice-compact .entity-caption{display:none}
 body[data-voice=conversation]:not(.voice-review) .inspector-content,body[data-voice=conversation]:not(.voice-review) .files-explanation{opacity:.4}
+.markdown a{color:var(--accent);text-decoration-color:color-mix(in srgb,var(--accent) 45%,transparent);text-underline-offset:2px}.markdown a:hover{text-decoration-color:currentColor}
+[data-accent=on] .chat-item.active{background:var(--accent-soft);box-shadow:inset 2px 0 0 var(--accent)}
+[data-accent=on] .message.user{background:var(--accent-soft)}

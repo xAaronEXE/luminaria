@@ -37,7 +37,13 @@
  function tokens(input,forceMode){
   const a=normalize(input),mode=forceMode||resolveMode(a),t={...BASE[mode],...a.modes[mode].colors};
   const chosen=accentFor(a,mode),accent=chosen||t.text;
-  if(chosen){const own=a.modes[mode].colors;for(const [key,amount] of [['entity',.7],['glow',.85],['pathway',.65],['lattice',.4],['particle',.45]])if(!own[key])t[key]=mix(t[key],chosen,amount)}
+  if(chosen){
+   const own=a.modes[mode].colors,dark=mode==='dark';
+   for(const [key,amount] of [['entity',.7],['glow',.85],['pathway',.65],['lattice',.4],['particle',.45],
+    ['bg',dark?.05:.025],['sidebar',dark?.08:.05],['panel',dark?.09:.04],['raised',dark?.15:.08],['hover',dark?.2:.12],['line',dark?.32:.26],['control-line',dark?.36:.28]])
+    if(!own[key])t[key]=mix(t[key],chosen,amount)
+   for(const key of ['line','control-line'])if(!own[key]&&contrast(t[key],t.bg)<contrast(BASE[mode][key],BASE[mode].bg)*.9)t[key]=BASE[mode][key]
+  }
   const onAccent=contrast(accent,'#000000')>=contrast(accent,'#FFFFFF')?'#000000':'#FFFFFF';
   Object.assign(t,{
    accent,'accent-dark':onAccent,'accent-contrast':onAccent,
