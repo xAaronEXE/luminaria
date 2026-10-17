@@ -77,3 +77,4 @@ body[data-voice=conversation]:not(.voice-review) .inspector-content,body[data-vo
 .plan-steps li.active::before{border-color:var(--accent);color:var(--accent)}
 .plan-steps li p{grid-column:2/4;margin:0;color:var(--muted);font-size:12px}
 .plan-steps li small{grid-column:2/4;color:var(--dim);font-size:11px}
+.message.checkpoint .markdown{border-left:2px solid var(--accent);padding-left:12px}
