@@ -37,6 +37,7 @@
  function tokens(input,forceMode){
   const a=normalize(input),mode=forceMode||resolveMode(a),t={...BASE[mode],...a.modes[mode].colors};
   const chosen=accentFor(a,mode),accent=chosen||t.text;
+  if(chosen){const own=a.modes[mode].colors;for(const [key,amount] of [['entity',.7],['glow',.85],['pathway',.65],['lattice',.4],['particle',.45]])if(!own[key])t[key]=mix(t[key],chosen,amount)}
   const onAccent=contrast(accent,'#000000')>=contrast(accent,'#FFFFFF')?'#000000':'#FFFFFF';
   Object.assign(t,{
    accent,'accent-dark':onAccent,'accent-contrast':onAccent,
