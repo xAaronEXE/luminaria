@@ -1,4 +1,5 @@
 // Identity only: provider access tokens are never returned to the desktop or saved.
+import {legalPage} from './legal.js';
 const providers = {
  github:{authorize:'https://github.com/login/oauth/authorize',token:'https://github.com/login/oauth/access_token',user:'https://api.github.com/user',scope:'read:user',pkce:true},
  google:{authorize:'https://accounts.google.com/o/oauth2/v2/auth',token:'https://oauth2.googleapis.com/token',user:'https://openidconnect.googleapis.com/v1/userinfo',scope:'openid profile',pkce:true,extra:{prompt:'select_account'}},
@@ -43,9 +44,17 @@ async function body(request,limit=4096){
  return JSON.parse(new TextDecoder().decode(result));
 }
 async function limited(env,request){
- const key=await hash((request.headers.get('CF-Connecting-IP')||'local')+':'+Math.floor(now()/3600));
- const row=await env.DB.prepare('INSERT INTO rate_limits(key,count,expires) VALUES(?,1,?) ON CONFLICT(key) DO UPDATE SET count=count+1 RETURNING count').bind(key,now()+7200).first();
- return row.count>600;
+ const path=new URL(request.url).pathname,time=now(),ip=request.headers.get('CF-Connecting-IP')||'local';
+ const policy=path==='/device/start'?[20,600]:path==='/device/poll'?[120,60]:path.startsWith('/callback/')||path==='/authorize'?[60,600]:path==='/insights/snapshot'||path==='/insights/days'&&request.method==='POST'?[20,60]:path==='/sessions/revoke'||path==='/insights/delete'?[20,60]:[300,60];
+ const checks=[['ip:'+ip,3000,3600],['route:'+ip+':'+path,policy[0],policy[1]]];
+ const bearer=request.headers.get('Authorization')?.match(/^Bearer ([a-f0-9]{64})$/)?.[1];
+ if(bearer)checks.push(['session:'+await hash(bearer)+':'+path,policy[0],policy[1]]);
+ for(const [subject,max,window] of checks){
+  const key=await hash(subject+':'+Math.floor(time/window));
+  const row=await env.DB.prepare('INSERT INTO rate_limits(key,count,expires) VALUES(?,1,?) ON CONFLICT(key) DO UPDATE SET count=count+1 RETURNING count').bind(key,time+window*2).first();
+  if(row.count>max)return window-time%window;
+ }
+ return 0;
 }
 // Upstream bodies are bounded to protect the Worker from unexpected payloads.
 async function boundedText(response,limit){
@@ -107,8 +116,13 @@ async function releaseDownload(env,tag,name){
 }
 async function route(request,env){
  const url=new URL(request.url),path=url.pathname,time=now();
+ if(request.method==='GET'||request.method==='HEAD'){
+  const legal=legalPage(path);
+  if(legal)return request.method==='HEAD'?new Response(null,{status:legal.status,headers:legal.headers}):legal;
+ }
  if(path==='/health'&&request.method==='GET')return json({service:'Luminaria identity',providers:Object.keys(providers).map(id=>({id,configured:configured(env,id)}))});
- if(await limited(env,request))return json({error:'Too many requests'},429);
+ const retry=await limited(env,request);
+ if(retry)return new Response(JSON.stringify({error:'Too many requests. Try again later.',retry_after:retry}),{status:429,headers:{'Content-Type':'application/json','Cache-Control':'no-store','Retry-After':String(retry),'X-Content-Type-Options':'nosniff'}});
  if(path.startsWith('/releases/')&&request.method==='GET'){
   if(!releasesConfigured(env))return json({error:'Release channel is not configured'},503);
   if(path==='/releases/latest'){
@@ -167,7 +181,9 @@ async function route(request,env){
   const subject=providerName==='google'?user.sub:user.id;
   if((typeof subject!=='string'&&typeof subject!=='number')||!String(subject))throw new Error('Provider identity missing');
   const name=String(user.name||user.global_name||user.login||user.username||'Luminaria user').slice(0,120);
-  const identity=await env.DB.prepare('INSERT INTO identities VALUES(?,?,?,?,?) ON CONFLICT(provider,subject) DO UPDATE SET name=excluded.name RETURNING id').bind(crypto.randomUUID(),providerName,String(subject),name,time).first();
+  const handle=providerName==='github'?user.login:providerName==='discord'?user.username:null;
+  const safeHandle=typeof handle==='string'&&/^[A-Za-z0-9_.-]{1,80}$/.test(handle)?handle:null;
+  const identity=await env.DB.prepare('INSERT INTO identities(id,provider,subject,name,created,handle) VALUES(?,?,?,?,?,?) ON CONFLICT(provider,subject) DO UPDATE SET name=excluded.name,handle=excluded.handle RETURNING id').bind(crypto.randomUUID(),providerName,String(subject),name,time,safeHandle).first();
   await env.DB.prepare('UPDATE devices SET identity_id=? WHERE id=? AND expires>? AND identity_id IS NULL').bind(identity.id,entry.device_id,time).run();
   return page('Signed in to Luminaria','You can close this tab and return to the desktop app.',200,clearCookie);
  }
@@ -204,7 +220,7 @@ async function route(request,env){
   if(!token)return json({error:'Sign-in required'},401);
   const digest=await hash(token);
   if(path==='/logout'){await env.DB.prepare('DELETE FROM sessions WHERE token_hash=?').bind(digest).run();return json({signed_out:true});}
-  const user=await env.DB.prepare('SELECT i.id,i.provider,i.name,s.expires,s.created,s.last_seen FROM sessions s JOIN identities i ON i.id=s.identity_id WHERE s.token_hash=? AND s.expires>?').bind(digest,time).first();
+  const user=await env.DB.prepare('SELECT i.id,i.provider,i.name,i.handle,s.expires,s.created,s.last_seen FROM sessions s JOIN identities i ON i.id=s.identity_id WHERE s.token_hash=? AND s.expires>?').bind(digest,time).first();
   if(!user)return json({error:'Session expired or revoked'},401);
   const started=user.created||time;
   if(!user.last_seen||time-user.last_seen>3600||user.expires-time<SESSION_IDLE-86400){
@@ -214,7 +230,7 @@ async function route(request,env){
   delete user.created;delete user.last_seen;
   await env.DB.prepare('INSERT OR IGNORE INTO account_members VALUES(?,?,?)').bind(user.id,user.id,user.provider).run();
   const account=await env.DB.prepare('SELECT i.id,i.name FROM account_members m JOIN identities i ON i.id=m.account_id WHERE m.identity_id=?').bind(user.id).first();
-  const connections=await env.DB.prepare('SELECT i.id,i.provider,i.name FROM identities i JOIN account_members m ON m.identity_id=i.id WHERE m.account_id=? ORDER BY i.created,i.id').bind(account.id).all();
+  const connections=await env.DB.prepare('SELECT i.id,i.provider,i.name,i.handle FROM identities i JOIN account_members m ON m.identity_id=i.id WHERE m.account_id=? ORDER BY i.created,i.id').bind(account.id).all();
   return json({user,account,connections:connections.results});
  }
  if(path==='/sessions'&&request.method==='GET'||path==='/sessions/revoke'&&request.method==='POST'){
@@ -250,7 +266,21 @@ async function route(request,env){
     devices.add(row.device);const metrics=JSON.parse(row.metrics),total=days.get(row.day)||Object.fromEntries(INSIGHT_KEYS.map(k=>[k,0]));
     for(const key of INSIGHT_KEYS)total[key]+=metrics[key]||0;days.set(row.day,total);
    }
-   return json({devices:devices.size,days:[...days].map(([day,metrics])=>({day,metrics})),retention_days:INSIGHT_RETENTION_DAYS});
+   return json({account_id:me.account_id,devices:devices.size,days:[...days].map(([day,metrics])=>({day,metrics})),retention_days:INSIGHT_RETENTION_DAYS});
+  }
+  if(path==='/insights/snapshot'&&request.method==='POST'){
+   const input=await body(request,1000000);
+   if(typeof input.device!=='string'||!/^[a-f0-9]{32}$/.test(input.device))return json({error:'Invalid device'},400);
+   if(!Array.isArray(input.days)||input.days.length>733)return json({error:'Send the complete retained device snapshot'},400);
+   const days=input.days.map(entry=>insightDay(entry,time));
+   if(days.some(d=>!d)||new Set(days.map(d=>d.day)).size!==days.length)return json({error:'Invalid daily snapshot'},400);
+   const known=await env.DB.prepare('SELECT COUNT(DISTINCT device) AS n,SUM(device=?) AS mine FROM insight_days WHERE account_id=?').bind(input.device,me.account_id).first();
+   if(!known.mine&&known.n>=INSIGHT_DEVICES&&days.length)return json({error:'Too many devices sync insights for this account'},400);
+   await env.DB.batch([
+    env.DB.prepare('DELETE FROM insight_days WHERE account_id=? AND device=?').bind(me.account_id,input.device),
+    env.DB.prepare("INSERT INTO insight_days(account_id,device,day,metrics,updated) SELECT ?,?,json_extract(value,'$.day'),json_extract(value,'$.metrics'),? FROM json_each(?)").bind(me.account_id,input.device,time,JSON.stringify(days))
+   ]);
+   return json({stored:days.length,protocol:'device-snapshot-v1'});
   }
   if(path==='/insights/days'&&request.method==='POST'){
    const input=await body(request,65536);
