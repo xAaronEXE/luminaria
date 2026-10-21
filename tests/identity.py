@@ -80,6 +80,58 @@ class IdentityFlowTests(unittest.IsolatedAsyncioTestCase):
  async def test_unconfigured_provider_and_expired_flow_fail(self):
   with self.assertRaises(ValueError):await identity.start('unknown')
   with self.assertRaisesRegex(ValueError,'expired'):await identity.poll('d'*64)
+
+ async def test_browser_opens_automatically_only_when_requested(self):
+  with self.clients(),patch('webbrowser.open',return_value=True) as opener:
+   flow=await identity.start('github',open_browser=True)
+   self.assertTrue(flow['browser_opened']);opener.assert_called_once_with(flow['url'],new=2,autoraise=True)
+   identity.pending.clear();await identity.start('github');self.assertEqual(opener.call_count,1)
+
+ async def test_gate_signin_routes_to_isolated_account_workspace(self):
+  from backend import config
+  with self.clients(),patch.object(config,'PROFILE_ID','local'):
+   flow=await identity.start('github',enter_workspace=True)
+   result=await identity.poll(flow['flow_id'])
+  self.assertTrue(result['restart_required'])
+  data=profiles.registry();profile=next(p for p in data['profiles'] if p['id']==data['selected'])
+  self.assertEqual(profile['identity_id'],self.user['id'])
+  self.assertNotEqual(profile['id'],'local')
+  self.assertIsNone(identity.read_session())
+  self.assertEqual(identity.read_session(self.root/'profiles'/profile['id']/'identity-session.bin'),self.token)
+
+ async def test_provider_link_is_explicit_and_not_implicit_gate_signin(self):
+  identity.save_session(identity.SESSION,self.token)
+  with self.clients():
+   await identity.start('github')
+   starts=[header for path,header in self.sent if path=='/device/start'];self.assertIsNone(starts[-1])
+   await identity.start('github',link=True)
+   starts=[header for path,header in self.sent if path=='/device/start'];self.assertEqual(starts[-1],'Bearer '+self.token)
+
+ async def test_each_provider_creates_an_owned_workspace_on_first_signin(self):
+  from backend import config
+  for i,provider in enumerate(identity.PROVIDERS):
+   with self.subTest(provider=provider):
+    self.user={**self.user,'id':str(i+1)*32,'provider':provider}
+    with self.clients(),patch.object(config,'PROFILE_ID','local'):
+     flow=await identity.start(provider,enter_workspace=True)
+     result=await identity.poll(flow['flow_id'])
+    self.assertTrue(result['restart_required'])
+    data=profiles.registry();item=next(p for p in data['profiles'] if p['id']==data['selected'])
+    self.assertEqual(item['provider'],provider);self.assertEqual(item['account_id'],self.user['id'])
+    folder=self.root/'profiles'/item['id']
+    self.assertEqual(identity.read_session(folder/'identity-session.bin'),self.token)
+
+ async def test_linking_requires_an_existing_session(self):
+  with self.clients():
+   with self.assertRaisesRegex(ValueError,'Sign in before'):await identity.start('github',link=True)
+
+ async def test_browser_failure_returns_fallback_without_losing_flow(self):
+  with self.clients(),patch('webbrowser.open',side_effect=OSError('No browser')):
+   flow=await identity.start('github',open_browser=True)
+   self.assertFalse(flow['browser_opened']);self.assertIn(flow['flow_id'],identity.pending)
+  with patch('webbrowser.open') as opener:
+   with self.assertRaises(ValueError):await identity.open_sign_in_page('https://example.invalid/')
+   opener.assert_not_called()
  async def test_cancel_removes_private_pairing_and_cannot_be_polled(self):
   with self.clients():
    flow=await identity.start('github');identity.cancel(flow['flow_id'])
@@ -88,17 +140,30 @@ class IdentityFlowTests(unittest.IsolatedAsyncioTestCase):
  async def test_publisher_has_not_configured_provider(self):
   with patch.object(identity.httpx,'AsyncClient',return_value=httpx.AsyncClient(transport=httpx.MockTransport(lambda r:httpx.Response(503,json={'error':'unconfigured'})))):
    with self.assertRaisesRegex(ValueError,'not been configured'):await identity.start('github')
- async def test_offline_logout_preserves_encrypted_session(self):
+ async def test_offline_logout_clears_encrypted_session(self):
   identity.save_session(identity.SESSION,self.token)
   def offline(request):raise httpx.ConnectError('Fixture offline',request=request)
   with patch.object(identity.httpx,'AsyncClient',return_value=httpx.AsyncClient(transport=httpx.MockTransport(offline))):
-   with self.assertRaises(httpx.ConnectError):await identity.logout()
-  self.assertEqual(identity.read_session(),self.token)
+   result=await identity.logout()
+  self.assertTrue(result['signed_out']);self.assertFalse(result['remote_revoked'])
+  self.assertIsNone(identity.read_session())
  async def test_foreign_verification_link_is_rejected(self):
   def foreign(request):return httpx.Response(200,json={'device_id':self.device,'device_secret':self.secret,'verification_uri':'https://example.invalid/login'})
   with patch.object(identity.httpx,'AsyncClient',return_value=httpx.AsyncClient(transport=httpx.MockTransport(foreign))):
    with self.assertRaisesRegex(ValueError,'invalid sign-in link'):await identity.start('github')
   self.assertEqual(identity.pending,{})
+
+ async def test_server_error_does_not_restore_local_session(self):
+  identity.save_session(identity.SESSION,self.token)
+  with patch.object(identity.httpx,'AsyncClient',return_value=httpx.AsyncClient(transport=httpx.MockTransport(lambda r:httpx.Response(503)))):
+   result=await identity.logout()
+  self.assertTrue(result['signed_out']);self.assertFalse(result['remote_revoked'])
+  self.assertIsNone(identity.read_session())
+
+ async def test_corrupt_saved_session_can_be_signed_out(self):
+  identity.SESSION.write_bytes(b'corrupt')
+  with self.clients():result=await identity.logout()
+  self.assertTrue(result['signed_out']);self.assertFalse(identity.SESSION.exists())
  async def test_cancel_during_server_validation_never_selects_profile(self):
   entered=asyncio.Event();release=asyncio.Event();constructor=httpx.AsyncClient
   async def transport(request):

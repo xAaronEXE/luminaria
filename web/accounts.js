@@ -28,12 +28,12 @@ async function renderAccounts(body){
   catch(e){out.textContent=e.message;body.querySelector(`[data-migrate="${r.dataset.migrate}"][value="${choice(row)}"]`).checked=true}}));
  body.querySelector('#require-sign-in')?.addEventListener('change',safe(async e=>{const box=e.target;box.disabled=true;try{if(!box.checked&&!confirm('Turn off required sign-in? Anyone using this Windows account will be able to open Luminaria.')){box.checked=true;return}const r=await api('/identity/require','POST',{enabled:box.checked});toast(r.required?'Sign-in is now required when Luminaria opens.':'Sign-in is no longer required.')}catch(error){box.checked=!box.checked;throw error}finally{await renderAccounts(body)}}));
  body.querySelector('#open-insights')?.addEventListener('click',()=>document.querySelector('[data-settings-section="Insights"]')?.click());
- body.querySelector('#identity-logout')?.addEventListener('click',safe(async()=>{if(!confirm('Sign out on this PC? Your chats and files stay here.'))return;await api('/identity/logout','POST',{});await renderAccounts(body)}));
+ body.querySelector('#identity-logout')?.addEventListener('click',safe(async()=>{if(!confirm('Sign out on this PC? Your chats and files stay here.'))return;const result=await api('/identity/logout','POST',{});toast(result.message||'Signed out on this PC.');if(result.locked)await showGate({reason:result.message||'Sign in to use Luminaria.'});else await renderAccounts(body)}));
  body.querySelectorAll('[data-signin]').forEach(b=>b.onclick=safe(async()=>{
   const out=body.querySelector('#identity-progress');delete out.dataset.cancelled;let flow;body.querySelectorAll('[data-signin]').forEach(x=>x.disabled=true);
   try{
-   out.textContent='Starting secure sign-in…';flow=await api('/identity/start','POST',{provider:b.dataset.signin});if(!out.isConnected)return;
-   out.innerHTML=`<p>Finish signing in with ${esc(names[b.dataset.signin])}.</p><a class="btn" href="${esc(flow.url)}" target="_blank" rel="noopener noreferrer">Continue in browser</a> <button type="button" class="btn" id="cancel-signin">Cancel sign-in</button><p class="small-note">This request expires in ten minutes. Keep this screen open.</p>`;
+   out.textContent='Starting secure sign-in…';flow=await api('/identity/start','POST',{provider:b.dataset.signin,open_browser:true,link:true});if(!out.isConnected)return;
+   out.innerHTML=`<p>Finish signing in with ${esc(names[b.dataset.signin])}.</p><a class="btn" href="${esc(flow.url)}" target="_blank" rel="noopener noreferrer">Browser didn’t open? Continue here</a> <button type="button" class="btn" id="cancel-signin">Cancel sign-in</button><p class="small-note">This request expires in ten minutes. Keep this screen open.</p>`;
    out.querySelector('#cancel-signin').onclick=safe(async()=>{out.dataset.cancelled='true';await api('/identity/cancel','POST',{flow_id:flow.flow_id});out.textContent='Sign-in cancelled.'});
    const deadline=Date.now()+flow.expires_in*1000;
    while(out.isConnected&&!out.dataset.cancelled&&Date.now()<deadline){

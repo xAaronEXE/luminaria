@@ -3,7 +3,7 @@ import asyncio,re,time
 import httpx
 from .config import BASE_DATA,DATA
 
-ORIGIN='https://luminaria-identity.johnnycox4431836.workers.dev'
+ORIGIN='https://luminaria-identity.dessellesoftwaresolutions.workers.dev'
 PROVIDERS=('google','github','discord')
 SESSION=DATA/'identity-session.bin'
 pending={}
@@ -32,7 +32,9 @@ def device_label():
 
 def validate_user(user):
     if not isinstance(user,dict) or user.get('provider') not in PROVIDERS or not re.fullmatch(r'[a-f0-9-]{32,36}',str(user.get('id',''))):raise ValueError('Identity server returned an invalid account')
-    return {'id':user['id'],'provider':user['provider'],'name':str(user.get('name','Account'))[:120],'expires':user.get('expires')}
+    handle=user.get('handle')
+    return {'id':user['id'],'provider':user['provider'],'name':str(user.get('name','Account'))[:120],'expires':user.get('expires'),
+            'handle':handle if isinstance(handle,str) and re.fullmatch(r'[A-Za-z0-9_.-]{1,80}',handle) else None}
 
 async def status():
     result={'providers':[],'connections':[],'signed_in':False,'message':'Sign-in service is unavailable. Try again later.'}
@@ -69,14 +71,23 @@ async def status():
     except (httpx.HTTPError,KeyError,TypeError,AttributeError):result['message']='Cannot verify sign-in right now. Check your connection and try again.'
     return result
 
-async def start(provider):
+async def open_sign_in_page(url):
+    import webbrowser
+    if not isinstance(url,str) or not re.fullmatch(re.escape(ORIGIN)+r'/authorize\?device=[a-f0-9]{64}',url):
+        raise ValueError('Invalid sign-in browser address')
+    try:return bool(await asyncio.to_thread(webbrowser.open,url,new=2,autoraise=True))
+    except (OSError,webbrowser.Error):return False
+
+async def start(provider,open_browser=False,link=False,enter_workspace=False):
     if provider not in PROVIDERS:raise ValueError('Choose Google, GitHub or Discord')
+    if link and enter_workspace:raise ValueError('Choose sign-in or account linking, not both')
     async with lock:
         for key in list(pending):
             if pending[key]['deadline']<time.monotonic():pending.pop(key)
         if len(pending)>=3:raise ValueError('Finish an existing sign-in or wait for it to expire')
         async with httpx.AsyncClient(timeout=15,follow_redirects=False) as client:
-            primary=read_session()
+            primary=read_session() if link else None
+            if link and not primary:raise ValueError('Sign in before connecting another sign-in method')
             response=await client.post(ORIGIN+'/device/start',json={'provider':provider},headers={'Authorization':'Bearer '+primary} if primary else {})
             if response.status_code==401:raise ValueError('Your current sign-in expired. Sign out, sign in again, then connect another method.')
             if response.status_code==503:raise ValueError('This sign-in provider has not been configured by the publisher yet')
@@ -85,8 +96,40 @@ async def start(provider):
         if not re.fullmatch('[a-f0-9]{64}',id) or not re.fullmatch('[a-f0-9]{64}',secret) or flow.get('verification_uri')!=ORIGIN+'/authorize?device='+id:raise ValueError('Identity server returned an invalid sign-in link')
         expires=int(flow.get('expires_in',600))
         if not 1<=expires<=600:raise ValueError('Identity server returned an invalid expiry')
-        pending[id]={'device_id':id,'device_secret':secret,'provider':provider,'deadline':time.monotonic()+expires,'next_poll':0}
-        return {'flow_id':id,'url':flow['verification_uri'],'expires_in':expires,'interval':5}
+        pending[id]={'device_id':id,'device_secret':secret,'provider':provider,'deadline':time.monotonic()+expires,'next_poll':0,'enter_workspace':enter_workspace}
+        result={'flow_id':id,'url':flow['verification_uri'],'expires_in':expires,'interval':5}
+        if open_browser:result['browser_opened']=await open_sign_in_page(flow['verification_uri'])
+        return result
+
+def enter_account_workspace(payload,token):
+    """Select only a workspace owned by this server-verified account.
+
+    Separate identities get separate containers. Existing local history is never
+    silently reassigned, copied or merged during sign-in.
+    """
+    from . import profiles,config
+    user=validate_user(payload['user'])
+    account=str((payload.get('account') or {}).get('id') or user['id'])
+    if not re.fullmatch(r'[a-f0-9-]{32,36}',account):raise ValueError('Invalid account returned by identity server')
+    members=[validate_user(member) for member in payload.get('connections',[payload['user']])]
+    data=profiles.registry()
+    def owns(item):
+        if item.get('identity_id'):
+            return any(m['id']==item['identity_id'] and m['provider']==item.get('provider') for m in members)
+        return item.get('account_id')==account
+    candidates=[p for p in data['profiles'] if owns(p)]
+    target=next((p for p in candidates if p['id']==config.PROFILE_ID),candidates[0] if candidates else None)
+    if target is None:
+        if len(data['profiles'])>=20:raise ValueError('Profile limit reached. Remove an unused local profile before creating a new account workspace.')
+        import uuid
+        target={'id':uuid.uuid4().hex,'name':user['name'][:60],'provider':user['provider'],'identity_id':user['id']}
+        data['profiles'].append(target)
+    target['account_id']=account
+    folder=BASE_DATA if target['id']=='local' else BASE_DATA/'profiles'/target['id']
+    save_session(folder/'identity-session.bin',token)
+    save_session(folder/f'identity-{user["provider"]}.bin',token)
+    data['selected']=target['id'];profiles.save(data)
+    return target['id']!=config.PROFILE_ID
 
 async def poll(id):
     if not isinstance(id,str) or not re.fullmatch('[a-f0-9]{64}',id):raise ValueError('Invalid sign-in request')
@@ -107,20 +150,22 @@ async def poll(id):
                 if pending.get(id) is not flow:raise ValueError('Sign-in was cancelled')
                 user=validate_user(checked.json()['user'])
                 if user['provider']!=flow['provider']:raise ValueError('Sign-in provider did not match the request')
-                save_session(DATA/f'identity-{user["provider"]}.bin',token)
-                # Keep a primary session for the existing startup gate. Adding a
-                # method must not replace a working primary or its local history.
-                if not SESSION.exists():save_session(SESSION,token)
+                restart=False
+                if flow.get('enter_workspace'):
+                    restart=enter_account_workspace(checked.json(),token)
+                else:
+                    save_session(DATA/f'identity-{user["provider"]}.bin',token)
+                    if not SESSION.exists():save_session(SESSION,token)
                 forget_gate()
             except Exception:
                 try:await client.post(ORIGIN+'/logout',headers={'Authorization':'Bearer '+token})
                 except httpx.HTTPError:pass
                 raise
             finally:pending.pop(id,None)
-        return {'status':'complete','restart_required':False,'message':'Signed in. Your other sign-ins, chats and settings stay in place.'}
+        return {'status':'complete','restart_required':restart,'message':'Signed in. Opening your account workspace.' if restart else 'Signed in. Your other sign-ins, chats and settings stay in place.'}
 
 OFFLINE_GRACE=7*86400
-GATE_OPEN=['/api/bootstrap','/api/gate','/api/events','/api/accounts','/api/identity/start','/api/identity/poll','/api/identity/cancel']
+GATE_OPEN=['/api/bootstrap','/api/gate','/api/events','/api/accounts','/api/identity/start','/api/identity/poll','/api/identity/cancel','/api/identity/logout']
 _gate={'checked':0.0,'result':None}
 
 def required():
@@ -164,9 +209,11 @@ async def gate(force=False):
                 else:
                     response.raise_for_status();payload=response.json();user=validate_user(payload['user'])
                     account=str((payload.get('account') or {}).get('id') or user['id'])
-                    if profile.get('identity_id') and (user['id']!=profile['identity_id'] or user['provider']!=profile.get('provider')):
+                    members=[validate_user(member) for member in payload.get('connections',[payload['user']])]
+                    owns_legacy=any(member['id']==profile.get('identity_id') and member['provider']==profile.get('provider') for member in members)
+                    if profile.get('identity_id') and not owns_legacy:
                         result['reason']='This sign-in belongs to a different account. Sign in again.'
-                    elif profile.get('account_id') and account!=profile['account_id']:
+                    elif profile.get('account_id') and account!=profile['account_id'] and not owns_legacy:
                         result['reason']='This profile is attached to a different Luminaria account. Sign in with that account.'
                     elif profile.get('migration')=='separate':
                         result['reason']='This profile is kept separate from your account, so it cannot open while sign-in is required. Turn off required sign-in from another profile, or attach it to your account.'
@@ -198,16 +245,30 @@ async def set_required(enabled):
 
 async def logout():
     forget_gate()
+    pending.clear()
     paths=[SESSION]+[DATA/f'identity-{p}.bin' for p in PROVIDERS]
-    async with httpx.AsyncClient(timeout=15,follow_redirects=False) as client:
-        for path in paths:
+    tokens=set()
+    for path in paths:
+        try:
             token=read_session(path)
-            if token:
+            if token:tokens.add(token)
+        except ValueError:pass  # Corrupt credentials must not prevent local sign-out.
+        path.unlink(missing_ok=True)
+    _verified_path().unlink(missing_ok=True)
+    # Local sign-out is complete before any network operation. Do not retain
+    # bearer tokens in a retry queue: remote sessions expire or can be revoked
+    # from another signed-in device when the service is reachable.
+    async with httpx.AsyncClient(timeout=5,follow_redirects=False) as client:
+        async def revoke(token):
+            try:
                 response=await client.post(ORIGIN+'/logout',headers={'Authorization':'Bearer '+token})
                 if response.status_code!=401:response.raise_for_status()
-                path.unlink(missing_ok=True)
-    _verified_path().unlink(missing_ok=True)
-    return {'signed_out':True,'locked':required()}
+                return True
+            except httpx.HTTPError:return False
+        results=await asyncio.gather(*(revoke(token) for token in tokens))
+    remote_revoked=all(results)
+    return {'signed_out':True,'locked':required(),'remote_revoked':remote_revoked,
+            'message':'Signed out on this PC.' if remote_revoked else 'Signed out on this PC. The identity service could not confirm remote session revocation; use another signed-in device to revoke it, or let it expire.'}
 
 def cancel(id):
     if not isinstance(id,str) or not re.fullmatch('[a-f0-9]{64}',id):raise ValueError('Invalid sign-in request')
