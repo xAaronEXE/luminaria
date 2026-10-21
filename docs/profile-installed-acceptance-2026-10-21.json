@@ -1,0 +1,11 @@
+{
+  "installed_version": "0.2.22",
+  "required_login_online_verified": true,
+  "profile_authenticated": true,
+  "heatmap_cells": 371,
+  "cloud_totals_hidden_without_opt_in": true,
+  "skill_setup_api": 200,
+  "executable_matches_final_build": true,
+  "history_preservation_checks": 9,
+  "final_restart_check": "Pending: automatic approval review blocked forced-close command; installed app left running"
+}

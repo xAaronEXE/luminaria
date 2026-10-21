@@ -30,3 +30,5 @@ Automated: profile grid/username/account-date tests 4, account-cache isolation 1
 ## Operations
 
 Backups: archive/pre-0.2.22-2026-10-21. Installer and log remain local. Marketplace code is excluded. No GitHub release or updater promotion was performed. Builds remain unsigned. Provider secrets stayed in the personal Worker, and stored desktop tokens were never printed or committed.
+
+Final installation completed with exit code 0. Installed executable hash matches the final build; required sign-in is active and the saved session verified online. Profile and guided-setup APIs respond. Chat/message/memory counts were preserved in all three existing profile databases (nine comparisons). Native window was responding. A subsequent forced-close restart command was blocked by automatic approval review without a specific reason. It was not executed; final restart acceptance remains pending. Full native visual and fresh-provider/two-PC acceptance remain pending as listed above.
