@@ -110,7 +110,18 @@ for name, content in [('toroidal',lattice()),('ribbon',ribbon())]:
     if name=='ribbon':
         (OUT/'luminaria.svg').write_text(art,encoding='utf-8')
         (OUT/'social-cover.svg').write_text(banner,encoding='utf-8')
-print('Created four SVG assets with vector geometry only.')
+# A near-frontal lattice gives the nested symbol a clear, stable aperture.
+original_project=project
+def project(x,y,z):
+    a=-.28
+    return (400+x,400+y*math.cos(a)-z*math.sin(a),y*math.sin(a)+z*math.cos(a))
+ambient=f'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 800 800" role="img" aria-label="Counter-rotating toroidal lattice">{DEFS}{MOTION}{lattice()}</svg>'
+(OUT/'sign-in-orbit.svg').write_text(ambient,encoding='utf-8')
+header=f'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1600 800" role="img" aria-labelledby="title"><title id="title">Luminaria — Intelligence, on your terms.</title>{DEFS}<rect width="1600" height="800" fill="#121815"/>{network()}<g transform="translate(800 0)">{lattice()}<g transform="translate(400 400) scale(.36) translate(-400 -400)">{rotating_content}</g></g>{words}</svg>'
+for name in ('social-cover.svg','social-cover-ribbon.svg'):
+    (OUT/name).write_text("\n".join(line.rstrip() for line in header.splitlines()),encoding='utf-8')
+project=original_project
+print('Created vector branding and nested-orbit artwork.')
 
 if '--export' in sys.argv:
     import resvg_py

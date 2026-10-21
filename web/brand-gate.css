@@ -23,3 +23,11 @@
 @media(max-width:900px){#sign-in-gate{grid-template-columns:minmax(0,1fr) minmax(340px,1fr)}#sign-in-gate .gate-card{padding:40px 28px}.gate-wordmark,.gate-tagline{left:28px}.gate-tagline{font-size:34px}}
 @media(max-width:700px){#sign-in-gate{display:flex;flex-direction:column}.gate-scene{min-height:260px;flex-shrink:0}.gate-ribbon{width:340px;top:42%}.gate-wordmark{left:24px;top:20px;font-size:13px}.gate-tagline{font-size:24px;left:24px;bottom:20px}.gate-backlight{top:80%;height:35px}#sign-in-gate .gate-card{border-left:0;border-top:1px solid #333a32;max-width:none;padding:32px 24px;flex:1}.gate-card>img{display:none}}
 @media(prefers-reduced-motion:reduce){.gate-ribbon,.gate-scene:before{animation:none!important}}
+/* Nested orbit: uniform .36 scale gives >28 SVG units of clearance at all angles. */
+.gate-scene{--orbit-size:min(112%,850px,78vh)}.gate-scene:before{display:none}
+.gate-orbit{position:absolute;left:50%;top:44%;width:var(--orbit-size);height:auto;transform:translate(-50%,-50%);transform-origin:50% 50%;opacity:.65;animation:gate-counter-orbit 48s linear infinite;pointer-events:none}
+.gate-ribbon{width:calc(var(--orbit-size) * .36);top:44%;animation:gate-orbit 48s linear infinite}
+.gate-backlight{top:60%;width:38%;height:42px}
+@keyframes gate-counter-orbit{from{transform:translate(-50%,-50%) rotate(0)}to{transform:translate(-50%,-50%) rotate(-360deg)}}
+@media(max-width:700px){.gate-scene{--orbit-size:min(100%,380px);min-height:400px}.gate-orbit,.gate-ribbon{top:44%}.gate-backlight{top:60%}}
+@media(prefers-reduced-motion:reduce){.gate-orbit{animation:none!important}}
