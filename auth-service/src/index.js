@@ -252,6 +252,20 @@ async function route(request,env){
    }
    return json({devices:devices.size,days:[...days].map(([day,metrics])=>({day,metrics})),retention_days:INSIGHT_RETENTION_DAYS});
   }
+  if(path==='/insights/snapshot'&&request.method==='POST'){
+   const input=await body(request,1000000);
+   if(typeof input.device!=='string'||!/^[a-f0-9]{32}$/.test(input.device))return json({error:'Invalid device'},400);
+   if(!Array.isArray(input.days)||input.days.length>733)return json({error:'Send the complete retained device snapshot'},400);
+   const days=input.days.map(entry=>insightDay(entry,time));
+   if(days.some(d=>!d)||new Set(days.map(d=>d.day)).size!==days.length)return json({error:'Invalid daily snapshot'},400);
+   const known=await env.DB.prepare('SELECT COUNT(DISTINCT device) AS n,SUM(device=?) AS mine FROM insight_days WHERE account_id=?').bind(input.device,me.account_id).first();
+   if(!known.mine&&known.n>=INSIGHT_DEVICES&&days.length)return json({error:'Too many devices sync insights for this account'},400);
+   await env.DB.batch([
+    env.DB.prepare('DELETE FROM insight_days WHERE account_id=? AND device=?').bind(me.account_id,input.device),
+    env.DB.prepare("INSERT INTO insight_days(account_id,device,day,metrics,updated) SELECT ?,?,json_extract(value,'$.day'),json_extract(value,'$.metrics'),? FROM json_each(?)").bind(me.account_id,input.device,time,JSON.stringify(days))
+   ]);
+   return json({stored:days.length,protocol:'device-snapshot-v1'});
+  }
   if(path==='/insights/days'&&request.method==='POST'){
    const input=await body(request,65536);
    if(typeof input.device!=='string'||!/^[a-f0-9]{32}$/.test(input.device))return json({error:'Invalid device'},400);

@@ -120,7 +120,13 @@ class Times(unittest.TestCase):
  def test_overlapping_waits_and_pauses_are_not_double_counted(self):
   events=[{'type':'approval.requested','node':'a','at':10},{'type':'run.interrupted','at':15},{'type':'run.resumed','at':40},
    {'type':'approval.allowed','node':'a','at':45},{'type':'approval.requested','node':'b','at':90}]
-  self.assertEqual(task_times(events,0,100),{'wall':100,'active':55,'wait':20,'paused':25})
+  self.assertEqual(task_times(events,0,100),{'wall':100,'active':0,'wait':20,'paused':25})
+ def test_only_measured_model_and_tool_spans_count_and_overlap_is_merged(self):
+  events=[{'type':'generation.started','node':'g','at':10},{'type':'tool.started','node':'t','at':15},
+   {'type':'generation.completed','node':'g','at':20},{'type':'tool.completed','node':'t','at':25}]
+  self.assertEqual(task_times(events,0,100)['active'],15)
+ def test_unclosed_span_does_not_expand_to_restart_time(self):
+  self.assertEqual(task_times([{'type':'generation.started','node':'g','at':10}],0,100)['active'],0)
  def test_streak_rules(self):
   self.assertEqual(streaks([],date(2026,1,1))['current'],0)
   self.assertEqual(streaks(['2025-12-31'],date(2026,1,1))['current'],1)
@@ -139,6 +145,7 @@ class Sync(unittest.IsolatedAsyncioTestCase):
    first=await usage_module.sync(store,u,'UTC');again=await usage_module.sync(store,u,'UTC')
   uploads=[b for m,p,b in sent if m=='POST']
   self.assertEqual(uploads[0],uploads[1]) # Same totals each time: the service replaces, never adds.
+  self.assertTrue(all(p=='/insights/snapshot' for m,p,b in sent if m=='POST'))
   day=uploads[0]['days'][0];self.assertEqual(day['day'],'2026-10-01');self.assertEqual(set(day['metrics']),set(usage_module.SYNC_KEYS))
   self.assertEqual((day['metrics']['tokens_in'],day['metrics']['tool_failed']),(50,1))
   self.assertNotIn('web_fetch',json.dumps(uploads));self.assertNotIn('m',uploads[0]['days'][0])

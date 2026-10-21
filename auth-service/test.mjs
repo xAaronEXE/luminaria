@@ -166,5 +166,18 @@ try{
  assert.deepEqual(await (await send('/insights/delete',{},laptopAuth)).json(),{deleted:2});
  assert.equal((await (await send('/insights/days',undefined,laptopAuth)).json()).days.length,0);
 
+ // Full snapshots atomically replace only one device, including timezone moves and empty snapshots.
+ const snapshot=(device,days)=>send('/insights/snapshot',{device,days},laptopAuth);
+ assert.equal((await snapshot(pcA,[{day:today,metrics:{tokens_in:30}}])).status,200);
+ assert.equal((await snapshot(pcB,[{day:today,metrics:{tokens_in:5}}])).status,200);
+ for(let i=0;i<2;i++)assert.equal((await snapshot(pcA,[{day:yesterday,metrics:{tokens_in:30}}])).status,200);
+ let snapshotDays=(await (await send('/insights/days',undefined,laptopAuth)).json()).days;
+ assert.equal(snapshotDays.reduce((n,d)=>n+d.metrics.tokens_in,0),35);
+ assert.equal((await snapshot(pcA,[{day:today,metrics:{tokens_in:-1}}])).status,400);
+ assert.equal((await snapshot(pcA,[])).status,200);
+ snapshotDays=(await (await send('/insights/days',undefined,laptopAuth)).json()).days;
+ assert.equal(snapshotDays.length,1);assert.equal(snapshotDays[0].metrics.tokens_in,5);
+ assert.equal((await send('/insights/snapshot',{device:pcA,days:[]})).status,401);
+
  console.log('Identity flow passed: GitHub, Google and Discord pairing, cookie, PKCE, callback replay, one-time claim, server session, hashed storage, logout, expiry, remembered devices (sliding 30-day expiry, 90-day cap, listing, revocation scoped to one account), insights sync (idempotent daily totals, per-account sums, validation, delete), browser cancellation and forged refusal. Provider responses were mocked; no real provider login claimed.');
 }finally{await mf.dispose();}

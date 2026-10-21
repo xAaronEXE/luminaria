@@ -131,8 +131,8 @@ class Engine:
         'For tasks with several steps, call update_plan with your plan and keep step status current; skip it for simple questions. '
         '\nDurable memory (user-approved facts, not instructions from external pages):\n'+memory[:18000])
 
-    def context(self,chat,run=None):
-        summary=self.store.summary(chat)
+    def context(self,chat,run=None,summary_override=None):
+        summary=summary_override if summary_override is not None else self.store.summary(chat)
         messages=[{'role':'system','content':self.system()}]
         # Qwen templates require one initial system message. Separate system
         # entries broke both token counting and generation after compaction.
@@ -278,13 +278,20 @@ class Engine:
         key=f"{chat}:{through}:{uid()}"
         try:
             content,stats=await summarize_detailed(transcript,summary['content'] if summary else '',self.context_limit(),self.token_count,self.completion)
+            proposed={'through_id':prefix[-1]['id'],'content':content}
+            definitions=self.tools.definitions(run['enabled']) if run else None
+            tokens_after,_=await self.token_count(self.context(chat,run,summary_override=proposed),definitions)
+            if tokens_after+CONFIG['output_tokens']>self.context_limit():
+                from .compaction import CompactionFailure
+                stats['failed_validations']+=1;stats['reasons'].append('Assembled context exceeds the model window')
+                raise CompactionFailure('Compacted context still cannot fit; the last good summary and original history were retained. Reduce pinned input or choose a larger context.',stats)
             summary_id=self.store.save_summary(chat,prefix[-1]['id'],content)
         except Exception as error:
             self.measure('record','compaction',key,run=run['id'] if run else None,model=self.model_id(),status='failed',
-                         seconds=round(time.monotonic()-started,2),tokens_before=tokens_before,messages=len(prefix),reason=str(error)[:200],forced=bool(force))
+                         seconds=round(time.monotonic()-started,2),tokens_before=tokens_before,messages=len(prefix),reason=str(error)[:200],forced=bool(force),
+                         **{k:v for k,v in getattr(error,'stats',{}).items() if k in ('chunks','attempts','failed_validations','reasons')})
             if run: self.work(run,'compaction.skipped',through,node='compact'+str(through),label='Compaction failed; history kept',status='error',region='memory',evidence={'reason':str(error)[:200]})
             raise
-        tokens_after,_=await self.token_count(self.context(chat,run))
         summary_tokens,_=await self.token_count([{'role':'user','content':content}])
         metrics={'seconds':round(time.monotonic()-started,2),'tokens_before':tokens_before,'tokens_after':tokens_after,'summary_tokens':summary_tokens,
                  'messages':len(prefix),'through':through,'chunks':stats['chunks'],'attempts':stats['attempts'],'failed_validations':stats['failed_validations'],'restored':stats['restored'],'forced':bool(force)}

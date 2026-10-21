@@ -59,3 +59,7 @@ States are Ready, Running, Stopped, Needs review, Awaiting review and Completed.
 steps are Ready, Running, Verified or Uncertain. Workflow records live in the existing
 profile SQLite settings; recovery bytes live in its workflow-recovery directory. No
 destructive database migration or personal-history rewrite is required.
+
+## Insights snapshot compatibility repair
+
+POST /insights/snapshot accepts the authenticated account's full retained daily snapshot for one device, including an empty snapshot. Validated rows replace only that device's rows in one D1 batch transaction. This removes stale days after timezone changes/deletion without clearing other devices. The old /insights/days POST remains for older clients. New desktop clients require the snapshot endpoint and fail with an upgrade-service message on 404; they do not fall back to delete/upload. The companion Worker was deployed before this local installation. No new table or destructive migration is required.

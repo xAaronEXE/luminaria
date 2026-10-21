@@ -62,8 +62,16 @@ def merged(spans):
 def task_times(events, started, finished):
     """Wall, active, approval-wait and paused seconds from the persisted work log."""
     requested, waits, pauses, paused_at = {}, [], [], None
+    running,spans={},[]
     for e in sorted(events, key=lambda e: (e.get('at', 0), e.get('seq', 0))):
         kind, at = e.get('type'), e.get('at', 0)
+        family=kind.split('.',1)[0]
+        key=(family,e.get('node'))
+        if family in ('generation','tool') and kind.endswith('.started'):running[key]=at
+        elif family in ('generation','tool') and key in running and (kind.endswith(('.completed','.done','.failed','.error','.interrupted','.cancelled')) or e.get('status') in ('done','error','interrupted','denied')):
+            spans.append((max(started,running.pop(key)),min(finished,at)))
+        if kind in ('run.interrupted','run.failed','run.completed','run.stopped'):
+            spans.extend((max(started,a),min(finished,at)) for a in running.values());running.clear()
         if kind == 'approval.requested': requested.setdefault(e.get('node'), at)
         elif kind in ('approval.allowed', 'approval.denied') and e.get('node') in requested: waits.append((requested.pop(e['node']), at))
         elif kind == 'run.interrupted' and paused_at is None: paused_at = at
@@ -73,7 +81,11 @@ def task_times(events, started, finished):
     wall = max(0.0, finished - started)
     paused = intervals_total(pauses)
     idle = intervals_total(waits + pauses)
-    return {'wall': round(wall, 1), 'active': round(max(0.0, wall - idle), 1), 'wait': round(idle - paused, 1), 'paused': round(paused, 1)}
+    # Unclosed spans are not extended to restart time: an abrupt stop has no measured end.
+    active=intervals_total(spans)
+    for a,b in merged(waits+pauses):
+        active-=intervals_total([(max(a,x),min(b,y)) for x,y in merged(spans)])
+    return {'wall': round(wall, 1), 'active': round(max(0.0,active), 1), 'wait': round(idle - paused, 1), 'paused': round(paused, 1)}
 
 
 class Usage:
@@ -115,7 +127,7 @@ class Usage:
         data = [json.loads(g['data']) for g in gens]
         tools = self.store.rows("SELECT status FROM usage_events WHERE kind='tool' AND run=?", (run['id'],))
         return self.record('task', run['id'], run=run['id'], model=model, status=run.get('phase', ''), created=finished,
-                           **times, generations=len(data),
+                           **times, timing_definition='measured-spans-v1',generations=len(data),
                            tokens_in=sum(d.get('prompt_tokens') or 0 for d in data),
                            tokens_out=sum(d.get('completion_tokens') or 0 for d in data),
                            tool_ok=sum(t['status'] == 'done' for t in tools),
@@ -162,6 +174,8 @@ class Usage:
         result = {'coverage_start': events[0]['created'] if events else None, 'events': len(events),
                   'timezone': tz_used or 'local', 'timezone_label': tz_used or (datetime.now().astimezone(tz).tzname() or 'this PC'),
                   'timezone_requested': tz_name or '', 'timezone_valid': not tz_name or tz_used == tz_name, 'missing': []}
+        if any(t['data'].get('timing_definition')!='measured-spans-v1' for t in tasks):
+            result['missing'].append('Older task times are wall-time estimates excluding waits and pauses. New tasks measure model/tool intervals; historical timing has not been reconstructed.')
         if not events:
             result['missing'].append('Nothing recorded yet. Insights start with the next task; earlier activity is not reconstructed.')
             return result
@@ -306,11 +320,12 @@ async def sync(store, usage, tz_name=''):
     state = sync_state(store)
     tz, _ = zone(tz_name)
     days = usage.days(tz)
-    sent = 0
-    for i in range(0, len(days), SYNC_BATCH):
-        batch = days[i:i + SYNC_BATCH]
-        await service('POST', '/insights/days', {'device': state['device'], 'days': batch})
-        sent += len(batch)
+    # Atomic full-device replacement removes stale buckets after timezone changes or deletion.
+    # Old services return 404, leaving their last snapshot intact rather than using unsafe delete/upload.
+    cutoff=(datetime.now(timezone.utc)-timedelta(days=729)).date().isoformat()
+    days=[d for d in days if d['day']>=cutoff]
+    await service('POST','/insights/snapshot',{'device':state['device'],'days':days})
+    sent=len(days)
     combined = await service('GET', '/insights/days')
     state.update(last_sync=now(), last_error=None, days_sent=sent)
     store.set_setting('insights_sync', state)
