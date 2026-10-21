@@ -32,7 +32,9 @@ def device_label():
 
 def validate_user(user):
     if not isinstance(user,dict) or user.get('provider') not in PROVIDERS or not re.fullmatch(r'[a-f0-9-]{32,36}',str(user.get('id',''))):raise ValueError('Identity server returned an invalid account')
-    return {'id':user['id'],'provider':user['provider'],'name':str(user.get('name','Account'))[:120],'expires':user.get('expires')}
+    handle=user.get('handle')
+    return {'id':user['id'],'provider':user['provider'],'name':str(user.get('name','Account'))[:120],'expires':user.get('expires'),
+            'handle':handle if isinstance(handle,str) and re.fullmatch(r'[A-Za-z0-9_.-]{1,80}',handle) else None}
 
 async def status():
     result={'providers':[],'connections':[],'signed_in':False,'message':'Sign-in service is unavailable. Try again later.'}

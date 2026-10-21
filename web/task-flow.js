@@ -42,6 +42,7 @@
    document.querySelectorAll('.skill-row').forEach(card=>{
     if(card.querySelector('.skill-runtime-detail'))return;
     const name=card.querySelector('[data-skill]')?.dataset.skill,row=rows.find(s=>s.name===name);if(!row)return;
+    const setup=document.createElement('button');setup.type='button';setup.className='btn';setup.textContent=row.available?'Check setup':'Set up skill';setup.onclick=safe(()=>skillSetup(name));card.querySelector('.row-actions')?.append(setup);
     const details=document.createElement('details');details.className='skill-runtime-detail';const title=document.createElement('summary');title.textContent=row.last_run?'Last workflow: '+row.last_run.state:'Prerequisites and output checks';details.append(title);
     for(const text of [row.last_run?.reason,row.reason,'Inputs: '+row.inputs,'Outputs: '+row.outputs,row.permissions].filter(Boolean)){const p=document.createElement('p');p.className='small-note';p.textContent=text;details.append(p)}
     card.append(details);
@@ -50,4 +51,22 @@
   annotate();document.querySelector('#filter-skills')?.addEventListener('input',annotate);
   document.querySelectorAll('[data-skill-show]').forEach(b=>b.addEventListener('click',annotate));
  };
+ async function skillSetup(name){
+  panel='skill-setup';showPanel('Set up '+name.replaceAll('-',' '),'Connect the prerequisites, then verify readiness.','<p role="status">Checking prerequisites…</p>');$('.sheet').classList.remove('settings-sheet');
+  const guide=await api('/skills/'+encodeURIComponent(name)+'/setup');if(panel!=='skill-setup')return;
+  $('#panel-content').innerHTML=`<p class="note">${esc(guide.note)}</p><p role="status"><strong>${guide.ready?'Declared prerequisites are ready':'Setup is still needed'}</strong></p>${guide.steps.map(s=>`<section class="setting-row"><div><h3>${esc(s.title)} · ${s.ready?'Ready':'Needs setup'}</h3><p>${esc(s.description)}</p>${s.status?`<p class="small-note">${esc(s.status)}</p>`:''}</div>${s.ready?'':`<button class="btn" data-setup-step="${esc(s.id)}">${s.action==='connector'?s.configured?'Reconnect':'Set up connector':'Open setup'}</button>`}</section>`).join('')||'<p>No additional prerequisites are declared for this skill. Review its instructions before use.</p>'}<p id="skill-setup-status" role="status" aria-live="polite"></p><div class="form-actions"><button class="btn primary" id="skill-check-again">Check again</button><button class="btn" id="skill-setup-back">Back to skills</button></div>`;
+  $('#skill-check-again').onclick=safe(()=>skillSetup(name));$('#skill-setup-back').onclick=safe(()=>openPanel('skills'));
+  $$('[data-setup-step]').forEach(button=>button.onclick=safe(async()=>{
+   const step=guide.steps.find(s=>s.id===button.dataset.setupStep);
+   if(step.action==='connector'){
+    if(!confirm('Start this local '+step.id+' connector? It runs with your Windows account permissions. Tool actions will still follow your saved approval mode.'))return;
+    button.disabled=true;
+    try{await api('/skills/'+encodeURIComponent(name)+'/setup/connector','POST',{connector:step.id,approved:true});await skillSetup(name)}catch(error){$('#skill-setup-status').textContent=error.message;button.disabled=false}return;
+   }
+   if(step.action==='github'){
+    await openPanel('integrations');const target=document.querySelector('[data-integration="github"]');if(target){target.open=true;target.scrollIntoView({block:'start'})}
+   }else{window.studioSettingsCategory=step.action==='workspace'?'Inference':'Tools & permissions';try{await openPanel('settings')}finally{window.studioSettingsCategory=null}}
+   const back=document.createElement('button');back.type='button';back.className='btn';back.textContent='Return to skill setup';back.onclick=safe(()=>skillSetup(name));$('#panel-content').prepend(back);
+  }));
+ }
 })();

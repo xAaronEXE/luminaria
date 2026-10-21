@@ -1,0 +1,38 @@
+/* Profile summary uses real local events and account-scoped synced aggregates. */
+(()=>{
+ const original=renderAccounts;
+ renderAccounts=async function(body){
+  await original(body);if(!body.isConnected)return;
+  const host=document.createElement('section');host.className='profile-overview';host.innerHTML='<h3>Profile activity</h3><p role="status">Loading measured activity…</p>';body.prepend(host);
+  try{
+   const data=await api('/profile-overview');if(!host.isConnected)return;
+   let scope='local',view='daily';
+   const number=n=>n==null?'—':Intl.NumberFormat(undefined,{notation:'compact',maximumFractionDigits:1}).format(n);
+   const duration=n=>n==null?'—':n>=3600?Math.floor(n/3600)+'h '+Math.floor(n%3600/60)+'m':n>=60?Math.floor(n/60)+'m '+Math.round(n%60)+'s':Math.round(n)+'s';
+   function draw(){
+    const local=data.local||{},identity=data.identity||{},user=identity.user||{},name=identity.account?.name||user.name||'Your local profile';
+    const handle=(identity.connections||[]).find(c=>c.handle)?.handle;
+    const all=scope==='account',stats=all?data.account:local,grid=all?data.account.grid:data.grid;
+    const life=all?stats.total:stats.lifetime?.total,busy=stats.busiest_day,streak=stats.streak||{};
+    const stat=(label,value,rule)=>`<div title="${esc(rule)}"><dt>${esc(label)}</dt><dd>${esc(String(value))}</dd><small>${esc(rule)}</small></div>`;
+    host.innerHTML=`<header class="profile-identity"><span class="profile-avatar" aria-hidden="true">${esc(name.slice(0,1).toUpperCase())}</span><h2>${esc(name)}</h2><p>${handle?'@'+esc(handle):identity.signed_in?'Public username available after a new GitHub or Discord sign-in':'Not signed in · activity stays on this PC'}</p><p class="small-note">${(identity.connections||[]).map(c=>esc(providerNames[c.provider]||c.provider)).join(' · ')||'Local profile'}</p></header>
+     <div class="tab-filter" role="group" aria-label="Activity source"><button data-profile-scope="local" aria-pressed="${!all}" class="${!all?'active':''}">This PC</button><button data-profile-scope="account" aria-pressed="${all}" class="${all?'active':''}" ${data.account?'':'disabled'}>All devices</button></div>
+     ${!data.account?'<p class="small-note">All devices becomes available after signing in and opting into Insights sync. No raw conversations are uploaded.</p>':`<p class="small-note">${all?'Synced daily totals · '+stats.devices+' devices · saved snapshot':'Local measurements'}. Last sync: ${data.sync?.last_sync?new Date(data.sync.last_sync*1000).toLocaleString():'Never'}. Synced retention is two years; account totals are retained totals, not complete lifetime history.</p>`}
+     <dl class="profile-stats">${stat(all?'Recorded tokens':'Lifetime tokens',number(life),'Input + output since recording began')}${stat('Peak tokens',number(busy?.tokens),busy?'Busiest day · '+busy.day:'Busiest day · no data')}${stat('Longest task',duration(local.longest_task?.active),'This PC · measured active time; older estimates labeled in Insights')}${stat('Longest streak',(streak.longest??0)+' days','Days with a completed model response')}${stat('Current streak',(streak.current??0)+' days','Consecutive active days ending today or yesterday')}</dl>
+     <div class="profile-chart-heading"><h3>Token activity</h3><div class="tab-filter" role="group" aria-label="Activity view">${['daily','weekly','cumulative'].map(v=>`<button data-profile-view="${v}" aria-pressed="${v===view}" class="${v===view?'active':''}">${v[0].toUpperCase()+v.slice(1)}</button>`).join('')}</div></div>
+     <p class="small-note">${esc(local.timezone_label||'This PC time zone')} · ${grid.coverage_start?'Recorded since '+esc(grid.coverage_start):'No activity recorded yet'}. Blank cells are unrecorded or future days.</p><div id="profile-activity"></div><p id="profile-day-detail" class="small-note" role="status">Choose a day to inspect its recorded tokens. Cumulative values start at the beginning of this visible grid.</p>
+     <h3 class="section-heading">Most used on this PC</h3><div class="profile-top">${[['Tools',local.tools],['Integrations',local.integrations],['Skills',local.skills?.top]].map(([label,rows])=>`<section><h4>${label}</h4>${rows?.length?rows.slice(0,3).map(r=>`<p><strong>${esc(r.name.replaceAll('__',' · '))}</strong><small>${r.count!=null?r.count+' uses':r.ok+' succeeded · '+r.failed+' failed'}</small></p>`).join(''):'<p class="small-note">No recorded use yet</p>'}</section>`).join('')}</div><p class="small-note">Skills explored: ${local.skills?.viewed??0} · Enabled actions: ${local.skills?.enabled??0} · Invocations: ${local.skills?.invoked??0}. Separate plugin identities are not yet measured.</p>`;
+    const cells=grid.cells,chart=host.querySelector('#profile-activity');let total=0;
+    if(view==='weekly'){
+     const weeks=[];for(let i=0;i<cells.length;i+=7){const group=cells.slice(i,i+7);weeks.push({day:group[0].day,tokens:group.some(c=>c.covered)?group.reduce((n,c)=>n+(c.tokens||0),0):null})}
+     const max=Math.max(1,...weeks.map(w=>w.tokens||0));chart.innerHTML=`<ol class="profile-weeks" aria-label="Weekly token totals">${weeks.map(w=>`<li title="Week of ${w.day}: ${w.tokens==null?'not recorded':w.tokens.toLocaleString()+' tokens'}"><span style="height:${Math.max(2,(w.tokens||0)/max*100)}%" class="${w.tokens==null?'unrecorded':''}"></span><span class="sr-only">Week of ${w.day}: ${w.tokens??'not recorded'}</span></li>`).join('')}</ol>`;
+    }else{
+     const values=cells.map(c=>{if(c.covered)total+=c.tokens||0;return {...c,value:c.covered?(view==='cumulative'?total:c.tokens):null}}),max=Math.max(1,...values.map(c=>c.value||0));
+     chart.innerHTML=`<div class="profile-months" aria-hidden="true"><span>${new Date(cells[0].day+'T12:00:00').toLocaleDateString(undefined,{month:'short',year:'numeric'})}</span><span>${new Date(grid.today+'T12:00:00').toLocaleDateString(undefined,{month:'short',year:'numeric'})}</span></div><div class="profile-heatmap" role="group" aria-label="53 weeks of token activity; use arrow keys to move between days">${values.map((c,i)=>{const label=c.day+': '+(c.value==null?c.future?'future day':'not recorded':c.value.toLocaleString()+' tokens'+(view==='cumulative'?' cumulative':'')),level=c.value==null?-1:c.value===0?0:Math.max(1,Math.ceil(c.value/max*4));return `<button class="profile-cell level-${level}" data-day-index="${i}" tabindex="${c.day===grid.today?'0':'-1'}" title="${esc(label)}" aria-label="${esc(label)}"></button>`}).join('')}</div><p class="small-note">Less <span class="profile-key">▁ ▂ ▅ █</span> More · ${view==='cumulative'?'Cumulative tokens':'Daily tokens'}</p>`;
+     const buttons=[...chart.querySelectorAll('[data-day-index]')];buttons.forEach((b,i)=>{b.onfocus=()=>host.querySelector('#profile-day-detail').textContent=b.getAttribute('aria-label');b.onclick=()=>b.focus();b.onkeydown=e=>{const delta={ArrowDown:1,ArrowUp:-1,ArrowLeft:-7,ArrowRight:7,Home:-i,End:buttons.length-1-i}[e.key];if(delta==null)return;e.preventDefault();b.tabIndex=-1;const next=buttons[Math.max(0,Math.min(buttons.length-1,i+delta))];next.tabIndex=0;next.focus()}});
+    }
+    host.querySelectorAll('[data-profile-scope]').forEach(b=>b.onclick=()=>{scope=b.dataset.profileScope;draw()});host.querySelectorAll('[data-profile-view]').forEach(b=>b.onclick=()=>{view=b.dataset.profileView;draw()});
+   }draw();
+  }catch(error){if(host.isConnected)host.innerHTML=`<h3>Profile activity</h3><p role="alert">${esc(error.message)}</p><button class="btn" id="profile-overview-retry">Try again</button>`;host.querySelector('#profile-overview-retry')?.addEventListener('click',safe(()=>renderAccounts(body)))}
+ };
+})();

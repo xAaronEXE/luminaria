@@ -101,7 +101,7 @@ try{
  assert.equal((await send('/device/poll',revokedParent.started)).status,403);
  const foreignId=crypto.randomUUID(),foreignToken='e'.repeat(64);
  const foreignHash=Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256',new TextEncoder().encode(foreignToken))),x=>x.toString(16).padStart(2,'0')).join('');
- await db.prepare('INSERT INTO identities VALUES(?,?,?,?,?)').bind(foreignId,'google','another-google-user','Other account',1).run();
+ await db.prepare('INSERT INTO identities(id,provider,subject,name,created) VALUES(?,?,?,?,?)').bind(foreignId,'google','another-google-user','Other account',1).run();
  await db.prepare('INSERT INTO account_members VALUES(?,?,?)').bind(foreignId,foreignId,'google').run();
  await db.prepare('INSERT INTO sessions(token_hash,identity_id,expires) VALUES(?,?,?)').bind(foreignHash,foreignId,Math.floor(Date.now()/1000)+600).run();
  const conflict=await begin('google',{Authorization:'Bearer '+foreignToken});
@@ -178,6 +178,13 @@ try{
  snapshotDays=(await (await send('/insights/days',undefined,laptopAuth)).json()).days;
  assert.equal(snapshotDays.length,1);assert.equal(snapshotDays[0].metrics.tokens_in,5);
  assert.equal((await send('/insights/snapshot',{device:pcA,days:[]})).status,401);
+ const rateHeaders={'CF-Connecting-IP':'203.0.113.241'};
+ for(let i=0;i<20;i++)assert.equal((await send('/device/start',{provider:'github'},rateHeaders)).status,200);
+ const limitedStart=await send('/device/start',{provider:'github'},rateHeaders);
+ assert.equal(limitedStart.status,429);assert.ok(Number(limitedStart.headers.get('Retry-After'))>0);
+ assert.equal((await send('/device/start',{provider:'github'},{'CF-Connecting-IP':'203.0.113.242'})).status,200);
+ assert.equal((await send('/session',undefined,{...rateHeaders,Authorization:'Bearer '+'0'.repeat(64)})).status,401);
+ assert.equal(linked.connections.find(c=>c.provider==='discord').handle,'fixture_d');
 
  console.log('Identity flow passed: GitHub, Google and Discord pairing, cookie, PKCE, callback replay, one-time claim, server session, hashed storage, logout, expiry, remembered devices (sliding 30-day expiry, 90-day cap, listing, revocation scoped to one account), insights sync (idempotent daily totals, per-account sums, validation, delete), browser cancellation and forged refusal. Provider responses were mocked; no real provider login claimed.');
 }finally{await mf.dispose();}

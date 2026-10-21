@@ -465,6 +465,23 @@ async def skill_instructions(name:str):
     with contextlib.suppress(Exception): usage.skill('viewed',name)
     return skill
 
+@app.get('/api/skills/{name}/setup')
+async def skill_setup(name:str):
+    from .skill_setup import checklist
+    return checklist(name,connectors)
+
+@app.post('/api/skills/{name}/setup/connector')
+async def skill_setup_connector(name:str,request:Request):
+    from .skill_setup import checklist,connector_config
+    body=await request.json();need=body.get('connector')
+    guide=checklist(name,connectors)
+    if not any(s['id']==need and s['action']=='connector' for s in guide['steps']):raise ValueError('This connector is not a declared prerequisite')
+    if body.get('approved') is not True:raise ValueError('Review local connector access before starting it')
+    if any(not r.get('finished') for r in engine.runs.values()):raise ValueError('Stop active tasks before reconnecting tools')
+    config=connector_config(need);configs=CONFIG.get('mcp',{}).copy();configs[need]=config
+    save_config({'mcp':configs});await restart_connector(need,config)
+    return {'status':'connecting','note':'Use Check again to verify that the live connector loads its tools.'}
+
 @app.delete('/api/skills/{name}')
 async def skill_remove(name:str):
     from .skills import remove_skill
@@ -854,7 +871,26 @@ async def compaction_metrics(): return usage.compaction()
 
 @app.get('/api/insights')
 async def insights():
-    return {**usage.summary(insights_zone()),'sync':insights_sync_public(),'account':store.setting('insights_account',None)}
+    from .identity import status as identity_status
+    return {**usage.summary(insights_zone()),'sync':insights_sync_public(),'account':profile_account_snapshot(await identity_status())}
+
+def profile_account_snapshot(identity):
+    from .usage import account_view,activity_grid
+    saved=store.setting('insights_account',None)
+    if not(identity.get('signed_in') and saved and saved.get('account_id')==identity.get('account',{}).get('id') and insights_sync_public().get('enabled')):return None
+    account=account_view({'account_id':saved['account_id'],'devices':saved.get('devices',0),'days':saved.get('daily',[])},insights_zone())
+    account['grid']=activity_grid(account['daily'],account['first_day'],insights_zone())
+    account['busiest_day']=max(({'day':d['day'],'tokens':d['metrics'].get('tokens_in',0)+d['metrics'].get('tokens_out',0)} for d in account['daily']),key=lambda d:d['tokens'],default=None)
+    return account
+
+@app.get('/api/profile-overview')
+async def profile_overview():
+    from .usage import activity_grid,account_view,zone
+    from .identity import status as identity_status
+    identity=await identity_status();tz_name=insights_zone();summary=usage.summary(tz_name)
+    tz,_=zone(tz_name);grid=activity_grid(usage.days(tz),summary.get('coverage_start'),tz_name)
+    account=profile_account_snapshot(identity)
+    return {'identity':identity,'local':summary,'grid':grid,'account':account,'sync':insights_sync_public()}
 
 @app.post('/api/insights/timezone')
 async def insights_timezone(request:Request):

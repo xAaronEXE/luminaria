@@ -332,12 +332,25 @@ async def sync(store, usage, tz_name=''):
     return {'sent': sent, 'account': account_view(combined)}
 
 
-def account_view(combined):
+def account_view(combined,tz_name='',today=None):
     days = [d for d in combined.get('days', []) if isinstance(d, dict) and re.fullmatch(r'\d{4}-\d{2}-\d{2}', str(d.get('day', '')))]
     metric = lambda d, k: int((d.get('metrics') or {}).get(k) or 0)
     active = sorted(d['day'] for d in days if metric(d, 'generations'))
     tin = sum(metric(d, 'tokens_in') for d in days); tout = sum(metric(d, 'tokens_out') for d in days)
-    return {'devices': int(combined.get('devices') or 0), 'days': len(days), 'active_days': len(active),
+    tz,_=zone(tz_name)
+    return {'account_id':combined.get('account_id'),'daily':days,'devices': int(combined.get('devices') or 0), 'days': len(days), 'active_days': len(active),
             'tokens_in': tin, 'tokens_out': tout, 'total': tin + tout,
             'active_seconds': sum(metric(d, 'active_seconds') for d in days),
-            'streak': streaks(active, datetime.now().astimezone().date()), 'first_day': days[0]['day'] if days else None}
+            'streak': streaks(active,today or datetime.now(timezone.utc).astimezone(tz).date()), 'first_day': min((d['day'] for d in days),default=None)}
+
+def activity_grid(days,coverage_start,tz_name='',today=None):
+    """53 Monday-aligned weeks. Unrecorded days and future days are not zeros."""
+    tz,_=zone(tz_name);today=today or datetime.now(timezone.utc).astimezone(tz).date()
+    start=today-timedelta(days=today.weekday()+52*7)
+    coverage=datetime.fromtimestamp(coverage_start,timezone.utc).astimezone(tz).date() if isinstance(coverage_start,(int,float)) else datetime.fromisoformat(coverage_start).date() if coverage_start else None
+    lookup={d['day']:d.get('metrics',{}) for d in days}
+    cells=[]
+    for i in range(371):
+        day=start+timedelta(days=i);covered=bool(coverage and coverage<=day<=today);metrics=lookup.get(day.isoformat(),{})
+        cells.append({'day':day.isoformat(),'covered':covered,'future':day>today,'tokens':int(metrics.get('tokens_in',0)+metrics.get('tokens_out',0)) if covered else None})
+    return {'cells':cells,'today':today.isoformat(),'coverage_start':coverage.isoformat() if coverage else None,'week_start':'Monday'}

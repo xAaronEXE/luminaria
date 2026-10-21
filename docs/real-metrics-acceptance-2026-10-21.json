@@ -1,0 +1,7 @@
+{
+  "phase": "Complete",
+  "model": "qwen3-4b-abliterated-q8",
+  "generation_delta": 1,
+  "token_delta": 2961,
+  "exact_reply": true
+}
