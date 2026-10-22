@@ -19,4 +19,3 @@ class GuardTests(unittest.IsolatedAsyncioTestCase):
   with self.assertRaisesRegex(ValueError,'active tasks'):await self.call({'enter_workspace':True},{'chat':{'finished':False}})
  async def test_interrupted_task_does_not_block_entry(self):await self.call({'enter_workspace':True},{'chat':{'finished':False,'resume_available':True}})
 if __name__=='__main__':unittest.main()
-
