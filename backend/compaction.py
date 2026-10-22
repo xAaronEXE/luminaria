@@ -29,6 +29,10 @@ MAX_REFS=40
 
 class Invalid(ValueError):pass
 
+class CompactionFailure(ValueError):
+    def __init__(self,message,stats):
+        super().__init__(message);self.stats=dict(stats)
+
 
 def validate(candidate,size,output,finish):
     text=candidate.strip()
@@ -109,7 +113,7 @@ async def summarize_detailed(transcript,previous,context_limit,count_tokens,comp
             tokens,_=await count_tokens(prompt)
             if tokens<=budget:break
             if len(chunk['text'])<128:
-                raise ValueError('Summary plus minimal input exceeds the context budget. Original history is preserved; shorten pinned memory or select a larger context.')
+                raise CompactionFailure('Summary plus minimal input exceeds the context budget. Original history is preserved; shorten pinned memory or select a larger context.',stats)
             # Split between messages when possible so a range stays meaningful.
             lines=chunk['text'].split('\n')
             if len(lines)>1 and len(chunk['ids'])==len(lines):
@@ -129,7 +133,7 @@ async def summarize_detailed(transcript,previous,context_limit,count_tokens,comp
                 current=candidate;break
             except Invalid as problem:
                 stats['failed_validations']+=1;stats['reasons'].append(str(problem))
-                if attempt:raise ValueError(f'Summary validation failed ({problem}); original history and working summary retained') from None
+                if attempt:raise CompactionFailure(f'Summary validation failed ({problem}); original history and working summary retained',stats) from None
                 prompt[0]['content']=(INSTRUCTION+' Keep the complete summary below '+str(max(256,output-256))+' tokens and use the named sections as headings. '
                                       'Your previous attempt was rejected: '+str(problem)+'.')
         if not ranges or ranges[-1]!=label(chunk['ids']):ranges.append(label(chunk['ids']))
@@ -139,6 +143,11 @@ async def summarize_detailed(transcript,previous,context_limit,count_tokens,comp
     ids=[m.get('message_id') for m in transcript if m.get('message_id') is not None]
     if ids:current+='\n\nSource messages: '+str(ids[0])+' through '+str(ids[-1])+(f" (summarized in {stats['chunks']} parts: {', '.join(ranges[:12])}{'…' if len(ranges)>12 else ''})" if stats['chunks']>1 else '')+'. Full original history remains on disk; use history_read for exact details.'
     stats.update(restored=len(missing),seconds=round(time.monotonic()-started,2),ranges=ranges)
+    final_size,_=await count_tokens([{'role':'user','content':current}])
+    try:validate(current,final_size,output,None)
+    except Invalid as problem:
+        stats['failed_validations']+=1;stats['reasons'].append('Final summary: '+str(problem))
+        raise CompactionFailure('Final summary exceeds the validated budget; original history and working summary retained',stats) from None
     return current,stats
 
 

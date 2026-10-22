@@ -57,9 +57,21 @@ def start_swap():
     if not CONFIG.get('model_api_key'): save_config({'model_api_key':secrets.token_urlsafe(32)})
     entries=registry() or [{'id':CONFIG['model'],'name':CONFIG['model'],'model_file':model,'context':CONFIG['context'],'projector_file':CONFIG.get('projector_file')}]
     configs={}
+    tuning_hardware=None
+    if any(entry.get('tuning') for entry in entries):
+        from .hardware import information
+        tuning_hardware=information()
     for entry in entries:
         if not Path(entry['model_file']).is_file(): continue
         args=[exe,'-m',entry['model_file'],'--host','127.0.0.1','--port','8097','-c',str(entry['context']),'-np','1','-fa','on','-ctk','q8_0','-ctv','q8_0','-fit','on','-fitt','512','-b','512','-ub','128','-t','8','--jinja','--agent','--api-key',CONFIG['model_api_key'],'--reasoning-format','deepseek','--reasoning-budget','1024','--metrics','--alias',entry['id']]
+        tuning=entry.get('tuning')
+        if tuning and tuning_hardware:
+            from .hardware import provenance
+            if tuning.get('provenance',{}).get('key')==provenance(entry,tuning_hardware)['key']:
+                args[args.index('-t')+1]=str(tuning['threads'])
+                args[args.index('-fit')+1]='off'
+                args+=['-ngl',str(tuning['gpu_layers'])]
+                if tuning['gpu_layers']==0:args+=['--no-kv-offload']
         if entry.get('projector_file') and Path(entry['projector_file']).is_file(): args+=['--mmproj',entry['projector_file'],'--no-mmproj-offload','--image-max-tokens','1024']
         command=' '.join('"'+str(a).replace('\\','/').replace('"','\\"')+'"' for a in args)
         configs[entry['id']]={'name':entry['name'],'cmd':command,'proxy':'http://127.0.0.1:8097','checkEndpoint':'/health'}

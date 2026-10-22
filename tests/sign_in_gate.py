@@ -55,6 +55,14 @@ class GateTests(unittest.IsolatedAsyncioTestCase):
   self.assertTrue(result['unlocked']);self.assertNotIn('offline',result)
   self.assertTrue((self.data/'identity-verified.json').is_file())
 
+ async def test_server_linked_provider_can_unlock_legacy_identity_profile(self):
+  self.account_profile()
+  google={**USER,'id':'e'*32,'provider':'google'}
+  linked=lambda request:httpx.Response(200,json={'user':google,'connections':[google,USER]})
+  self.assertTrue((await self.check(linked))['unlocked'])
+  unlinked=lambda request:httpx.Response(200,json={'user':google,'connections':[google]})
+  self.assertFalse((await self.check(unlinked))['unlocked'])
+
  async def test_offline_grace_lasts_seven_days(self):
   self.account_profile()
   (self.data/'identity-verified.json').write_text(json.dumps({'at':time.time()-2*86400,'name':'Aaron'}))
@@ -89,6 +97,50 @@ class GateTests(unittest.IsolatedAsyncioTestCase):
   self.assertEqual(await identity.set_required(False),{'required':False})
   profiles.select('local')
 
+ async def test_logout_clears_all_sessions_and_offline_grace_then_locks(self):
+  self.account_profile()
+  primary=self.data/'identity-session.bin'
+  paths=[primary]+[self.data/f'identity-{p}.bin' for p in identity.PROVIDERS]
+  for path in paths:path.write_bytes(b'isolated-session-fixture')
+  verified=self.data/'identity-verified.json'
+  verified.write_text(json.dumps({'at':time.time(),'name':'Aaron'}))
+  revoked_tokens=[]
+  def revoke(request):
+   self.assertEqual(request.url.path,'/logout')
+   revoked_tokens.append(request.headers['Authorization'])
+   return httpx.Response(200,json={})
+  def read_fixture(path=None):
+   return 'c'*64 if (path or primary).exists() else None
+  with patch.object(identity,'SESSION',primary),patch.object(identity,'read_session',read_fixture),patch.object(identity.httpx,'AsyncClient',client_for(revoke)),patch.object(config,'PROFILE_ID','b'*32):
+   result=await identity.logout()
+   self.assertTrue(result['signed_out']);self.assertTrue(result['locked'])
+   self.assertEqual(len(revoked_tokens),1)
+   self.assertTrue(all(not path.exists() for path in paths))
+   self.assertFalse(verified.exists())
+   self.assertFalse((await identity.gate(force=True))['unlocked'])
+
+ async def test_already_revoked_session_can_still_sign_out_locally(self):
+  self.account_profile()
+  primary=self.data/'identity-session.bin';primary.write_bytes(b'isolated-session-fixture')
+  def read_fixture(path=None):return 'c'*64 if (path or primary).exists() else None
+  with patch.object(identity,'SESSION',primary),patch.object(identity,'read_session',read_fixture),patch.object(identity.httpx,'AsyncClient',client_for(revoked)):
+   self.assertTrue((await identity.logout())['signed_out'])
+  self.assertFalse(primary.exists())
+
+ async def test_offline_logout_removes_grace_and_cannot_reopen_workspace(self):
+  self.account_profile()
+  primary=self.data/'identity-session.bin';primary.write_bytes(b'isolated-session-fixture')
+  verified=self.data/'identity-verified.json'
+  verified.write_text(json.dumps({'at':time.time(),'name':'Aaron'}))
+  identity.pending['d'*64]={'fixture':True}
+  def read_fixture(path=None):return 'c'*64 if (path or primary).exists() else None
+  with patch.object(identity,'SESSION',primary),patch.object(identity,'read_session',read_fixture),patch.object(identity.httpx,'AsyncClient',client_for(offline)),patch.object(config,'PROFILE_ID','b'*32):
+   result=await identity.logout()
+   self.assertTrue(result['signed_out']);self.assertFalse(result['remote_revoked'])
+   self.assertFalse(primary.exists());self.assertFalse(verified.exists())
+   self.assertEqual(identity.pending,{})
+   self.assertFalse((await identity.gate(force=True))['unlocked'])
+
 class MiddlewareTests(unittest.TestCase):
  @classmethod
  def setUpClass(cls):
@@ -106,5 +158,8 @@ class MiddlewareTests(unittest.TestCase):
   self.assertEqual(self.client.get('/api/gate').status_code,200)
   self.assertEqual(self.client.get('/api/bootstrap').status_code,200)
   self.assertEqual(self.client.get('/').status_code,200)
+
+def tearDownModule():
+ server.store.db.close();FOLDER.cleanup()
 
 if __name__=='__main__':unittest.main()

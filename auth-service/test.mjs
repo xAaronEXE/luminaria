@@ -6,7 +6,7 @@ const intercepted=[],tokenForms={};
 const bindings={GITHUB_CLIENT_ID:'fixture',GITHUB_CLIENT_SECRET:'fixture-secret',GOOGLE_CLIENT_ID:'google-fixture',GOOGLE_CLIENT_SECRET:'google-secret',DISCORD_CLIENT_ID:'discord-fixture',DISCORD_CLIENT_SECRET:'discord-secret'};
 const tokens={'https://github.com/login/oauth/access_token':['github',{access_token:'fixture-token',token_type:'bearer'}],'https://oauth2.googleapis.com/token':['google',{access_token:'google-token',token_type:'Bearer',id_token:'unused'}],'https://discord.com/api/oauth2/token':['discord',{access_token:'discord-token',token_type:'Bearer'}]};
 const users={'https://api.github.com/user':['fixture-token',{id:123,name:'Fixture User'}],'https://openidconnect.googleapis.com/v1/userinfo':['google-token',{sub:'g-4471',name:'Google Fixture'}],'https://discord.com/api/users/@me':['discord-token',{id:'99001',username:'fixture_d',global_name:'Discord Fixture'}]};
-const mf=new Miniflare(convertV4MiniflareOptions({modules:true,scriptPath:fileURLToPath(new URL('./src/index.js',import.meta.url)),compatibilityDate:'2026-10-16',d1Databases:{DB:'test'},bindings,outboundService:async request=>{
+const mf=new Miniflare(convertV4MiniflareOptions({modules:[{type:'ESModule',path:fileURLToPath(new URL('./src/index.js',import.meta.url))},{type:'ESModule',path:fileURLToPath(new URL('./src/legal.js',import.meta.url))}],compatibilityDate:'2026-10-16',d1Databases:{DB:'test'},bindings,outboundService:async request=>{
  const url=new URL(request.url),href=url.origin+url.pathname;intercepted.push(href);
  if(tokens[href]&&request.method==='POST'){tokenForms[tokens[href][0]]=new URLSearchParams(await request.text());return Response.json(tokens[href][1]);}
  if(users[href]&&request.headers.get('Authorization')==='Bearer '+users[href][0])return Response.json(users[href][1]);
@@ -101,7 +101,7 @@ try{
  assert.equal((await send('/device/poll',revokedParent.started)).status,403);
  const foreignId=crypto.randomUUID(),foreignToken='e'.repeat(64);
  const foreignHash=Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256',new TextEncoder().encode(foreignToken))),x=>x.toString(16).padStart(2,'0')).join('');
- await db.prepare('INSERT INTO identities VALUES(?,?,?,?,?)').bind(foreignId,'google','another-google-user','Other account',1).run();
+ await db.prepare('INSERT INTO identities(id,provider,subject,name,created) VALUES(?,?,?,?,?)').bind(foreignId,'google','another-google-user','Other account',1).run();
  await db.prepare('INSERT INTO account_members VALUES(?,?,?)').bind(foreignId,foreignId,'google').run();
  await db.prepare('INSERT INTO sessions(token_hash,identity_id,expires) VALUES(?,?,?)').bind(foreignHash,foreignId,Math.floor(Date.now()/1000)+600).run();
  const conflict=await begin('google',{Authorization:'Bearer '+foreignToken});
@@ -165,6 +165,26 @@ try{
  assert.equal((await (await send('/insights/days',undefined,laptopAuth)).json()).devices,1);
  assert.deepEqual(await (await send('/insights/delete',{},laptopAuth)).json(),{deleted:2});
  assert.equal((await (await send('/insights/days',undefined,laptopAuth)).json()).days.length,0);
+
+ // Full snapshots atomically replace only one device, including timezone moves and empty snapshots.
+ const snapshot=(device,days)=>send('/insights/snapshot',{device,days},laptopAuth);
+ assert.equal((await snapshot(pcA,[{day:today,metrics:{tokens_in:30}}])).status,200);
+ assert.equal((await snapshot(pcB,[{day:today,metrics:{tokens_in:5}}])).status,200);
+ for(let i=0;i<2;i++)assert.equal((await snapshot(pcA,[{day:yesterday,metrics:{tokens_in:30}}])).status,200);
+ let snapshotDays=(await (await send('/insights/days',undefined,laptopAuth)).json()).days;
+ assert.equal(snapshotDays.reduce((n,d)=>n+d.metrics.tokens_in,0),35);
+ assert.equal((await snapshot(pcA,[{day:today,metrics:{tokens_in:-1}}])).status,400);
+ assert.equal((await snapshot(pcA,[])).status,200);
+ snapshotDays=(await (await send('/insights/days',undefined,laptopAuth)).json()).days;
+ assert.equal(snapshotDays.length,1);assert.equal(snapshotDays[0].metrics.tokens_in,5);
+ assert.equal((await send('/insights/snapshot',{device:pcA,days:[]})).status,401);
+ const rateHeaders={'CF-Connecting-IP':'203.0.113.241'};
+ for(let i=0;i<20;i++)assert.equal((await send('/device/start',{provider:'github'},rateHeaders)).status,200);
+ const limitedStart=await send('/device/start',{provider:'github'},rateHeaders);
+ assert.equal(limitedStart.status,429);assert.ok(Number(limitedStart.headers.get('Retry-After'))>0);
+ assert.equal((await send('/device/start',{provider:'github'},{'CF-Connecting-IP':'203.0.113.242'})).status,200);
+ assert.equal((await send('/session',undefined,{...rateHeaders,Authorization:'Bearer '+'0'.repeat(64)})).status,401);
+ assert.equal(linked.connections.find(c=>c.provider==='discord').handle,'fixture_d');
 
  console.log('Identity flow passed: GitHub, Google and Discord pairing, cookie, PKCE, callback replay, one-time claim, server session, hashed storage, logout, expiry, remembered devices (sliding 30-day expiry, 90-day cap, listing, revocation scoped to one account), insights sync (idempotent daily totals, per-account sums, validation, delete), browser cancellation and forged refusal. Provider responses were mocked; no real provider login claimed.');
 }finally{await mf.dispose();}

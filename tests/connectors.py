@@ -15,7 +15,7 @@ class ConnectorTests(unittest.IsolatedAsyncioTestCase):
   @asynccontextmanager
   async def io(*args):yield (None,None)
   @asynccontextmanager
-  async def session(*args):yield Session()
+  async def session(*args,**kwargs):yield Session()
   with patch('backend.connectors.stdio_client',io),patch('backend.connectors.ClientSession',session):
    c=Connector('fixture',{'command':'unused'},events.append);c.start()
    await asyncio.wait_for(c.ready.wait(),2)

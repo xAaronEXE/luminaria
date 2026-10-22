@@ -1,0 +1,14 @@
+{
+  "combined_profile": true,
+  "installer_exit": 0,
+  "version": "0.2.34",
+  "request_ms": 393,
+  "signed_in": true,
+  "hashes_match": true,
+  "calendar_cells": 371,
+  "providers": [
+    "github",
+    "google",
+    "discord"
+  ]
+}

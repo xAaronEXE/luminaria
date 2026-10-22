@@ -1,6 +1,6 @@
 CREATE TABLE IF NOT EXISTS identities (
  id TEXT PRIMARY KEY, provider TEXT NOT NULL, subject TEXT NOT NULL,
- name TEXT NOT NULL, created INTEGER NOT NULL, UNIQUE(provider,subject)
+ name TEXT NOT NULL, created INTEGER NOT NULL, handle TEXT, UNIQUE(provider,subject)
 );
 CREATE TABLE IF NOT EXISTS devices (
  id TEXT PRIMARY KEY, secret_hash TEXT NOT NULL, provider TEXT NOT NULL,

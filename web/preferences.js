@@ -8,7 +8,7 @@ function applyStudioTheme(p){
 async function savePrefs(values){await api('/preferences','POST',values);Object.assign(studioPrefs,values);applyStudioTheme(studioPrefs);toast('Settings saved')}
 const checkField=(label,id,checked,help)=>`<label class="setting-row"><div><h3>${label}</h3><p>${help}</p></div><input type="checkbox" id="${id}" ${checked?'checked':''}></label>`;
 async function studioSettingsSection(section,body){
- const s=await api('/settings'),p=window.studioPrefs=await api('/preferences');
+ const [s,p]=await Promise.all([api('/settings'),api('/preferences')]);if(!body.isConnected)return;window.studioPrefs=p;
  const accessModeSupported=!!s.access_status;
  s.access_status ||= {active:'review',selected:'review',restart_required:false};
  const intro=(title,copy)=>`<h3 class="settings-page-title">${title}</h3><p class="settings-intro">${copy}</p>`;

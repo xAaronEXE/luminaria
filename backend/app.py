@@ -50,6 +50,8 @@ async def lifespan(app):
     yield
     task.cancel()
     with contextlib.suppress(asyncio.CancelledError): await task
+    if tuning is not None: await tuning.cancel()
+    if file_workflows is not None: await file_workflows.close()
     await engine.close()
     await conn.close()
     for c in connectors.values(): await c.close()
@@ -449,7 +451,7 @@ async def update_install(background_tasks:BackgroundTasks):
 @app.get('/api/skills')
 async def skills():
     from .skills import catalog
-    return [{**s,'enabled':store.setting('skill:'+s['name'],True)} for s in catalog(connectors)]
+    return [{**s,'enabled':store.setting('skill:'+s['name'],True),'last_run':store.setting('skill_run:'+s['name'],None)} for s in catalog(connectors)]
 
 @app.post('/api/skills')
 async def skill_import(request:Request):
@@ -462,6 +464,23 @@ async def skill_instructions(name:str):
     skill=load_skill(name)
     with contextlib.suppress(Exception): usage.skill('viewed',name)
     return skill
+
+@app.get('/api/skills/{name}/setup')
+async def skill_setup(name:str):
+    from .skill_setup import checklist
+    return checklist(name,connectors)
+
+@app.post('/api/skills/{name}/setup/connector')
+async def skill_setup_connector(name:str,request:Request):
+    from .skill_setup import checklist,connector_config
+    body=await request.json();need=body.get('connector')
+    guide=checklist(name,connectors)
+    if not any(s['id']==need and s['action']=='connector' for s in guide['steps']):raise ValueError('This connector is not a declared prerequisite')
+    if body.get('approved') is not True:raise ValueError('Review local connector access before starting it')
+    if any(not r.get('finished') for r in engine.runs.values()):raise ValueError('Stop active tasks before reconnecting tools')
+    config=connector_config(need);configs=CONFIG.get('mcp',{}).copy();configs[need]=config
+    save_config({'mcp':configs});await restart_connector(need,config)
+    return {'status':'connecting','note':'Use Check again to verify that the live connector loads its tools.'}
 
 @app.delete('/api/skills/{name}')
 async def skill_remove(name:str):
@@ -769,7 +788,8 @@ async def accounts():
 @app.post('/api/identity/start')
 async def identity_start(request:Request):
     from .identity import start
-    return await identity_call(start((await request.json()).get('provider')))
+    payload=await request.json()
+    return await identity_call(start(payload.get('provider'),open_browser=payload.get('open_browser') is True,link=payload.get('link') is True,enter_workspace=payload.get('enter_workspace') is True))
 
 async def identity_call(operation):
     import httpx
@@ -777,15 +797,34 @@ async def identity_call(operation):
     except httpx.HTTPError:raise HTTPException(503,'Sign-in service is unavailable. Check your connection and try again.') from None
 
 @app.post('/api/identity/poll')
-async def identity_poll(request:Request):
-    if any(not r.get('finished') for r in engine.runs.values()):raise ValueError('Finish or stop active tasks before completing sign-in')
-    from .identity import poll
-    return await identity_call(poll((await request.json()).get('flow_id','')))
+async def identity_poll(request:Request,background_tasks:BackgroundTasks):
+    from .identity import poll,pending
+    flow_id=(await request.json()).get('flow_id','')
+    # Linking another provider does not switch workspaces or restart the app.
+    # Only account entry needs the task-safety guard.
+    if pending.get(flow_id,{}).get('enter_workspace') and any(not r.get('finished') and not r.get('resume_available') for r in engine.runs.values()):
+        raise ValueError('Finish or stop active tasks before completing sign-in')
+    result=await identity_call(poll(flow_id))
+    if result.get('restart_required'):
+        from .lifecycle import request_restart
+        background_tasks.add_task(request_restart)
+    return result
 
 @app.get('/api/gate')
 async def gate_status(force:bool=False):
     from .identity import gate
     return await gate(force)
+
+@app.get('/api/onboarding')
+async def onboarding_status():
+    from .onboarding import status
+    return await status(store)
+
+@app.post('/api/onboarding')
+async def onboarding_complete(request:Request):
+    if any(not r.get('finished') for r in engine.runs.values()):raise ValueError('Finish or stop active tasks before setting up your workspace')
+    from .onboarding import complete
+    return await complete(store,await request.json())
 
 @app.post('/api/identity/require')
 async def identity_require(request:Request):
@@ -852,7 +891,27 @@ async def compaction_metrics(): return usage.compaction()
 
 @app.get('/api/insights')
 async def insights():
-    return {**usage.summary(insights_zone()),'sync':insights_sync_public(),'account':store.setting('insights_account',None)}
+    from .identity import status as identity_status
+    return {**usage.summary(insights_zone()),'sync':insights_sync_public(),'account':profile_account_snapshot(await identity_status())}
+
+def profile_account_snapshot(identity):
+    from .usage import account_view,activity_grid
+    saved=store.setting('insights_account',None)
+    if not(identity.get('signed_in') and saved and saved.get('account_id')==identity.get('account',{}).get('id') and insights_sync_public().get('enabled')):return None
+    account=account_view({'account_id':saved['account_id'],'devices':saved.get('devices',0),'days':saved.get('daily',[])},insights_zone())
+    account['grid']=activity_grid(account['daily'],account['first_day'],insights_zone())
+    account['busiest_day']=max(({'day':d['day'],'tokens':d['metrics'].get('tokens_in',0)+d['metrics'].get('tokens_out',0)} for d in account['daily']),key=lambda d:d['tokens'],default=None)
+    return account
+
+@app.get('/api/profile-overview')
+async def profile_overview():
+    from .usage import activity_grid,account_view,zone
+    from .identity import status as identity_status
+    identity=await identity_status();tz_name=insights_zone();summary=usage.summary(tz_name)
+    tz,_=zone(tz_name);grid=activity_grid(usage.days(tz),summary.get('coverage_start'),tz_name)
+    account=profile_account_snapshot(identity)
+    from .profiles import status as profile_status
+    return {'identity':identity,'profiles':profile_status(),'local':summary,'grid':grid,'account':account,'sync':insights_sync_public()}
 
 @app.post('/api/insights/timezone')
 async def insights_timezone(request:Request):
@@ -908,6 +967,111 @@ async def insights_delete(request:Request):
         state=sync_state(store); state['enabled']=False; store.set_setting('insights_sync',state); store.set_setting('insights_account',None)
     if scope in ('local','all'): result['local']=usage.delete()
     return result
+
+tuning=None
+file_workflows=None
+
+def workflow_service():
+    global file_workflows
+    if file_workflows is None:
+        from .file_workflows import Workflows
+        file_workflows=Workflows(store)
+    return file_workflows
+
+@app.get('/api/file-workflows')
+async def workflow_list():
+    from .config import FULL_ACCESS
+    service=workflow_service()
+    return {'workflows':service.list(),'active':service.active,'full_access':FULL_ACCESS}
+
+@app.post('/api/file-workflows')
+async def workflow_create(request:Request):
+    from .file_workflows import create
+    return create(store,await request.json())
+
+@app.post('/api/file-workflows/{id}/run')
+async def workflow_run(id:str,request:Request):
+    global benchmarking
+    if benchmarking or any(not r.get('finished') for r in engine.runs.values()):raise ValueError('Finish active work before starting a file workflow.')
+    body=await request.json()
+    if body.get('approved') is not True:raise ValueError('Review the saved steps and explicitly approve execution.')
+    result=workflow_service().start(id,body.get('all_steps') is True)
+    # Reuse the existing inference/model-management exclusion while files are changing.
+    benchmarking=True
+    def finished(task):
+        global benchmarking
+        benchmarking=False;broadcast({'type':'changed'})
+    workflow_service().task.add_done_callback(finished)
+    return result
+
+@app.post('/api/file-workflows/{id}/stop')
+async def workflow_stop(id:str):
+    if workflow_service().active not in (None,id):raise ValueError('A different workflow is active.')
+    return workflow_service().stop()
+
+@app.post('/api/file-workflows/{id}/inspect')
+async def workflow_inspect(id:str):
+    if workflow_service().busy():raise ValueError('Stop or finish the active workflow before inspecting recovery.')
+    from .file_workflows import get
+    return workflow_service().recover(get(store,id))
+
+@app.post('/api/file-workflows/{id}/accept')
+async def workflow_accept(id:str):return workflow_service().accept(id)
+
+@app.post('/api/file-workflows/{id}/restore')
+async def workflow_restore(id:str,request:Request):
+    body=await request.json()
+    if body.get('approved') is not True:raise ValueError('Explicit restoration approval is required.')
+    return workflow_service().restore(id,body.get('step'))
+
+def tuning_service():
+    global tuning
+    if tuning is None:
+        from .hardware import Tuning
+        tuning=Tuning(store)
+    return tuning
+
+@app.get('/api/hardware')
+async def hardware_info():
+    from .hardware import information
+    from .models import registry
+    return {**await asyncio.to_thread(information),'models':[{'id':m['id'],'name':m['name']} for m in registry() if Path(m.get('model_file','')).is_file()]}
+
+@app.get('/api/tuning')
+async def tuning_status():
+    return {'job':tuning_service().public(),'history':store.setting('tuning_history',[]),'rollback_available':bool(store.setting('tuning_rollback',None))}
+
+@app.post('/api/tuning/start')
+async def tuning_start(request:Request):
+    global benchmarking
+    if benchmarking or any(not r.get('finished') for r in engine.runs.values()): raise ValueError('Finish active work before starting a tuning benchmark.')
+    body=await request.json()
+    if body.get('consent') is not True:raise ValueError('Explicit benchmark consent is required.')
+    from .models import registry
+    from .hardware import information
+    model=next((m for m in registry() if m['id']==body.get('model') and Path(m.get('model_file','')).is_file()),None)
+    if not model:raise ValueError('Select an installed model; no weights are downloaded.')
+    benchmarking=True
+    try:
+        result=tuning_service().start(model,body,await asyncio.to_thread(information))
+        def finished(task):
+            global benchmarking
+            benchmarking=False
+            broadcast({'type':'changed'})
+        tuning_service().task.add_done_callback(finished)
+        return result
+    except BaseException:
+        benchmarking=False;raise
+
+@app.post('/api/tuning/stop')
+async def tuning_stop():return await tuning_service().cancel()
+
+@app.post('/api/tuning/apply')
+async def tuning_apply(request:Request):
+    if benchmarking or any(not r.get('finished') for r in engine.runs.values()):raise ValueError('Finish active work before selecting tuning settings.')
+    from .hardware import information,apply_profile
+    body=await request.json()
+    return apply_profile(store,body.get('job'),await asyncio.to_thread(information),body.get('rollback') is True)
 
 app.mount('/',StaticFiles(directory=ROOT/'web',html=True),name='ui')
 

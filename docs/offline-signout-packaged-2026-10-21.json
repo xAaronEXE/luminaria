@@ -1,0 +1,11 @@
+{
+  "version": "0.2.23",
+  "offline_proxy": true,
+  "unlocked_before": true,
+  "signed_out": true,
+  "remote_revoked": false,
+  "unlocked_after": false,
+  "state_status_after": 423,
+  "credentials_remaining": 0,
+  "offline_cache_remaining": false
+}

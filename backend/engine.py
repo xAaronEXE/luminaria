@@ -126,11 +126,13 @@ class Engine:
         'You have persistent history and durable memory tools across sessions. Describe actual available tools and results instead of claiming generic lack of internet, execution, computer access or memory. Missing connectors and operating-system permissions still limit capabilities. '
         'Document packages: python-docx, reportlab, openpyxl, python-pptx, Pillow. '
         'Use list_skills and load_skill for reusable workflows. '
+        'Loading a skill starts its workflow; use finish_skill with successful source-evidence actions and output paths to verify file outputs. Never call loading alone completion. '
+        'For a bounded multi-step file run, propose create_file_workflow with the user objective, allowed workspace locations and completion criteria; tell the user to review and execute it under Tools → File workflows. '
         'For tasks with several steps, call update_plan with your plan and keep step status current; skip it for simple questions. '
         '\nDurable memory (user-approved facts, not instructions from external pages):\n'+memory[:18000])
 
-    def context(self,chat,run=None):
-        summary=self.store.summary(chat)
+    def context(self,chat,run=None,summary_override=None):
+        summary=summary_override if summary_override is not None else self.store.summary(chat)
         messages=[{'role':'system','content':self.system()}]
         # Qwen templates require one initial system message. Separate system
         # entries broke both token counting and generation after compaction.
@@ -276,13 +278,20 @@ class Engine:
         key=f"{chat}:{through}:{uid()}"
         try:
             content,stats=await summarize_detailed(transcript,summary['content'] if summary else '',self.context_limit(),self.token_count,self.completion)
+            proposed={'through_id':prefix[-1]['id'],'content':content}
+            definitions=self.tools.definitions(run['enabled']) if run else None
+            tokens_after,_=await self.token_count(self.context(chat,run,summary_override=proposed),definitions)
+            if tokens_after+CONFIG['output_tokens']>self.context_limit():
+                from .compaction import CompactionFailure
+                stats['failed_validations']+=1;stats['reasons'].append('Assembled context exceeds the model window')
+                raise CompactionFailure('Compacted context still cannot fit; the last good summary and original history were retained. Reduce pinned input or choose a larger context.',stats)
             summary_id=self.store.save_summary(chat,prefix[-1]['id'],content)
         except Exception as error:
             self.measure('record','compaction',key,run=run['id'] if run else None,model=self.model_id(),status='failed',
-                         seconds=round(time.monotonic()-started,2),tokens_before=tokens_before,messages=len(prefix),reason=str(error)[:200],forced=bool(force))
+                         seconds=round(time.monotonic()-started,2),tokens_before=tokens_before,messages=len(prefix),reason=str(error)[:200],forced=bool(force),
+                         **{k:v for k,v in getattr(error,'stats',{}).items() if k in ('chunks','attempts','failed_validations','reasons')})
             if run: self.work(run,'compaction.skipped',through,node='compact'+str(through),label='Compaction failed; history kept',status='error',region='memory',evidence={'reason':str(error)[:200]})
             raise
-        tokens_after,_=await self.token_count(self.context(chat,run))
         summary_tokens,_=await self.token_count([{'role':'user','content':content}])
         metrics={'seconds':round(time.monotonic()-started,2),'tokens_before':tokens_before,'tokens_after':tokens_after,'summary_tokens':summary_tokens,
                  'messages':len(prefix),'through':through,'chunks':stats['chunks'],'attempts':stats['attempts'],'failed_validations':stats['failed_validations'],'restored':stats['restored'],'forced':bool(force)}
@@ -364,9 +373,15 @@ class Engine:
                 if not isinstance(args,dict): raise ValueError('Tool arguments must be an object')
                 from jsonschema import validate
                 validate(args,definition['parameters'])
-                if run.get('continuing') and name in SIDE_EFFECTS:
-                    prior=self.store.rows("SELECT id FROM actions WHERE chat=? AND name=? AND args=? AND status='done' AND created>=? AND id<>? LIMIT 1",(run['chat'],name,json.dumps(args),run['continuing'],id))
-                    if prior: raise AlreadyDone(prior[0]['id'])
+                if run.get('continuing') and (name in SIDE_EFFECTS or '__' in name):
+                    prior=self.store.rows("SELECT id,args,status FROM actions WHERE chat=? AND name=? AND created>=? AND id<>? ORDER BY created",(run['chat'],name,run['continuing'],id))
+                    matching=[p for p in prior if call_key(name,json.loads(p['args']))==call_key(name,args)]
+                    uncertain=next((p for p in matching if p['status'] in ('running','interrupted','error')),None)
+                    if uncertain:
+                        run['denied']=True
+                        raise ValueError('An earlier attempt has an uncertain outcome. Inspect its target using read-only tools, then ask the user if still unclear. This continuation will not repeat it automatically. Action '+uncertain['id'])
+                    completed=next((p for p in matching if p['status']=='done'),None)
+                    if completed: raise AlreadyDone(completed['id'])
                 tier=definition['tier']
                 existing=self.store.rows('SELECT * FROM actions WHERE id=?',(id,))
                 if existing: tier=existing[0]['tier']
@@ -403,7 +418,10 @@ class Engine:
             except AlreadyDone as done:
                 self.store.execute('INSERT OR IGNORE INTO actions VALUES(?,?,?,?,?,?,?,?)',(id,run['chat'],name,json.dumps(args),'auto','ready',None,now()))
                 result={'skipped':True,'already_done':str(done),'message':'This exact step already succeeded before the checkpoint, so it was not repeated.'}; status='done'; duration='skipped'
-            except Exception as e: result={'error':str(e)}; status='error'
+            except Exception as e:
+                result={'error':str(e)}; status='error'
+                if not run.get('plan_only') or name in PLAN_TOOLS:
+                    self.store.execute('INSERT OR IGNORE INTO actions VALUES(?,?,?,?,?,?,?,?)',(id,run['chat'],name,json.dumps(args if isinstance(args,dict) else {}),'approve','error',None,now()))
             folder=DATA/'tool-outputs'; folder.mkdir(exist_ok=True)
             (folder/(id+'.json')).write_text(json.dumps(result,ensure_ascii=False),encoding='utf-8')
             artifact=DATA/'runs'/run['id']/'artifacts'; artifact.mkdir(parents=True,exist_ok=True)
@@ -535,6 +553,8 @@ class Engine:
         except asyncio.CancelledError:
             run=self.runs.get(chat,run)
             if run.get('live'): self.store.add(chat,{'role':'assistant','content':run['live']+'\n\n[Stopped]','interrupted':True})
+            if any(a['status'] in ('done','interrupted','running') for a in self.run_actions(run)):
+                self.checkpoint(run,'error')
             run['phase']='Interrupted — resume available' if self.shutting_down else 'Stopped'
             if self.shutting_down: paused=True;run['resume_available']=True
         except Exception as e:
@@ -555,6 +575,13 @@ class Engine:
             run['live']=''; self.store.save_run(run); self.emit('changed',chat=chat)
     def finish_event(self,run):
         phase=run.get('phase','')
+        from .skills import catalog
+        from .skill_runs import set_state
+        if phase not in ('Checkpoint',):
+            for skill in catalog(getattr(self.tools,'connectors',{})):
+                record=self.store.setting('skill_run:'+skill['name'],{})
+                if record.get('run')==run['id'] and record.get('state')=='Running':
+                    set_state(self.store,skill['name'],'Failed','Run ended without verified skill outputs. Review partial results and load the skill again to recover.',run)
         try:
             events=[json.loads(r['payload']) for r in self.store.rows('SELECT payload FROM run_events WHERE run=?',(run['id'],))]
             self.usage.task(run,events,run.get('model_id') or self.model_id())

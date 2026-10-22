@@ -62,8 +62,16 @@ def merged(spans):
 def task_times(events, started, finished):
     """Wall, active, approval-wait and paused seconds from the persisted work log."""
     requested, waits, pauses, paused_at = {}, [], [], None
+    running,spans={},[]
     for e in sorted(events, key=lambda e: (e.get('at', 0), e.get('seq', 0))):
         kind, at = e.get('type'), e.get('at', 0)
+        family=kind.split('.',1)[0]
+        key=(family,e.get('node'))
+        if family in ('generation','tool') and kind.endswith('.started'):running[key]=at
+        elif family in ('generation','tool') and key in running and (kind.endswith(('.completed','.done','.failed','.error','.interrupted','.cancelled')) or e.get('status') in ('done','error','interrupted','denied')):
+            spans.append((max(started,running.pop(key)),min(finished,at)))
+        if kind in ('run.interrupted','run.failed','run.completed','run.stopped'):
+            spans.extend((max(started,a),min(finished,at)) for a in running.values());running.clear()
         if kind == 'approval.requested': requested.setdefault(e.get('node'), at)
         elif kind in ('approval.allowed', 'approval.denied') and e.get('node') in requested: waits.append((requested.pop(e['node']), at))
         elif kind == 'run.interrupted' and paused_at is None: paused_at = at
@@ -73,7 +81,11 @@ def task_times(events, started, finished):
     wall = max(0.0, finished - started)
     paused = intervals_total(pauses)
     idle = intervals_total(waits + pauses)
-    return {'wall': round(wall, 1), 'active': round(max(0.0, wall - idle), 1), 'wait': round(idle - paused, 1), 'paused': round(paused, 1)}
+    # Unclosed spans are not extended to restart time: an abrupt stop has no measured end.
+    active=intervals_total(spans)
+    for a,b in merged(waits+pauses):
+        active-=intervals_total([(max(a,x),min(b,y)) for x,y in merged(spans)])
+    return {'wall': round(wall, 1), 'active': round(max(0.0,active), 1), 'wait': round(idle - paused, 1), 'paused': round(paused, 1)}
 
 
 class Usage:
@@ -115,7 +127,7 @@ class Usage:
         data = [json.loads(g['data']) for g in gens]
         tools = self.store.rows("SELECT status FROM usage_events WHERE kind='tool' AND run=?", (run['id'],))
         return self.record('task', run['id'], run=run['id'], model=model, status=run.get('phase', ''), created=finished,
-                           **times, generations=len(data),
+                           **times, timing_definition='measured-spans-v1',generations=len(data),
                            tokens_in=sum(d.get('prompt_tokens') or 0 for d in data),
                            tokens_out=sum(d.get('completion_tokens') or 0 for d in data),
                            tool_ok=sum(t['status'] == 'done' for t in tools),
@@ -162,6 +174,8 @@ class Usage:
         result = {'coverage_start': events[0]['created'] if events else None, 'events': len(events),
                   'timezone': tz_used or 'local', 'timezone_label': tz_used or (datetime.now().astimezone(tz).tzname() or 'this PC'),
                   'timezone_requested': tz_name or '', 'timezone_valid': not tz_name or tz_used == tz_name, 'missing': []}
+        if any(t['data'].get('timing_definition')!='measured-spans-v1' for t in tasks):
+            result['missing'].append('Older task times are wall-time estimates excluding waits and pauses. New tasks measure model/tool intervals; historical timing has not been reconstructed.')
         if not events:
             result['missing'].append('Nothing recorded yet. Insights start with the next task; earlier activity is not reconstructed.')
             return result
@@ -209,12 +223,19 @@ class Usage:
                             'top': [{'name': k, 'count': v} for k, v in sorted(invoked.items(), key=lambda kv: -kv[1])[:6]]}
         result['tools'] = tally(tools, lambda t: t['name'])[:10]
         result['integrations'] = tally([t for t in tools if t['data'].get('integration')], lambda t: t['data']['integration'])
+        result['plugins'] = None
+        result['missing'].append('Separate plugin usage is unavailable: recorded connector calls appear under Integrations, not inferred plugin identities.')
         models = {}
         for g in gens:
             entry = models.setdefault(g['model'] or 'unknown', {'model': g['model'] or 'unknown', 'generations': 0, 'tokens_out': 0, 'speeds': []})
             entry['generations'] += 1; entry['tokens_out'] += g['data'].get('completion_tokens') or 0
             if g['data'].get('tps') and (g['data'].get('completion_tokens') or 0) >= FAST_MIN_TOKENS: entry['speeds'].append(g['data']['tps'])
         result['models'] = sorted(({**{k: v for k, v in m.items() if k != 'speeds'}, 'median_tps': round(statistics.median(m['speeds']), 1) if m['speeds'] else None} for m in models.values()), key=lambda m: -m['generations'])
+        trends={}
+        for g in timed:
+            key=(g['model'],day_of(g['created'],tz))
+            trends.setdefault(key,[]).append(g['data']['tps'])
+        result['speed_history']=[{'model':model,'day':day,'median_tps':round(statistics.median(values),1),'samples':len(values)} for (model,day),values in sorted(trends.items(),key=lambda entry:(entry[0][1],str(entry[0][0])))]
         return result
 
     def compaction(self, recent=8):
@@ -299,23 +320,37 @@ async def sync(store, usage, tz_name=''):
     state = sync_state(store)
     tz, _ = zone(tz_name)
     days = usage.days(tz)
-    sent = 0
-    for i in range(0, len(days), SYNC_BATCH):
-        batch = days[i:i + SYNC_BATCH]
-        await service('POST', '/insights/days', {'device': state['device'], 'days': batch})
-        sent += len(batch)
+    # Atomic full-device replacement removes stale buckets after timezone changes or deletion.
+    # Old services return 404, leaving their last snapshot intact rather than using unsafe delete/upload.
+    cutoff=(datetime.now(timezone.utc)-timedelta(days=729)).date().isoformat()
+    days=[d for d in days if d['day']>=cutoff]
+    await service('POST','/insights/snapshot',{'device':state['device'],'days':days})
+    sent=len(days)
     combined = await service('GET', '/insights/days')
     state.update(last_sync=now(), last_error=None, days_sent=sent)
     store.set_setting('insights_sync', state)
     return {'sent': sent, 'account': account_view(combined)}
 
 
-def account_view(combined):
+def account_view(combined,tz_name='',today=None):
     days = [d for d in combined.get('days', []) if isinstance(d, dict) and re.fullmatch(r'\d{4}-\d{2}-\d{2}', str(d.get('day', '')))]
     metric = lambda d, k: int((d.get('metrics') or {}).get(k) or 0)
     active = sorted(d['day'] for d in days if metric(d, 'generations'))
     tin = sum(metric(d, 'tokens_in') for d in days); tout = sum(metric(d, 'tokens_out') for d in days)
-    return {'devices': int(combined.get('devices') or 0), 'days': len(days), 'active_days': len(active),
+    tz,_=zone(tz_name)
+    return {'account_id':combined.get('account_id'),'daily':days,'devices': int(combined.get('devices') or 0), 'days': len(days), 'active_days': len(active),
             'tokens_in': tin, 'tokens_out': tout, 'total': tin + tout,
             'active_seconds': sum(metric(d, 'active_seconds') for d in days),
-            'streak': streaks(active, datetime.now().astimezone().date()), 'first_day': days[0]['day'] if days else None}
+            'streak': streaks(active,today or datetime.now(timezone.utc).astimezone(tz).date()), 'first_day': min((d['day'] for d in days),default=None)}
+
+def activity_grid(days,coverage_start,tz_name='',today=None):
+    """53 Monday-aligned weeks. Unrecorded days and future days are not zeros."""
+    tz,_=zone(tz_name);today=today or datetime.now(timezone.utc).astimezone(tz).date()
+    start=today-timedelta(days=today.weekday()+52*7)
+    coverage=datetime.fromtimestamp(coverage_start,timezone.utc).astimezone(tz).date() if isinstance(coverage_start,(int,float)) else datetime.fromisoformat(coverage_start).date() if coverage_start else None
+    lookup={d['day']:d.get('metrics',{}) for d in days}
+    cells=[]
+    for i in range(371):
+        day=start+timedelta(days=i);covered=bool(coverage and coverage<=day<=today);metrics=lookup.get(day.isoformat(),{})
+        cells.append({'day':day.isoformat(),'covered':covered,'future':day>today,'tokens':int(metrics.get('tokens_in',0)+metrics.get('tokens_out',0)) if covered else None})
+    return {'cells':cells,'today':today.isoformat(),'coverage_start':coverage.isoformat() if coverage else None,'week_start':'Monday'}
