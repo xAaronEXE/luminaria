@@ -1,0 +1,24 @@
+/* First-use setup. Credentials and provider verification remain server-side. */
+async function maybeOnboard(){
+ const account=await api('/accounts');if(!account.identity?.signed_in)return;
+ const data=await api('/onboarding');if(data.completed)return;
+ const modal=document.createElement('div');modal.id='account-onboarding';modal.setAttribute('role','dialog');modal.setAttribute('aria-modal','true');modal.setAttribute('aria-labelledby','onboarding-title');
+ document.body.append(modal);document.querySelector('.app').inert=true;
+ let step=0,name=data.name,workspace=data.workspace,mode=data.appearance?.mode||'system';
+ const previousFocus=document.activeElement;
+ function draw(){
+  const titles=['Make yourself at home','Choose your working folder','Your workspace is ready'];
+  modal.innerHTML=`<form class="onboarding-card"><img src="/brand/luminaria.svg" alt="" width="44" height="44"><p class="onboarding-step">Step ${step+1} of 3</p><h1 id="onboarding-title">${titles[step]}</h1>${step===0?`<p>You’re signed in. Give this workspace a name and choose how Luminaria looks.</p><label class="field">Workspace name<input name="name" maxlength="60" required value="${esc(name)}" autocomplete="off"></label><fieldset><legend>Appearance</legend>${[['system','Follow system'],['dark','Dark'],['light','Light']].map(([v,label])=>`<label><input type="radio" name="mode" value="${v}" ${mode===v?'checked':''}> ${label}</label>`).join('')}</fieldset>`:step===1?`<p>This is where file tools can read and create files. Existing files stay in place when you choose a different folder.</p><label class="field">Working folder<input name="workspace" required value="${esc(workspace)}"></label><button type="button" class="btn" id="onboarding-browse">Browse this PC…</button><p class="small-note">Choose a folder you want the assistant to work in. Computer and command tools have separate permissions in Settings.</p>`:`<p>Your chats, files and models stay on this PC. Insights sync and service integrations are separate opt-in choices.</p><dl><dt>Workspace</dt><dd>${esc(name)}</dd><dt>Working folder</dt><dd>${esc(workspace)}</dd><dt>Configured model</dt><dd>${esc(data.model||'Choose a model in Model library')}</dd></dl><p class="small-note">Add or change models in Model library, and connect other sign-in methods from your profile. Settings can be changed any time.</p>`}<p class="onboarding-error" role="alert"></p><button type="button" class="text-button onboarding-signout" id="onboarding-signout">Sign out / Use another account</button><div class="onboarding-actions">${step?'<button type="button" class="btn" id="onboarding-back">Back</button>':''}<button class="btn primary" type="submit">${step===2?'Open my workspace':'Continue'}</button></div></form>`;
+  const form=modal.querySelector('form'),error=modal.querySelector('[role="alert"]');
+  modal.querySelector('#onboarding-signout').onclick=async()=>{
+   const controls=[...form.querySelectorAll('button,input')];controls.forEach(c=>c.disabled=true);error.textContent='';
+   try{const result=await api('/identity/logout','POST',{});modal.remove();await showGate({reason:result.message||'Signed out. Choose another account to continue.'});}
+   catch(err){error.textContent=err.message;controls.forEach(c=>c.disabled=false)}
+  };
+  modal.querySelector('#onboarding-back')?.addEventListener('click',()=>{if(step===1)workspace=form.elements.workspace.value;step--;draw()});
+  modal.querySelector('#onboarding-browse')?.addEventListener('click',safe(async()=>{const result=await api('/workspace/browse','POST',{});if(!result.cancelled)form.elements.workspace.value=result.path}));
+  form.onsubmit=async e=>{e.preventDefault();error.textContent='';try{if(step===0){name=form.elements.name.value.trim();mode=form.elements.mode.value;if(!name)throw Error('Enter a workspace name.')}if(step===1)workspace=form.elements.workspace.value.trim();if(step<2){step++;draw();return}const submit=form.querySelector('[type="submit"]'),controls=[...form.querySelectorAll('button,input')];controls.forEach(c=>c.disabled=true);try{await api('/onboarding','POST',{name,workspace,mode});window.studioPrefs=await api('/preferences');applyStudioTheme(window.studioPrefs);await refresh();await refreshFiles();document.querySelector('.app').inert=false;modal.remove();previousFocus?.focus();toast('Your workspace is ready.')}finally{controls.forEach(c=>c.disabled=false)}}catch(err){error.textContent=err.message}};
+  modal.onkeydown=e=>{if(e.key!=='Tab')return;const controls=[...form.querySelectorAll('button,input')].filter(n=>!n.disabled);if(e.shiftKey&&document.activeElement===controls[0]){e.preventDefault();controls.at(-1).focus()}else if(!e.shiftKey&&document.activeElement===controls.at(-1)){e.preventDefault();controls[0].focus()}};
+  (form.querySelector('input:not([type="radio"])')||form.querySelector('button'))?.focus();
+ }draw();
+}

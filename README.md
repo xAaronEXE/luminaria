@@ -1,6 +1,6 @@
 # Luminaria
 
-![Luminaria — Intelligence, on your terms.](web/brand/social-cover.jpg)
+![Luminaria — Intelligence, on your terms.](web/brand/social-cover.svg)
 
 A Windows desktop interface for local AI, built with plain HTML/JavaScript, a Python backend, SQLite and llama.cpp/llama-swap.
 

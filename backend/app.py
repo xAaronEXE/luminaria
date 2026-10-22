@@ -788,7 +788,8 @@ async def accounts():
 @app.post('/api/identity/start')
 async def identity_start(request:Request):
     from .identity import start
-    return await identity_call(start((await request.json()).get('provider')))
+    payload=await request.json()
+    return await identity_call(start(payload.get('provider'),open_browser=payload.get('open_browser') is True,link=payload.get('link') is True,enter_workspace=payload.get('enter_workspace') is True))
 
 async def identity_call(operation):
     import httpx
@@ -796,15 +797,34 @@ async def identity_call(operation):
     except httpx.HTTPError:raise HTTPException(503,'Sign-in service is unavailable. Check your connection and try again.') from None
 
 @app.post('/api/identity/poll')
-async def identity_poll(request:Request):
-    if any(not r.get('finished') for r in engine.runs.values()):raise ValueError('Finish or stop active tasks before completing sign-in')
-    from .identity import poll
-    return await identity_call(poll((await request.json()).get('flow_id','')))
+async def identity_poll(request:Request,background_tasks:BackgroundTasks):
+    from .identity import poll,pending
+    flow_id=(await request.json()).get('flow_id','')
+    # Linking another provider does not switch workspaces or restart the app.
+    # Only account entry needs the task-safety guard.
+    if pending.get(flow_id,{}).get('enter_workspace') and any(not r.get('finished') and not r.get('resume_available') for r in engine.runs.values()):
+        raise ValueError('Finish or stop active tasks before completing sign-in')
+    result=await identity_call(poll(flow_id))
+    if result.get('restart_required'):
+        from .lifecycle import request_restart
+        background_tasks.add_task(request_restart)
+    return result
 
 @app.get('/api/gate')
 async def gate_status(force:bool=False):
     from .identity import gate
     return await gate(force)
+
+@app.get('/api/onboarding')
+async def onboarding_status():
+    from .onboarding import status
+    return await status(store)
+
+@app.post('/api/onboarding')
+async def onboarding_complete(request:Request):
+    if any(not r.get('finished') for r in engine.runs.values()):raise ValueError('Finish or stop active tasks before setting up your workspace')
+    from .onboarding import complete
+    return await complete(store,await request.json())
 
 @app.post('/api/identity/require')
 async def identity_require(request:Request):
@@ -890,7 +910,8 @@ async def profile_overview():
     identity=await identity_status();tz_name=insights_zone();summary=usage.summary(tz_name)
     tz,_=zone(tz_name);grid=activity_grid(usage.days(tz),summary.get('coverage_start'),tz_name)
     account=profile_account_snapshot(identity)
-    return {'identity':identity,'local':summary,'grid':grid,'account':account,'sync':insights_sync_public()}
+    from .profiles import status as profile_status
+    return {'identity':identity,'profiles':profile_status(),'local':summary,'grid':grid,'account':account,'sync':insights_sync_public()}
 
 @app.post('/api/insights/timezone')
 async def insights_timezone(request:Request):

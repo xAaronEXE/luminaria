@@ -64,6 +64,12 @@ def main():
         server.should_exit=True;thread.join(timeout=12)
         from backend.runtime import stop_owned
         stop_owned()
+    from backend.lifecycle import restart_requested
+    if restart_requested.is_set() and not options.server:
+        import subprocess
+        command=[sys.executable] if getattr(sys,'frozen',False) else [sys.executable,str(Path(__file__).resolve())]
+        working=Path(sys.executable).parent if getattr(sys,'frozen',False) else Path(__file__).resolve().parent
+        subprocess.Popen(command+sys.argv[1:],cwd=str(working))
 
 if __name__=='__main__':
     try:main()

@@ -1,7 +1,7 @@
 # Luminaria identity service
 
 Deployed on the owner's personal Cloudflare account, separately from ACT resources.
-Service: https://luminaria-identity.johnnycox4431836.workers.dev
+Service: https://luminaria-identity.dessellesoftwaresolutions.workers.dev
 
 GitHub is configured. Google and Discord flows are implemented and tested with mocked
 provider responses; each needs its OAuth application and secrets (steps below). Desktop 0.2.4 includes the
@@ -22,9 +22,9 @@ identity and encrypted session storage. Restart recovery remains unverified.
 
 Register separate OAuth applications for Luminaria. Exact callback URLs:
 
-- GitHub: `https://luminaria-identity.johnnycox4431836.workers.dev/callback/github`
-- Google: `https://luminaria-identity.johnnycox4431836.workers.dev/callback/google`
-- Discord: `https://luminaria-identity.johnnycox4431836.workers.dev/callback/discord`
+- GitHub: `https://luminaria-identity.dessellesoftwaresolutions.workers.dev/callback/github`
+- Google: `https://luminaria-identity.dessellesoftwaresolutions.workers.dev/callback/google`
+- Discord: `https://luminaria-identity.dessellesoftwaresolutions.workers.dev/callback/discord`
 
 ### Google
 

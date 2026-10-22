@@ -12,7 +12,7 @@ let latest={status:200,body:{tag_name:'v0.2.5',name:'Luminaria 0.2.5',body:'Rele
 const intercepted=[];
 const script=fileURLToPath(new URL('./src/index.js',import.meta.url));
 function worker(bindings){
- return new Miniflare(convertV4MiniflareOptions({modules:true,scriptPath:script,compatibilityDate:'2026-10-16',d1Databases:{DB:'test'},bindings,outboundService:async request=>{
+ return new Miniflare(convertV4MiniflareOptions({modules:[{type:'ESModule',path:script},{type:'ESModule',path:fileURLToPath(new URL('./src/legal.js',import.meta.url))}],compatibilityDate:'2026-10-16',d1Databases:{DB:'test'},bindings,outboundService:async request=>{
   const url=new URL(request.url);intercepted.push(url.href);
   if(url.origin==='https://api.github.com'){
    assert.equal(request.headers.get('Authorization'),'Bearer fixture-release-token');

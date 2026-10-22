@@ -1,4 +1,5 @@
 // Identity only: provider access tokens are never returned to the desktop or saved.
+import {legalPage} from './legal.js';
 const providers = {
  github:{authorize:'https://github.com/login/oauth/authorize',token:'https://github.com/login/oauth/access_token',user:'https://api.github.com/user',scope:'read:user',pkce:true},
  google:{authorize:'https://accounts.google.com/o/oauth2/v2/auth',token:'https://oauth2.googleapis.com/token',user:'https://openidconnect.googleapis.com/v1/userinfo',scope:'openid profile',pkce:true,extra:{prompt:'select_account'}},
@@ -64,7 +65,7 @@ async function boundedText(response,limit){
 }
 async function providerJson(url,options){
  const response=await fetch(url,{...options,signal:AbortSignal.timeout(15000)});
- if(!response.ok)throw new Error('Provider request failed');
+ if(!response.ok){const error=new Error('Provider request failed');error.authCode='provider_http_'+response.status;throw error;}
  return JSON.parse(await boundedText(response,131072));
 }
 // Release channel: the source repository is private, so a read-only token stays here.
@@ -115,6 +116,10 @@ async function releaseDownload(env,tag,name){
 }
 async function route(request,env){
  const url=new URL(request.url),path=url.pathname,time=now();
+ if(request.method==='GET'||request.method==='HEAD'){
+  const legal=legalPage(path);
+  if(legal)return request.method==='HEAD'?new Response(null,{status:legal.status,headers:legal.headers}):legal;
+ }
  if(path==='/health'&&request.method==='GET')return json({service:'Luminaria identity',providers:Object.keys(providers).map(id=>({id,configured:configured(env,id)}))});
  const retry=await limited(env,request);
  if(retry)return new Response(JSON.stringify({error:'Too many requests. Try again later.',retry_after:retry}),{status:429,headers:{'Content-Type':'application/json','Cache-Control':'no-store','Retry-After':String(retry),'X-Content-Type-Options':'nosniff'}});
@@ -171,7 +176,7 @@ async function route(request,env){
   const provider=providers[providerName],form=new URLSearchParams({grant_type:'authorization_code',client_id:env[providerName.toUpperCase()+'_CLIENT_ID'],client_secret:env[providerName.toUpperCase()+'_CLIENT_SECRET'],code,redirect_uri:url.origin+path});
   if(provider.pkce)form.set('code_verifier',entry.verifier);
   const token=await providerJson(provider.token,{method:'POST',headers:{Accept:'application/json','Content-Type':'application/x-www-form-urlencoded'},body:form.toString()});
-  if(typeof token.access_token!=='string'||token.token_type?.toLowerCase()!=='bearer')throw new Error('Provider token missing');
+  if(typeof token.access_token!=='string'||token.token_type?.toLowerCase()!=='bearer'){const error=new Error('Provider token missing');error.authCode=['incorrect_client_credentials','redirect_uri_mismatch','bad_verification_code','access_denied'].includes(token.error)?token.error:'provider_token_missing';throw error;}
   const user=await providerJson(provider.user,{headers:{Authorization:'Bearer '+token.access_token,Accept:'application/json','User-Agent':'Luminaria'}});
   const subject=providerName==='google'?user.sub:user.id;
   if((typeof subject!=='string'&&typeof subject!=='number')||!String(subject))throw new Error('Provider identity missing');
@@ -300,8 +305,8 @@ async function route(request,env){
 export default {
  async fetch(request,env){try{return await route(request,env);}catch(error){
   const path=new URL(request.url).pathname,release=path.startsWith('/releases/');
-  console.error(JSON.stringify({event:release?'release_request_failed':'auth_request_failed',kind:error.name}));
-  if(path.startsWith('/callback/'))return page('Sign-in could not be completed','The provider did not confirm your account. Start sign-in again from Luminaria.',400,clearCookie);
+  console.error(JSON.stringify({event:release?'release_request_failed':'auth_request_failed',kind:error.name,...(error.authCode?{code:error.authCode}:{})}));
+  if(path.startsWith('/callback/'))return page('Sign-in could not be completed','The provider did not confirm your account. Start sign-in again from Luminaria. Reference: '+(error.authCode||'callback_failed'),400,clearCookie);
   return release?json({error:'The update service could not read the release. Try again later.'},502):json({error:'Sign-in could not be completed. Please start again.'},400);}},
  async scheduled(controller,env){await env.DB.batch([...['devices','device_links','oauth_states','sessions','rate_limits'].map(table=>env.DB.prepare(`DELETE FROM ${table} WHERE expires<?`).bind(now())),
   env.DB.prepare('DELETE FROM insight_days WHERE day<?').bind(new Date((now()-INSIGHT_RETENTION_DAYS*86400)*1000).toISOString().slice(0,10))]);}
