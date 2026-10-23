@@ -10,7 +10,7 @@ for(const path of ['/terms','/privacy','/terms-of-service','/privacy-policy']){
  assert.match(response.headers.get('content-security-policy'),/frame-ancestors 'none'/);
  assert.equal(response.headers.get('set-cookie'),null);
  const html=await response.text();
- assert.match(html,/October 21, 2026/);
+ assert.match(html,/October 22, 2026/);
  assert.match(html,/mailto:dessellebusiness@gmail.com/);
  assert.doesNotMatch(html,/<script|<iframe|<form|johnnycox4431836/i);
  const head=await worker.fetch(new Request('https://identity.example'+path,{method:'HEAD'}),env,{});

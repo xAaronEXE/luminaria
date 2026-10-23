@@ -7,7 +7,8 @@
  "compatibility_flags":["nodejs_compat"],
  "workers_dev":true,
  "observability":{"enabled":true,"head_sampling_rate":0.1},
- "vars":{"RELEASE_REPO":"xAaronEXE/luminaria"},
+ "vars":{"SYNC_ENABLED":"true","RELEASE_REPO":"xAaronEXE/luminaria"},
  "d1_databases":[{"binding":"DB","database_name":"luminaria-identity","database_id":"e98e03d1-1ef6-42f3-9076-001742dbb56c"}],
+ "r2_buckets":[{"binding":"SYNC_BUCKET","bucket_name":"luminaria-account-sync"}],
  "triggers":{"crons":["17 * * * *"]}
 }

@@ -1,6 +1,6 @@
 /* Categorized settings backed by the local API. */
 (()=>{
- const groups=[['Your account',['Profile','Sign-in methods','Devices & security','Insights']],['Workspace',['Working folder','Memory & context','Tools & permissions','Integrations']],['Models & voice',['Models','Orchestration','Voice','Hardware & tuning']],['Application',['Appearance','Updates']]];
+ const groups=[['Your account',['Profile','Sign-in methods','Devices & security','Cloud sync','Insights']],['Workspace',['Working folder','Memory & context','Tools & permissions','Integrations']],['Models & voice',['Models','Orchestration','Voice','Hardware & tuning']],['Application',['Appearance','Updates']]];
  const sections=groups.flatMap(([,pages])=>pages);
  const aliases={Inference:'Working folder','Model library':'Models',Account:'Profile',Accounts:'Profile'};
  let library,selectedKey,selectedQuant,modelFilter='all',capabilityFilter='',benchmarkOpen=false,libraryGeneration=0,libraryTimer;
@@ -21,6 +21,7 @@
   $('.settings-navigation').scrollTop=navScroll;$('#settings-search').value=search;$('#settings-search').oninput({target:$('#settings-search')});
   body.innerHTML='<p role="status" class="settings-loading">Loading settings…</p>';
   try{
+  if(section==='Cloud sync'){await renderCloudSync(body);return}
   if(['Profile','Sign-in methods','Devices & security'].includes(section)){await renderAccounts(body);return}
   if(section==='Integrations'){await closePanel();await openPanel('integrations');return}
   if(section==='Working folder'){await studioSettingsSection('Inference',body);await renderAccountProfiles(body);return}

@@ -1,5 +1,6 @@
 // Identity only: provider access tokens are never returned to the desktop or saved.
 import {legalPage} from './legal.js';
+import {cloudSync} from './cloud_sync.js';
 const providers = {
  github:{authorize:'https://github.com/login/oauth/authorize',token:'https://github.com/login/oauth/access_token',user:'https://api.github.com/user',scope:'read:user',pkce:true},
  google:{authorize:'https://accounts.google.com/o/oauth2/v2/auth',token:'https://oauth2.googleapis.com/token',user:'https://openidconnect.googleapis.com/v1/userinfo',scope:'openid profile',pkce:true,extra:{prompt:'select_account'}},
@@ -123,6 +124,7 @@ async function route(request,env){
  if(path==='/health'&&request.method==='GET')return json({service:'Luminaria identity',providers:Object.keys(providers).map(id=>({id,configured:configured(env,id)}))});
  const retry=await limited(env,request);
  if(retry)return new Response(JSON.stringify({error:'Too many requests. Try again later.',retry_after:retry}),{status:429,headers:{'Content-Type':'application/json','Cache-Control':'no-store','Retry-After':String(retry),'X-Content-Type-Options':'nosniff'}});
+ if(path.startsWith('/sync/'))return cloudSync(request,env);
  if(path.startsWith('/releases/')&&request.method==='GET'){
   if(!releasesConfigured(env))return json({error:'Release channel is not configured'},503);
   if(path==='/releases/latest'){
@@ -201,6 +203,10 @@ async function route(request,env){
   if(link){
    const parent=await env.DB.prepare('SELECT i.id,i.provider FROM sessions s JOIN identities i ON i.id=s.identity_id WHERE s.token_hash=? AND s.expires>?').bind(link.session_hash,time).first();
    if(!parent)return json({error:'Original sign-in expired; account was not connected'},403);
+   // Never silently strand or merge an existing account's cloud workspace.
+   const oldAccount=await env.DB.prepare('SELECT account_id FROM account_members WHERE identity_id=?').bind(device.identity_id).first();
+   const parentAccount=await env.DB.prepare('SELECT account_id FROM account_members WHERE identity_id=?').bind(parent.id).first();
+   if(oldAccount&&oldAccount.account_id!==(parentAccount?.account_id||parent.id)){const existing=await env.DB.prepare('SELECT 1 FROM sync_records WHERE account_id=? AND version>0 LIMIT 1').bind(oldAccount.account_id).first();if(existing)return json({error:'This sign-in already owns synced data. Resolve those account workspaces before linking.'},409);}
    await env.DB.prepare('INSERT OR IGNORE INTO account_members VALUES(?,?,?)').bind(parent.id,parent.id,parent.provider).run();
    statements.push(env.DB.prepare('UPDATE account_members SET account_id=(SELECT account_id FROM account_members WHERE identity_id=?) WHERE account_id=(SELECT account_id FROM account_members WHERE identity_id=?) AND EXISTS(SELECT 1 FROM sessions WHERE token_hash=? AND expires>?)').bind(parent.id,device.identity_id,link.session_hash,time));
   }

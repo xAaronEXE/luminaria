@@ -20,6 +20,25 @@ def broadcast(event):
     for queue in tuple(subscribers):
         if not queue.full(): queue.put_nowait(event)
 
+def sync_busy():
+    workflow=globals().get('file_workflows')
+    return benchmarking or bool(engine and any(not t.done() for t in engine.tasks.values())) or bool(workflow and workflow.busy())
+def sync_changed():
+    store.set_setting('cloud_sync_updated',time.time())
+    if engine:
+        for chat,run in list(engine.runs.items()):
+            if run.get('finished'):engine.runs.pop(chat,None)
+    broadcast({'type':'cloud_sync_updated'})
+from .cloud_sync import CloudSync
+cloud_sync=CloudSync(store,sync_busy,lambda:{k for k,v in (engine.runs.items() if engine else []) if not v.get('finished')},sync_changed)
+async def sync_loop():
+    while True:
+        await asyncio.sleep(300)
+        owner=store.setting('cloud_sync_owner')
+        if owner and cloud_sync.state(owner)['enabled']:
+            try:await cloud_sync.run()
+            except ValueError:pass # visible in Cloud sync status; never discard local work
+
 async def scheduler():
     while True:
         await asyncio.sleep(10)
@@ -46,8 +65,10 @@ async def lifespan(app):
     saver=AsyncSqliteSaver(conn); await saver.setup()
     engine=Engine(store,Toolbox(store,connectors),broadcast,saver)
     await engine.restore()
-    task=asyncio.create_task(scheduler())
+    task=asyncio.create_task(scheduler());sync_task=asyncio.create_task(sync_loop())
     yield
+    sync_task.cancel()
+    with contextlib.suppress(asyncio.CancelledError):await sync_task
     task.cancel()
     with contextlib.suppress(asyncio.CancelledError): await task
     if tuning is not None: await tuning.cancel()
@@ -93,7 +114,7 @@ async def bootstrap(): return {'token':TOKEN,'version':CONFIG['version'],'name':
 @app.get('/api/state')
 async def state(chat:str=''):
     if chat: require_chat(chat)
-    return {'chats':store.chats(),'chat':chat,'messages':store.messages(chat) if chat else [],'actions':store.actions(chat) if chat else [],'summary':store.summary(chat) if chat else None,'summaries':store.rows('SELECT id,through_id,created FROM summaries WHERE chat=? ORDER BY id',(chat,)) if chat else [],'run':engine.public_run(chat),'context':store.setting('context:'+chat,{}),'plan':store.setting('plan:'+chat,None) if chat else None,'brief':brief_summary(chat) if chat else None,'orchestration':{'router':CONFIG.get('orchestrator_model',''),'enabled':bool(CONFIG.get('orchestrator_model')) and CONFIG.get('orchestration_enabled',True)},'memories':store.memory(),'schedules':store.rows('SELECT * FROM schedules ORDER BY next_run'),'workspace':CONFIG['workspace'],'model':CONFIG['model'],'context_limit':CONFIG['context'],'connectors':{n:{'status':c.status,'tools':len(c.tools)} for n,c in connectors.items()},'tool_count':len(engine.tools.catalog()),'active_runs':[{'chat':k,'phase':v['phase']} for k,v in engine.runs.items() if not v.get('finished')]}
+    return {'cloud_sync_updated':store.setting('cloud_sync_updated',0),'chats':store.chats(),'chat':chat,'messages':store.messages(chat) if chat else [],'actions':store.actions(chat) if chat else [],'summary':store.summary(chat) if chat else None,'summaries':store.rows('SELECT id,through_id,created FROM summaries WHERE chat=? ORDER BY id',(chat,)) if chat else [],'run':engine.public_run(chat),'context':store.setting('context:'+chat,{}),'plan':store.setting('plan:'+chat,None) if chat else None,'brief':brief_summary(chat) if chat else None,'orchestration':{'router':CONFIG.get('orchestrator_model',''),'enabled':bool(CONFIG.get('orchestrator_model')) and CONFIG.get('orchestration_enabled',True)},'memories':store.memory(),'schedules':store.rows('SELECT * FROM schedules ORDER BY next_run'),'workspace':CONFIG['workspace'],'model':CONFIG['model'],'context_limit':CONFIG['context'],'connectors':{n:{'status':c.status,'tools':len(c.tools)} for n,c in connectors.items()},'tool_count':len(engine.tools.catalog()),'active_runs':[{'chat':k,'phase':v['phase']} for k,v in engine.runs.items() if not v.get('finished')]}
 
 @app.get('/api/chats/{id}/work')
 async def work_events(id:str,runs:int=12):
@@ -778,6 +799,25 @@ async def preferences_save(request:Request):
         values['theme_mode']=values['appearance']['mode']
     values=store.setting('preferences',{}) | values
     store.set_setting('preferences',values); return {'ok':True}
+
+@app.get('/api/cloud-sync')
+async def cloud_sync_status():
+    try:return await cloud_sync.status()
+    except ValueError as error:
+        owner=store.setting('cloud_sync_owner');state=cloud_sync.state(owner) if owner else {}
+        return {'enabled':bool(state.get('enabled')),'last_sync':state.get('last_sync'),'conflicts':[],'error':str(error),'unavailable':True}
+@app.post('/api/cloud-sync/preview')
+async def cloud_sync_preview():return await cloud_sync.preview()
+@app.post('/api/cloud-sync/enable')
+async def cloud_sync_enable(request:Request):
+    payload=await request.json()
+    if type(payload.get('enabled')) is not bool:raise ValueError('Choose whether to enable sync')
+    return await cloud_sync.enable(payload['enabled'])
+@app.post('/api/cloud-sync/run')
+async def cloud_sync_run():return await cloud_sync.run()
+@app.post('/api/cloud-sync/resolve')
+async def cloud_sync_resolve(request:Request):
+    payload=await request.json();return await cloud_sync.resolve(str(payload.get('key','')),payload.get('choice'))
 
 @app.get('/api/accounts')
 async def accounts():

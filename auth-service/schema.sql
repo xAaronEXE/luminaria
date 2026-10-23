@@ -29,3 +29,8 @@ CREATE TABLE IF NOT EXISTS insight_days (
  metrics TEXT NOT NULL, updated INTEGER NOT NULL,
  PRIMARY KEY(account_id,device,day)
 );
+
+CREATE TABLE IF NOT EXISTS sync_records(account_id TEXT NOT NULL,kind TEXT NOT NULL,id TEXT NOT NULL,version INTEGER NOT NULL DEFAULT 0,data TEXT NOT NULL DEFAULT '{}',deleted INTEGER NOT NULL DEFAULT 0,mutation TEXT,updated INTEGER NOT NULL,PRIMARY KEY(account_id,kind,id));
+CREATE TABLE IF NOT EXISTS sync_receipts(account_id TEXT NOT NULL,mutation TEXT NOT NULL,fingerprint TEXT NOT NULL,response TEXT NOT NULL,created INTEGER NOT NULL,PRIMARY KEY(account_id,mutation));
+CREATE TABLE IF NOT EXISTS sync_blobs(account_id TEXT NOT NULL,hash TEXT NOT NULL,size INTEGER NOT NULL,ready INTEGER NOT NULL DEFAULT 0,created INTEGER NOT NULL,PRIMARY KEY(account_id,hash));
+CREATE TABLE IF NOT EXISTS sync_budget(key TEXT PRIMARY KEY,used INTEGER NOT NULL);
