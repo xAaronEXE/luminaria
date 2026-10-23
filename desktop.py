@@ -54,6 +54,8 @@ def main():
     else:
         import webview
         window=webview.create_window('Luminaria',url,width=1440,height=940,min_size=(780,620),background_color='#141A17',text_select=True)
+        from backend.window_placement import center_before_show
+        window.events.before_show += center_before_show
         from backend.lifecycle import shutdown
         def close_for_update():
             shutdown.wait()
