@@ -4,7 +4,7 @@ from .config import BASE_DATA, PROFILE_ID
 
 PATH=BASE_DATA/'profiles.json'
 def registry():
-    return json.loads(PATH.read_text('utf-8')) if PATH.exists() else {'selected':'local','profiles':[{'id':'local','name':'Personal','provider':'local'}]}
+    return json.loads(PATH.read_text('utf-8')) if PATH.exists() else {'selected':'local','require_sign_in':True,'profiles':[{'id':'local','name':'Personal','provider':'local'}]}
 
 def save(data):
     tmp=PATH.with_suffix('.tmp'); tmp.write_text(json.dumps(data,indent=2),encoding='utf-8'); tmp.replace(PATH)

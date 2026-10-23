@@ -41,7 +41,15 @@ class GateTests(unittest.IsolatedAsyncioTestCase):
    return await identity.gate(force=True)
 
  async def test_not_required_is_always_unlocked(self):
+  data=profiles.registry();data.pop('require_sign_in',None);profiles.save(data)
   self.assertEqual(await identity.gate(),{'required':False,'unlocked':True})
+
+ async def test_fresh_install_requires_sign_in_without_saved_settings(self):
+  self.assertFalse(profiles.PATH.exists())
+  with patch.object(identity,'read_session',lambda path=None:None):
+   result=await identity.gate(force=True)
+  self.assertTrue(result['required']);self.assertFalse(result['unlocked'])
+  self.assertFalse(profiles.PATH.exists())
 
  async def test_local_data_container_requires_a_valid_session(self):
   data=profiles.registry();data['require_sign_in']=True;profiles.save(data)
@@ -83,6 +91,7 @@ class GateTests(unittest.IsolatedAsyncioTestCase):
   self.assertFalse((await self.check(ok,token=None))['unlocked'])
 
  async def test_turning_on_requires_a_verified_online_account(self):
+  data=profiles.registry();data.pop('require_sign_in',None);profiles.save(data)
   with patch.object(config,'PROFILE_ID','local'):
    with self.assertRaises(ValueError):await identity.set_required(True)
   self.assertNotIn('require_sign_in',profiles.registry())
@@ -150,6 +159,7 @@ class MiddlewareTests(unittest.TestCase):
  def tearDown(self):profiles.PATH.unlink(missing_ok=True);identity.forget_gate()
 
  def test_locked_app_only_serves_sign_in_routes(self):
+  data=profiles.registry();data.pop('require_sign_in',None);profiles.save(data)
   self.assertEqual(self.client.get('/api/state').status_code,200)
   data=profiles.registry();data['require_sign_in']=True;profiles.save(data);identity.forget_gate()
   r=self.client.get('/api/state');self.assertEqual(r.status_code,423);self.assertTrue(r.json()['locked'])
@@ -158,6 +168,15 @@ class MiddlewareTests(unittest.TestCase):
   self.assertEqual(self.client.get('/api/gate').status_code,200)
   self.assertEqual(self.client.get('/api/bootstrap').status_code,200)
   self.assertEqual(self.client.get('/').status_code,200)
+
+ def test_fresh_install_blocks_workspace_and_serves_login_routes(self):
+  profiles.PATH.unlink(missing_ok=True);identity.forget_gate()
+  with patch.object(identity,'read_session',lambda path=None:None):
+   self.assertEqual(self.client.get('/api/state').status_code,423)
+   self.assertEqual(self.client.post('/api/chats',json={}).status_code,423)
+   result=self.client.get('/api/gate').json()
+   self.assertTrue(result['required']);self.assertFalse(result['unlocked'])
+   self.assertEqual(self.client.get('/api/accounts').status_code,200)
 
 def tearDownModule():
  server.store.db.close();FOLDER.cleanup()
