@@ -1,0 +1,11 @@
+{
+  "packaged_version": "0.2.22",
+  "real_identity_verified": true,
+  "grid_cells": 371,
+  "local_generations": 6,
+  "recorded_tokens": 53293,
+  "required_gate_online_verified": true,
+  "account_scope_visible": false,
+  "cross_device_sync_tested": false,
+  "missing_session_blocks_protected_apis": true
+}

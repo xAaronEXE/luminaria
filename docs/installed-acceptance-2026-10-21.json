@@ -1,0 +1,68 @@
+{
+  "version": "0.2.20",
+  "installed_executable_matches": true,
+  "checks": {
+    "/state": 200,
+    "/hardware": 200,
+    "/file-workflows": 200,
+    "/insights": 200,
+    "/skills": 200,
+    "/settings": 200
+  },
+  "history": [
+    {
+      "database": "studio.sqlite3",
+      "table": "chats",
+      "before": 18,
+      "after": 18
+    },
+    {
+      "database": "studio.sqlite3",
+      "table": "messages",
+      "before": 312,
+      "after": 312
+    },
+    {
+      "database": "studio.sqlite3",
+      "table": "memories",
+      "before": 0,
+      "after": 0
+    },
+    {
+      "database": "profiles\\0d4aad990cfe46d294612a33ea6d6048\\studio.sqlite3",
+      "table": "chats",
+      "before": 10,
+      "after": 10
+    },
+    {
+      "database": "profiles\\0d4aad990cfe46d294612a33ea6d6048\\studio.sqlite3",
+      "table": "messages",
+      "before": 100,
+      "after": 100
+    },
+    {
+      "database": "profiles\\0d4aad990cfe46d294612a33ea6d6048\\studio.sqlite3",
+      "table": "memories",
+      "before": 0,
+      "after": 0
+    },
+    {
+      "database": "profiles\\615c44067b8b4855a91333abeef1489d\\studio.sqlite3",
+      "table": "chats",
+      "before": 1,
+      "after": 1
+    },
+    {
+      "database": "profiles\\615c44067b8b4855a91333abeef1489d\\studio.sqlite3",
+      "table": "messages",
+      "before": 12,
+      "after": 12
+    },
+    {
+      "database": "profiles\\615c44067b8b4855a91333abeef1489d\\studio.sqlite3",
+      "table": "memories",
+      "before": 0,
+      "after": 0
+    }
+  ]
+}
