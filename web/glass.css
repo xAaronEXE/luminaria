@@ -255,3 +255,6 @@ body.effects-low .library-menu{background:var(--panel);backdrop-filter:none;-web
 .welcome{padding-top:clamp(20px,5vh,60px)!important}
 .library-menu{background:color-mix(in srgb,var(--bg) 90%,var(--aurora-1))!important}
 @media (max-width:900px){.lumen-hero{width:84px;height:84px;margin:6px 0 0 16px}}
+
+/* Brand mark: the orb file leaves room for its glow, so show it a little larger */
+.brand img{transform:scale(1.35)}
