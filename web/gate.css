@@ -1,0 +1,80 @@
+/* Sign-in: the aurora glass look. A living Lumen orb on the left, a frosted card on the right. Always dark. */
+#sign-in-gate.gate-glass{
+  --bg:#07080D;--text:#F2F3F8;--muted:#A3A7B8;--line:rgba(255,255,255,.09);
+  --glass:rgba(22,24,36,.46);--glass-line:rgba(255,255,255,.12);--glass-hi:rgba(255,255,255,.14);
+  position:fixed;inset:0;z-index:1000;display:grid;grid-template-columns:minmax(0,1.15fr) minmax(400px,.85fr);
+  padding:0;background:#07080D;color:var(--text);color-scheme:dark;overflow:auto;isolation:isolate
+}
+.gate-glass .gate-aurora{position:absolute;inset:0;z-index:-1;overflow:hidden;pointer-events:none}
+.gate-glass .gate-aurora i{position:absolute;display:block;border-radius:50%;filter:blur(90px) saturate(150%);opacity:.55}
+.gate-glass .gate-aurora i:nth-child(1){width:52vw;height:52vw;left:-12vw;top:-18vw;background:var(--aurora-1);animation:aurora-a 26s ease-in-out infinite alternate}
+.gate-glass .gate-aurora i:nth-child(2){width:42vw;height:42vw;right:-12vw;top:24vh;background:var(--aurora-2);animation:aurora-b 32s ease-in-out infinite alternate}
+.gate-glass .gate-aurora i:nth-child(3){width:38vw;height:38vw;left:22vw;bottom:-24vw;background:var(--aurora-3);opacity:.4;animation:aurora-c 38s ease-in-out infinite alternate}
+.gate-glass .gate-aurora::after{content:'';position:absolute;inset:0;background:radial-gradient(90% 70% at 30% 45%,transparent 30%,rgba(7,8,13,.7) 100%)}
+
+/* Left: wordmark, orb, tagline */
+.gate-glass .gate-scene{position:relative;min-height:620px;overflow:hidden;background:none}
+.gate-glass .gate-scene::before{display:none}
+.gate-glass .gate-wordmark{position:absolute;left:48px;top:38px;display:flex;align-items:center;gap:12px;font-size:14px;font-weight:650;letter-spacing:.22em}
+.gate-glass .gate-mark{width:26px;height:26px}
+.gate-glass .gate-mark .lumen-glow{inset:-60%}
+.gate-glass .gate-hero{position:absolute;left:50%;top:46%;width:min(56vh,46vw,520px);aspect-ratio:1;transform:translate(-50%,-50%)}
+.gate-glass .gate-orb{position:absolute;inset:27%;width:auto;height:auto;margin:0;--spin:14s;--pulse:5s}
+.gate-glass .gate-orb .lumen-glow{inset:-55%;filter:blur(30px);opacity:.9}
+.gate-glass .gate-ring{position:absolute;border-radius:50%;border:1px solid rgba(255,255,255,.10);pointer-events:none}
+.gate-glass .gate-ring.r1{inset:16%;border-color:rgba(255,255,255,.14);animation:gate-spin 40s linear infinite}
+.gate-glass .gate-ring.r2{inset:6%;border-style:dashed;border-color:rgba(255,255,255,.08);animation:gate-spin 70s linear infinite reverse}
+.gate-glass .gate-ring.r3{inset:-4%;border-color:rgba(255,255,255,.05)}
+.gate-glass .gate-ring.r1::after,.gate-glass .gate-ring.r2::after{content:'';position:absolute;top:-3px;left:50%;width:6px;height:6px;margin-left:-3px;border-radius:50%;background:#fff;box-shadow:0 0 12px 3px var(--aurora-2)}
+.gate-glass .gate-ring.r2::after{top:auto;bottom:-3px;width:4px;height:4px;box-shadow:0 0 10px 2px var(--aurora-1)}
+.gate-glass .gate-tagline{position:absolute;left:48px;bottom:44px;font-size:clamp(32px,3.6vw,56px);font-weight:500;letter-spacing:-.035em;line-height:1.05}
+.gate-glass .gate-tagline span{background:linear-gradient(100deg,var(--aurora-1),var(--aurora-2) 55%,var(--aurora-3));-webkit-background-clip:text;background-clip:text;color:transparent}
+
+/* Right: frosted card */
+.gate-glass .gate-panel{display:grid;place-items:center;padding:40px 48px 40px 8px}
+#sign-in-gate.gate-glass .gate-card{box-sizing:border-box;width:100%;max-width:440px;display:grid;gap:14px;justify-items:stretch;text-align:left;padding:40px 36px 30px;border-radius:28px;
+  background:var(--glass);border:1px solid var(--glass-line);border-left:1px solid var(--glass-line);
+  backdrop-filter:blur(40px) saturate(170%);-webkit-backdrop-filter:blur(40px) saturate(170%);
+  box-shadow:inset 0 1px 0 var(--glass-hi),0 40px 120px -40px rgba(0,0,0,.8)}
+.gate-glass .gate-eyebrow{margin:0;font-size:11px;font-weight:650;letter-spacing:.16em;text-transform:uppercase;color:var(--muted)}
+#sign-in-gate.gate-glass .gate-card h1{margin:0 0 2px;font-size:30px;font-weight:600;letter-spacing:-.03em;color:var(--text)}
+#sign-in-gate.gate-glass .gate-reason{margin:0 0 10px;font-size:13.5px;line-height:1.6;color:var(--muted)}
+.gate-glass .gate-providers{display:grid;gap:10px}
+.gate-glass .gate-provider{display:flex;align-items:center;justify-content:space-between;gap:12px;min-height:50px;padding:0 18px;border-radius:14px;
+  border:1px solid var(--glass-line);background:rgba(255,255,255,.05);color:var(--text);font:inherit;font-size:14px;font-weight:550;cursor:pointer;
+  transition:background .15s ease,border-color .15s ease,transform .15s ease}
+.gate-glass .gate-provider svg{width:18px;height:18px;fill:none;stroke:currentColor;stroke-width:2;stroke-linecap:round;stroke-linejoin:round;opacity:.6;transition:transform .15s ease,opacity .15s ease}
+.gate-glass .gate-provider:hover:not(:disabled){background:rgba(255,255,255,.09);border-color:rgba(255,255,255,.22)}
+.gate-glass .gate-provider:hover:not(:disabled) svg{transform:translateX(3px);opacity:1}
+.gate-glass .gate-provider:active:not(:disabled){transform:scale(.99)}
+.gate-glass .gate-provider.primary{background:linear-gradient(135deg,var(--aurora-1),var(--aurora-2));border-color:transparent;color:#06070C;box-shadow:0 14px 40px -14px var(--aurora-1)}
+.gate-glass .gate-provider.primary:hover:not(:disabled){background:linear-gradient(135deg,var(--aurora-1),var(--aurora-2));filter:brightness(1.08)}
+.gate-glass .gate-provider:disabled{opacity:.4;cursor:not-allowed}
+#sign-in-gate.gate-glass button:focus-visible,#sign-in-gate.gate-glass a:focus-visible{outline:2px solid rgba(255,255,255,.75);outline-offset:3px}
+#sign-in-gate.gate-glass #gate-progress{font-size:13px;line-height:1.6;color:var(--muted)}
+.gate-glass #gate-progress:empty{display:none}
+.gate-glass #gate-progress p{margin:0 0 8px}
+.gate-glass #gate-progress .btn{border-radius:12px;font-size:12.5px}
+.gate-glass .gate-links{display:flex;gap:18px;justify-content:space-between;padding-top:2px}
+#sign-in-gate.gate-glass .text-button{color:var(--muted);font-size:12.5px}
+.gate-glass .text-button:hover{color:var(--text)}
+.gate-glass .gate-note{display:flex;gap:10px;align-items:flex-start;margin:8px 0 0;padding-top:16px;border-top:1px solid var(--line);font-size:11.5px;line-height:1.6;color:var(--muted)}
+.gate-glass .gate-note svg{flex:none;width:15px;height:15px;margin-top:2px;fill:none;stroke:currentColor;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round}
+
+@keyframes gate-spin{to{transform:rotate(360deg)}}
+@media (max-width:900px){
+  #sign-in-gate.gate-glass{grid-template-columns:minmax(0,1fr) minmax(360px,1fr)}
+  .gate-glass .gate-wordmark,.gate-glass .gate-tagline{left:28px}
+  .gate-glass .gate-panel{padding:28px}
+}
+@media (max-width:700px){
+  #sign-in-gate.gate-glass{display:flex;flex-direction:column}
+  .gate-glass .gate-scene{min-height:300px;flex:none}
+  .gate-glass .gate-hero{width:240px;top:48%}
+  .gate-glass .gate-wordmark{left:24px;top:20px}
+  .gate-glass .gate-tagline{font-size:26px;left:24px;bottom:18px}
+  .gate-glass .gate-panel{padding:0 16px 24px}
+  .gate-glass .gate-card{padding:28px 22px}
+}
+body.motion-off .gate-glass .gate-aurora i,body.motion-off .gate-glass .gate-ring{animation:none!important}
+@media (prefers-reduced-motion:reduce){.gate-glass .gate-aurora i,.gate-glass .gate-ring{animation:none!important}}
