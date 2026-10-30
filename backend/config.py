@@ -35,11 +35,18 @@ def access_status():
 
 def external_tools_enabled():
     return FULL_ACCESS or CONFIG.get('external_tools', False)
+# A missing drive, a file where the folder should be, or no permission must never stop the app from opening.
+# Fall back to the default folder for this session and say why; the saved choice is left for the user to change.
+WORKSPACE_PROBLEM=''
 try:
     Path(CONFIG['workspace']).mkdir(parents=True,exist_ok=True)
-except PermissionError:
-    if CONFIG_PATH.exists(): raise
-    CONFIG['workspace']=str(DATA/'Files');Path(CONFIG['workspace']).mkdir(parents=True,exist_ok=True)
+    if not Path(CONFIG['workspace']).is_dir(): raise NotADirectoryError(CONFIG['workspace'])
+except OSError as error:
+    chosen=CONFIG['workspace']
+    CONFIG['workspace']=DEFAULT['workspace']
+    try: Path(CONFIG['workspace']).mkdir(parents=True,exist_ok=True)
+    except OSError: CONFIG['workspace']=str(DATA/'Files');Path(CONFIG['workspace']).mkdir(parents=True,exist_ok=True)
+    WORKSPACE_PROBLEM=f'Your working folder {chosen} could not be opened ({type(error).__name__}), so Luminaria is using {CONFIG["workspace"]} for now. Choose a folder in Settings › Working folder.'
 
 def save_config(changes):
     CONFIG.update(changes)

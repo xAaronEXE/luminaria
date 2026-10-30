@@ -381,6 +381,8 @@ async def settings():
     from .config import access_status
     public={k:v for k,v in CONFIG.items() if k not in ('mcp','model_api_key')}
     public['access_status']=access_status()
+    from .config import WORKSPACE_PROBLEM
+    public['workspace_problem']=WORKSPACE_PROBLEM
     public['data_directory']=str(DATA); public['mcp_configured']=list(CONFIG.get('mcp',{})); return public
 
 @app.post('/api/workspace/browse')
@@ -412,7 +414,12 @@ async def settings_save(request:Request):
     if 'compact_keep_turns' in changes:
         value=changes['compact_keep_turns']
         if isinstance(value,bool) or not isinstance(value,int) or not 1<=value<=12:raise ValueError('Keep between 1 and 12 recent turns')
-    if 'workspace' in changes: Path(changes['workspace']).mkdir(parents=True,exist_ok=True)
+    if 'workspace' in changes:
+        target=Path(changes['workspace']).expanduser()
+        if target.exists() and not target.is_dir(): raise ValueError(f'{target} is a file, not a folder. Choose a folder.')
+        target.mkdir(parents=True,exist_ok=True)
+        from . import config as config_module
+        config_module.WORKSPACE_PROBLEM=''
     save_config(changes); broadcast({'type':'changed'}); return {'ok':True}
 
 @app.get('/api/model/status')

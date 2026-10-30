@@ -179,6 +179,7 @@
       chip.textContent = full ? 'Hands-free' : 'Ask me first';
       chip.setAttribute('aria-label', 'Permission mode: ' + chip.textContent + '. Open settings to change.');
       chip.hidden = false;
+      if (settings.workspace_problem && typeof toast === 'function') setTimeout(() => toast(settings.workspace_problem, true), 1200);
     } catch { chipLoaded = false; }
   }
   window.addEventListener('studio-state', loadPermission);
