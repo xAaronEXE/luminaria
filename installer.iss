@@ -8,7 +8,14 @@ AppName=Luminaria
 AppMutex=Local\LuminariaDesktop
 AppVersion={#AppVersion}
 VersionInfoVersion={#AppVersion}
-AppPublisher=Luminaria Project
+#define AppPublisher "Desselle Solution Software"
+AppPublisher={#AppPublisher}
+AppCopyright=Copyright (C) 2026 {#AppPublisher}
+VersionInfoCompany={#AppPublisher}
+VersionInfoCopyright=Copyright (C) 2026 {#AppPublisher}
+VersionInfoProductName=Luminaria
+VersionInfoProductVersion={#AppVersion}
+VersionInfoDescription=Luminaria Setup
 DefaultDirName={userdesktop}\Luminaria\App
 UsePreviousAppDir=no
 DefaultGroupName=Luminaria
