@@ -1,0 +1,178 @@
+/* Aurora glass: visual layer over the existing layout.
+   Built on the appearance tokens from appearance.js, so Light, Dark,
+   Follow system and custom accents keep working. Loaded last. */
+
+:root{
+  --aurora-1:color-mix(in oklab,var(--accent) 14%,#7C5CFF);
+  --aurora-2:color-mix(in oklab,var(--accent) 10%,#18C8E8);
+  --aurora-3:color-mix(in oklab,var(--accent) 10%,#FF6FB5);
+  --aurora-strength:.78;
+  --glass:color-mix(in srgb,var(--panel) 52%,transparent);
+  --glass-strong:color-mix(in srgb,var(--panel) 72%,transparent);
+  --glass-line:color-mix(in srgb,var(--text) 13%,transparent);
+  --glass-hi:color-mix(in srgb,#FFFFFF 16%,transparent);
+  --glass-blur:blur(26px) saturate(170%);
+  --glass-shadow:0 24px 70px -20px color-mix(in srgb,#000 55%,transparent);
+  --glow:color-mix(in oklab,var(--aurora-1) 70%,var(--aurora-2));
+  --r-panel:22px;
+}
+:root[data-theme=light]{--aurora-strength:.38;--glass:color-mix(in srgb,var(--panel) 62%,transparent);--glass-hi:color-mix(in srgb,#FFFFFF 70%,transparent);--glass-shadow:0 20px 60px -24px color-mix(in srgb,#1A1A40 35%,transparent)}
+
+/* ---------- Living background ---------- */
+body{background:var(--bg)}
+.aurora{position:fixed;inset:0;z-index:0;overflow:hidden;pointer-events:none}
+.aurora i{position:absolute;display:block;border-radius:50%;filter:blur(80px) saturate(140%);opacity:var(--aurora-strength);will-change:transform}
+.aurora i:nth-child(1){width:46vw;height:46vw;left:-8vw;top:-14vw;background:var(--aurora-1);animation:aurora-a 28s ease-in-out infinite alternate}
+.aurora i:nth-child(2){width:40vw;height:40vw;right:-10vw;top:20vh;background:var(--aurora-2);animation:aurora-b 34s ease-in-out infinite alternate}
+.aurora i:nth-child(3){width:36vw;height:36vw;left:30vw;bottom:-22vw;background:var(--aurora-3);animation:aurora-c 40s ease-in-out infinite alternate;opacity:calc(var(--aurora-strength) * .7)}
+.aurora::after{content:'';position:absolute;inset:0;background:radial-gradient(120% 80% at 50% 0%,transparent 40%,color-mix(in srgb,var(--bg) 70%,transparent) 100%)}
+@keyframes aurora-a{to{transform:translate(18vw,12vh) scale(1.25)}}
+@keyframes aurora-b{to{transform:translate(-22vw,-10vh) scale(.85)}}
+@keyframes aurora-c{to{transform:translate(12vw,-18vh) scale(1.15)}}
+
+/* The 3D entity glows BEHIND the glass instead of drawing over text. */
+#ambient-field{z-index:0!important;opacity:var(--spatial-opacity,.7)}
+.task-overview #ambient-field,body[data-voice=conversation] #ambient-field{z-index:6!important;opacity:1}
+
+/* ---------- Floating glass frame ---------- */
+.app{padding:12px;gap:12px;box-sizing:border-box;background:transparent!important}
+.sidebar,.inspector{
+  background:var(--glass)!important;border:1px solid var(--glass-line)!important;border-radius:var(--r-panel);
+  backdrop-filter:var(--glass-blur);-webkit-backdrop-filter:var(--glass-blur);
+  box-shadow:inset 0 1px 0 var(--glass-hi),var(--glass-shadow);overflow:hidden
+}
+.sidebar{padding-top:22px}
+.main{background:transparent!important}
+.topbar{
+  height:58px!important;margin:0 0 6px;border:1px solid var(--glass-line)!important;border-radius:18px;
+  background:var(--glass)!important;backdrop-filter:var(--glass-blur);-webkit-backdrop-filter:var(--glass-blur);
+  box-shadow:inset 0 1px 0 var(--glass-hi),var(--glass-shadow)
+}
+.inspector-header{height:58px}
+.composer-area{background:transparent!important}
+
+/* ---------- Brand and navigation ---------- */
+.brand{margin-bottom:22px}
+.brand>span{background:linear-gradient(100deg,var(--text) 30%,var(--aurora-2) 60%,var(--aurora-1));-webkit-background-clip:text;background-clip:text;color:transparent}
+.new-task{
+  background:linear-gradient(135deg,var(--aurora-1),var(--aurora-2))!important;border:0!important;color:#06070C!important;
+  border-radius:14px!important;box-shadow:0 10px 30px -10px var(--glow);transition:transform .2s ease,box-shadow .2s ease
+}
+.new-task svg{color:#06070C!important}
+.new-task .keyhint{color:#06070C;opacity:.6}
+.new-task:hover{transform:translateY(-1px);box-shadow:0 14px 38px -10px var(--glow)}
+.search-box{border-radius:12px;background:color-mix(in srgb,var(--text) 5%,transparent);border:1px solid var(--glass-line)}
+.chat-item,.sidebar-bottom button{border-radius:11px;transition:background .18s ease}
+.chat-item:hover,.sidebar-bottom button:hover{background:color-mix(in srgb,var(--text) 7%,transparent)}
+.chat-item[aria-current=true],.chat-item.active,.chat-row.active>.chat-item{
+  background:color-mix(in srgb,var(--aurora-1) 18%,transparent)!important;box-shadow:inset 0 0 0 1px color-mix(in srgb,var(--aurora-1) 40%,transparent)
+}
+.sidebar-bottom{border-top:1px solid var(--glass-line)}
+
+/* ---------- Conversation ---------- */
+.message.user{
+  background:linear-gradient(135deg,color-mix(in srgb,var(--aurora-1) 20%,var(--glass-strong)),color-mix(in srgb,var(--aurora-2) 12%,var(--glass-strong)))!important;
+  border:1px solid color-mix(in srgb,var(--aurora-1) 30%,var(--glass-line));border-radius:18px 18px 6px 18px;
+  backdrop-filter:var(--glass-blur);-webkit-backdrop-filter:var(--glass-blur)
+}
+.message.assistant{
+  background:var(--glass);border:1px solid var(--glass-line);border-radius:18px;padding:16px 20px!important;
+  backdrop-filter:var(--glass-blur);-webkit-backdrop-filter:var(--glass-blur);box-shadow:inset 0 1px 0 var(--glass-hi)
+}
+.markdown pre,.markdown code{border-radius:10px}
+.approval{
+  background:color-mix(in srgb,var(--warning) 10%,var(--glass-strong))!important;border:1px solid color-mix(in srgb,var(--warning) 45%,transparent)!important;
+  border-radius:18px!important;backdrop-filter:var(--glass-blur);-webkit-backdrop-filter:var(--glass-blur);
+  box-shadow:0 0 0 4px color-mix(in srgb,var(--warning) 10%,transparent),0 18px 50px -20px color-mix(in srgb,var(--warning) 60%,transparent);
+  animation:approval-glow 2.4s ease-in-out infinite
+}
+@keyframes approval-glow{50%{box-shadow:0 0 0 7px color-mix(in srgb,var(--warning) 6%,transparent),0 18px 50px -16px color-mix(in srgb,var(--warning) 70%,transparent)}}
+.working-dot{background:var(--glow)!important;box-shadow:0 0 14px var(--glow)}
+
+/* ---------- Composer: glass capsule with a living edge ---------- */
+.composer{
+  background:var(--glass-strong)!important;border:1px solid var(--glass-line)!important;border-radius:22px!important;overflow:visible!important;
+  backdrop-filter:var(--glass-blur);-webkit-backdrop-filter:var(--glass-blur);box-shadow:inset 0 1px 0 var(--glass-hi),var(--glass-shadow)
+}
+.composer::before{
+  content:'';position:absolute;inset:-1px;border-radius:inherit;padding:1px;pointer-events:none;opacity:.55;transition:opacity .3s ease;
+  background:conic-gradient(from var(--edge,0deg),transparent 0 20%,var(--aurora-1) 32%,var(--aurora-2) 45%,transparent 58% 100%);
+  -webkit-mask:linear-gradient(#000 0 0) content-box,linear-gradient(#000 0 0);-webkit-mask-composite:xor;mask-composite:exclude;
+  animation:edge-spin 6s linear infinite
+}
+.composer:focus-within::before{opacity:1}
+@property --edge{syntax:'<angle>';inherits:false;initial-value:0deg}
+@keyframes edge-spin{to{--edge:360deg}}
+.send-button{background:linear-gradient(135deg,var(--aurora-1),var(--aurora-2))!important;color:#06070C!important;border-radius:14px!important;box-shadow:0 8px 24px -8px var(--glow)!important}
+.model-button,.reasoning-toggle{border-radius:10px!important}
+.reasoning-toggle:has(input:checked){background:color-mix(in srgb,var(--aurora-1) 20%,transparent);color:var(--text)}
+
+/* ---------- Inspector ---------- */
+.inspector-tabs{margin:0 12px;padding:3px;gap:2px;border-radius:12px;background:color-mix(in srgb,var(--text) 6%,transparent);border:0!important}
+.inspector-tabs button{border-radius:9px;border:0!important;padding:7px 10px!important}
+.inspector-tabs button[aria-selected=true]{background:var(--glass-strong);box-shadow:inset 0 1px 0 var(--glass-hi),0 2px 10px -4px color-mix(in srgb,#000 40%,transparent)}
+.context-card{margin:12px;border-radius:16px;background:color-mix(in srgb,var(--text) 5%,transparent);border:1px solid var(--glass-line)}
+#context-fill{background:linear-gradient(90deg,var(--aurora-2),var(--aurora-1))!important;box-shadow:0 0 12px var(--glow)}
+
+/* ---------- Sheets: Settings, Library panels ---------- */
+.panel-backdrop{background:color-mix(in srgb,var(--bg) 35%,transparent)!important;backdrop-filter:blur(6px);-webkit-backdrop-filter:blur(6px)}
+.sheet{
+  margin:12px;height:calc(100% - 24px)!important;border-radius:24px;border:1px solid var(--glass-line)!important;
+  background:var(--glass-strong)!important;backdrop-filter:blur(40px) saturate(180%);-webkit-backdrop-filter:blur(40px) saturate(180%);
+  box-shadow:inset 0 1px 0 var(--glass-hi),0 40px 120px -30px color-mix(in srgb,#000 70%,transparent)!important;overflow:hidden
+}
+
+/* Simple, obvious on/off switches inside settings and panels */
+.sheet input[type=checkbox]{
+  appearance:none;-webkit-appearance:none;flex:none;width:42px;height:24px;margin:0;border-radius:999px;cursor:pointer;position:relative;vertical-align:middle;
+  background:color-mix(in srgb,var(--text) 18%,transparent);border:1px solid var(--glass-line);transition:background .2s ease
+}
+.sheet input[type=checkbox]::after{
+  content:'';position:absolute;top:2px;left:2px;width:18px;height:18px;border-radius:50%;background:#FFFFFF;
+  box-shadow:0 2px 6px color-mix(in srgb,#000 35%,transparent);transition:transform .22s cubic-bezier(.3,1.4,.5,1)
+}
+.sheet input[type=checkbox]:checked{background:linear-gradient(135deg,var(--aurora-1),var(--aurora-2));border-color:transparent;box-shadow:0 0 14px -2px var(--glow)}
+.sheet input[type=checkbox]:checked::after{transform:translateX(18px)}
+.sheet input[type=checkbox]:focus-visible{outline:2px solid var(--focus);outline-offset:3px}
+.sheet input[type=text],.sheet input[type=number],.sheet input[type=search],.sheet input:not([type]),.sheet select,.sheet textarea{border-radius:12px!important;background:color-mix(in srgb,var(--text) 5%,transparent)!important;border:1px solid var(--glass-line)!important}
+.sheet .btn.primary,.sheet button.primary{background:linear-gradient(135deg,var(--aurora-1),var(--aurora-2))!important;color:#06070C!important;border:0!important}
+
+/* ---------- Small touches ---------- */
+.toast{border-radius:14px!important;background:var(--glass-strong)!important;border:1px solid var(--glass-line);backdrop-filter:var(--glass-blur);-webkit-backdrop-filter:var(--glass-blur)}
+.chat-context-menu,.model-menu,[role=menu]{border-radius:14px!important;background:var(--glass-strong)!important;backdrop-filter:var(--glass-blur);-webkit-backdrop-filter:var(--glass-blur)}
+.welcome h1{background:linear-gradient(100deg,var(--text) 35%,var(--aurora-2) 65%,var(--aurora-1));-webkit-background-clip:text;background-clip:text;color:transparent}
+.welcome h1 span{color:inherit;opacity:.8}
+.starter-list{border:0!important;display:grid;gap:10px}
+.starter-list button{border:1px solid var(--glass-line)!important;border-radius:16px;padding:14px 16px!important;background:var(--glass);backdrop-filter:var(--glass-blur);-webkit-backdrop-filter:var(--glass-blur);transition:transform .2s ease,border-color .2s ease}
+.starter-list button:hover{transform:translateY(-2px);border-color:color-mix(in srgb,var(--aurora-1) 50%,transparent)!important}
+::-webkit-scrollbar{width:10px;height:10px}::-webkit-scrollbar-thumb{background:color-mix(in srgb,var(--text) 16%,transparent);border-radius:10px;border:3px solid transparent;background-clip:content-box}
+
+/* ---------- Performance and comfort ---------- */
+body.motion-off .aurora i,body.motion-off .composer::before,body.motion-off .approval{animation:none!important}
+body.effects-low .aurora{display:none}
+body.effects-low{--glass:var(--panel);--glass-strong:var(--panel)}
+body.effects-low .sidebar,body.effects-low .inspector,body.effects-low .topbar,body.effects-low .composer,body.effects-low .sheet,body.effects-low .message,body.effects-low .approval,body.effects-low .starter-list button{backdrop-filter:none!important;-webkit-backdrop-filter:none!important}
+body.effects-low .message.user{background:color-mix(in srgb,var(--aurora-1) 14%,var(--panel))!important}
+body.effects-low .approval{background:color-mix(in srgb,var(--warning) 10%,var(--panel))!important}
+@media (prefers-reduced-motion:reduce){.aurora i,.composer::before,.approval{animation:none!important}}
+@media (max-width:720px){.app{padding:0;gap:0}.topbar{border-radius:0;margin:0}.sheet{margin:0;height:100%!important;border-radius:0}}
+
+/* Settings: calm sign-out, glass navigation */
+.settings-logout{background:transparent!important;color:var(--danger)!important;border:1px solid color-mix(in srgb,var(--danger) 40%,transparent)!important;border-radius:12px!important;margin:8px 0 12px!important;width:100%!important;font-weight:500!important}
+.settings-logout:hover{background:color-mix(in srgb,var(--danger) 12%,transparent)!important}
+.settings-nav button[aria-current=page],.settings-nav button[aria-selected=true],.settings-nav .active{background:color-mix(in srgb,var(--aurora-1) 18%,transparent)!important;box-shadow:inset 0 0 0 1px color-mix(in srgb,var(--aurora-1) 40%,transparent);border-radius:11px}
+
+/* Plain choice cards (replace dropdowns such as Access mode) */
+.choice-cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:12px;margin:6px 0 10px}
+.choice-card{display:flex;flex-direction:column;gap:6px;text-align:left;padding:16px 18px;border-radius:18px;border:1px solid var(--glass-line);background:color-mix(in srgb,var(--text) 4%,transparent);color:var(--text);cursor:pointer;transition:border-color .2s ease,background .2s ease,box-shadow .2s ease,transform .2s ease}
+.choice-card strong{font-size:15px;font-weight:600;display:flex;align-items:center;gap:10px}
+.choice-card strong::before{content:'';width:16px;height:16px;border-radius:50%;border:1.5px solid var(--glass-line);box-sizing:border-box;flex:none;transition:all .2s ease}
+.choice-card small{font-size:12.5px;line-height:1.5;color:var(--muted)}
+.choice-card:hover{transform:translateY(-1px);border-color:color-mix(in srgb,var(--aurora-1) 45%,transparent)}
+.choice-card[aria-checked=true]{background:color-mix(in srgb,var(--aurora-1) 14%,transparent);border-color:color-mix(in srgb,var(--aurora-1) 60%,transparent);box-shadow:0 0 0 1px color-mix(in srgb,var(--aurora-1) 40%,transparent),0 12px 34px -16px var(--glow)}
+.choice-card[aria-checked=true] strong::before{border:5px solid var(--aurora-1);background:#FFFFFF}
+.choice-card[data-value=full][aria-checked=true]{background:color-mix(in srgb,var(--warning) 12%,transparent);border-color:color-mix(in srgb,var(--warning) 55%,transparent);box-shadow:0 0 0 1px color-mix(in srgb,var(--warning) 35%,transparent)}
+.choice-card[data-value=full][aria-checked=true] strong::before{border-color:var(--warning)}
+.choice-card:disabled{opacity:.5;cursor:not-allowed;transform:none}
+/* Mode cards in Appearance glow when selected */
+.sheet [aria-pressed=true]{box-shadow:0 0 0 1px color-mix(in srgb,var(--aurora-1) 50%,transparent),0 14px 40px -18px var(--glow)!important}
