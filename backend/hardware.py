@@ -1,5 +1,5 @@
 """Local hardware inventory and opt-in measurements. Never tunes the system implicitly."""
-import asyncio,hashlib,json,os,platform,secrets,socket,statistics,subprocess,time
+import asyncio,hashlib,json,os,platform,re,secrets,socket,statistics,subprocess,time
 from pathlib import Path
 import httpx,psutil
 from .config import CONFIG
@@ -34,7 +34,8 @@ def information():
     if not gpus and os.name=='nt':
         names=command(['powershell.exe','-NoProfile','-NonInteractive','-Command','Get-CimInstance Win32_VideoController | Select-Object -ExpandProperty Name'])
         gpus=[{'name':line,'vram_bytes':None,'used_bytes':None} for line in (names or '').splitlines()]
-    result={'cpu':cpu,'physical_cores':psutil.cpu_count(logical=False),'logical_cores':psutil.cpu_count(),
+    devices=list_devices(exe) if exe.is_file() else None
+    result={'cpu':cpu,'physical_cores':psutil.cpu_count(logical=False),'logical_cores':psutil.cpu_count(),'devices':devices,'registry_vram':registry_vram(),
             'ram_bytes':psutil.virtual_memory().total,'gpus':gpus,'runtime_version':version,
             'runtime_available':exe.is_file(),'measured_at':now(),
             'limitations':'GPU memory unavailable unless the installed driver exposes a supported query. No values are estimated.'}
@@ -42,6 +43,36 @@ def information():
     identity['gpus']=[{k:g[k] for k in ('name','vram_bytes')} for g in gpus]
     result['hardware_id']=hashlib.sha256(json.dumps(identity,sort_keys=True).encode()).hexdigest()
     return result
+
+DEVICE=re.compile(r'^\s*([A-Za-z]+\d+):\s*(.+?)\s*\((\d+)\s*MiB,\s*(\d+)\s*MiB free\)')
+
+def list_devices(exe):
+    """GPUs exactly as the bundled llama.cpp runtime sees them, for any vendor. None if the runtime could not answer."""
+    output=command([str(exe),'--list-devices'],timeout=15)
+    if output is None:return None
+    found=[]
+    for line in output.splitlines():
+        m=DEVICE.match(line)
+        if m:found.append({'id':m.group(1),'name':m.group(2),'total_bytes':int(m.group(3))*1024**2,'free_bytes':int(m.group(4))*1024**2})
+    return found
+
+def registry_vram():
+    """True dedicated graphics memory from the Windows driver registry (AdapterRAM caps at 4 GB)."""
+    if os.name!='nt':return []
+    script=("Get-ItemProperty -Path 'HKLM:\\SYSTEM\\ControlSet001\\Control\\Class\\{4d36e968-e325-11ce-bfc1-08002be10318}\\0*' -ErrorAction SilentlyContinue | "
+            "ForEach-Object { \"$($_.DriverDesc)|$($_.'HardwareInformation.qwMemorySize')\" }")
+    rows=[]
+    for line in (command(['powershell.exe','-NoProfile','-NonInteractive','-Command',script]) or '').splitlines():
+        name,_,size=line.partition('|')
+        if size.strip().isdigit() and int(size)>0:rows.append({'name':name.strip(),'vram_bytes':int(size)})
+    return rows
+
+_cache={'at':0,'info':None}
+def cached_information(max_age=600,refresh=False):
+    """information() is slow (driver queries); the library asks often."""
+    if refresh or not _cache['info'] or time.time()-_cache['at']>max_age:
+        _cache.update(info=information(),at=time.time())
+    return _cache['info']
 
 def provenance(model,hardware):
     file=Path(model['model_file']);stat=file.stat();exe=Path(CONFIG.get('llama_executable',''))
@@ -53,11 +84,27 @@ def provenance(model,hardware):
     result['key']=hashlib.sha256(json.dumps(result,sort_keys=True).encode()).hexdigest()
     return result
 
+def smart_candidates(plan,layers_total,cores):
+    """Settings worth measuring on this PC: the estimated fit point and a couple of safer steps."""
+    cores=max(1,cores or 4)
+    threads=sorted({max(1,cores-2),cores})
+    if not plan or not plan.get('placement'):return {'threads':threads,'gpu_layers':[0,-1],'cpu_moe':[0]}
+    if plan['placement']=='gpu':return {'threads':threads,'gpu_layers':[-1],'cpu_moe':[0]}
+    if plan['placement']=='moe':
+        k=plan.get('cpu_moe') or 0
+        return {'threads':threads,'gpu_layers':[-1],'cpu_moe':sorted({min(layers_total,k+s) for s in (0,2,4)})}
+    if plan['placement']=='split':
+        n=plan.get('gpu_layers') or 0
+        return {'threads':threads,'gpu_layers':sorted({max(0,n-s) for s in (0,2,4)},reverse=True),'cpu_moe':[0]}
+    return {'threads':threads,'gpu_layers':[0],'cpu_moe':[0]}
+
 def choices(body):
     threads=body.get('threads',[4,8]);layers=body.get('gpu_layers',[0,16,-1])
     if not isinstance(threads,list) or not 1<=len(threads)<=4 or any(type(n)!=int or not 1<=n<=min(256,psutil.cpu_count() or 1) for n in threads):raise ValueError('Choose one to four valid CPU thread counts.')
     if not isinstance(layers,list) or not 1<=len(layers)<=3 or any(type(n)!=int or not -1<=n<=256 for n in layers):raise ValueError('Choose one to three GPU layer counts; -1 requests full offload, 0 CPU-only.')
-    return list(dict.fromkeys(threads)),list(dict.fromkeys(layers))
+    experts=body.get('cpu_moe',[0])
+    if not isinstance(experts,list) or not 1<=len(experts)<=3 or any(type(n)!=int or not 0<=n<=256 for n in experts):raise ValueError('Choose one to three expert-offload counts from 0 to 256.')
+    return list(dict.fromkeys(threads)),list(dict.fromkeys(layers)),list(dict.fromkeys(experts))
 
 async def terminate(proc):
     if proc.returncode is None:
@@ -67,13 +114,14 @@ async def terminate(proc):
         else:proc.terminate()
         await proc.wait()
 
-async def measure_variant(model,threads,layers,progress):
+async def measure_variant(model,threads,layers,progress,cpu_moe=0,ubatch=128):
     # A temporary loopback server isolates settings without changing the user's model registry or manager.
     with socket.socket() as probe:probe.bind(('127.0.0.1',0));port=probe.getsockname()[1]
     token=secrets.token_urlsafe(24);url=f'http://127.0.0.1:{port}'
     argv=[CONFIG['llama_executable'],'-m',model['model_file'],'--host','127.0.0.1','--port',str(port),
           '-c',str(model['context']),'-np','1','-t',str(threads),'-ngl',str(layers),'-fit','off',
-          '-b','512','-ub','128','-ctk','q8_0','-ctv','q8_0','-fa','on','--jinja','--api-key',token]
+          '-b',str(max(512,ubatch)),'-ub',str(ubatch),'-ctk','q8_0','-ctv','q8_0','-fa','on','--jinja','--api-key',token]
+    if cpu_moe:argv+=['--n-cpu-moe',str(cpu_moe)]
     if layers==0:argv+=['--no-kv-offload']
     proc=await asyncio.create_subprocess_exec(*argv,stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL,creationflags=FLAGS)
     stop=asyncio.Event();samples=[];jitter=[]
@@ -112,7 +160,7 @@ async def measure_variant(model,threads,layers,progress):
                 results.append({'first_token_seconds':first-started,'end_to_end_tps':count/elapsed,'output_tokens':count,
                                 'prompt_tps':timing.get('prompt_per_second'),'decode_tps':timing.get('predicted_per_second'),'elapsed':elapsed})
         gpus_after=await asyncio.to_thread(gpu_memory)
-        return {'threads':threads,'gpu_layers':layers,'repetitions':results,'median_tps':statistics.median(r['end_to_end_tps'] for r in results),
+        return {'threads':threads,'gpu_layers':layers,'cpu_moe':cpu_moe,'ubatch':ubatch,'repetitions':results,'median_tps':statistics.median(r['end_to_end_tps'] for r in results),
                 'median_first_token_seconds':statistics.median(r['first_token_seconds'] for r in results),'peak_runtime_rss_bytes':max(samples,default=None),
                 'gpu_before':gpus_before,'gpu_after':gpus_after,'gpu_memory_scope':'Driver snapshots for the whole GPU, not per-process peak VRAM.',
                 'maximum_event_loop_delay_seconds':max(jitter,default=None),'responsiveness_scope':'Backend event-loop scheduling; browser/render performance is separate.'}
@@ -126,18 +174,22 @@ class Tuning:
     def public(self):return self.job or {'state':'Idle'}
     def start(self,model,body,hardware):
         if self.task and not self.task.done():raise ValueError('A tuning benchmark is already running.')
-        threads,layers=choices(body);identity=provenance(model,hardware)
+        threads,layers,experts=choices(body);identity=provenance(model,hardware)
+        ubatch=body.get('ubatch',128)
+        if type(ubatch)!=int or ubatch not in (128,256,512,1024):raise ValueError('Batch size must be 128, 256, 512 or 1024.')
         self.cancel_requested=False
         self.job={'id':uid(),'state':'Running','model':model['id'],'started':now(),'variants':[],'progress':{},'provenance':identity}
-        self.task=asyncio.create_task(self.run(model,threads,layers));return self.public()
-    async def run(self,model,threads,layers):
+        self.job['plan']={'threads':threads,'gpu_layers':layers,'cpu_moe':experts,'ubatch':ubatch,'smart':bool(body.get('smart'))}
+        self.task=asyncio.create_task(self.run(model,threads,layers,experts,ubatch));return self.public()
+    async def run(self,model,threads,layers,experts=(0,),ubatch=128):
         try:
             for t in threads:
                 for g in layers:
-                    self.job['progress']={'threads':t,'gpu_layers':g,'repetition':0}
-                    try:result=await measure_variant(model,t,g,self.job['progress'])
-                    except (ValueError,httpx.HTTPError,OSError) as error:result={'threads':t,'gpu_layers':g,'error':str(error)[:300]}
-                    self.job['variants'].append(result)
+                    for e in experts:
+                        self.job['progress']={'threads':t,'gpu_layers':g,'cpu_moe':e,'repetition':0}
+                        try:result=await (measure_variant(model,t,g,self.job['progress'],cpu_moe=e,ubatch=ubatch) if e or ubatch!=128 else measure_variant(model,t,g,self.job['progress']))
+                        except (ValueError,httpx.HTTPError,OSError) as error:result={'threads':t,'gpu_layers':g,'cpu_moe':e,'error':str(error)[:300]}
+                        self.job['variants'].append(result)
             successful=[r for r in self.job['variants'] if r.get('median_tps')]
             self.job['state']='Completed' if successful else 'Failed'
             self.job['best']=max(successful,key=lambda r:r['median_tps'],default=None)
@@ -170,7 +222,7 @@ def apply_profile(store,job_id,hardware,rollback=False):
         if not job or job['state']!='Completed' or not job.get('best'):raise ValueError('Choose a completed measured tuning run.')
         model=next((m for m in models if m['id']==job['model']),None)
         if not model or provenance(model,hardware)['key']!=job['provenance']['key']:raise ValueError('Model, runtime, context, or hardware changed; benchmark again before applying.')
-        current=model.get('tuning');model['tuning']={k:job['best'][k] for k in ('threads','gpu_layers')}
+        current=model.get('tuning');model['tuning']={k:job['best'][k] for k in ('threads','gpu_layers','cpu_moe','ubatch') if k in job['best']}
         model['tuning'].update(provenance=job['provenance'],measurement=job_id)
     store.set_setting('tuning_rollback',{'model':model['id'],'tuning':current});save(models)
     return {'status':'ok','model':model['id'],'tuning':model['tuning'],'restart_required':True,'message':'Selection saved. Restart Luminaria and its owned model manager to apply it. No running settings were changed.'}

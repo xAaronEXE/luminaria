@@ -74,14 +74,26 @@ def start_swap():
         tuning_hardware=information()
     for entry in entries:
         if not Path(entry['model_file']).is_file(): continue
-        args=[exe,'-m',entry['model_file'],'--host','127.0.0.1','--port','8097','-c',str(entry['context']),'-np','1','-fa','on','-ctk','q8_0','-ctv','q8_0','-fit','on','-fitt','512','-b','512','-ub','128','-t','8','--jinja','--agent','--api-key',CONFIG['model_api_key'],'--reasoning-format','deepseek','--reasoning-budget','1024','--metrics','--alias',entry['id']]
+        args=[exe,'-m',entry['model_file'],'--host','127.0.0.1','--port','8097','-c',str(entry['context']),'-np','1','-fa','on','-ctk','q8_0','-ctv','q8_0','-fit','on','-fitt','512','-b','512','-ub','128','-t','8','--cache-reuse','256','--jinja','--agent','--api-key',CONFIG['model_api_key'],'--reasoning-format','deepseek','--reasoning-budget','1024','--metrics','--alias',entry['id']]
+        launch=entry.get('launch') or {}
+        if launch.get('ubatch'):
+            args[args.index('-ub')+1]=str(launch['ubatch']);args[args.index('-b')+1]=str(max(512,launch['ubatch']))
+        if launch.get('gpu_layers') is not None or launch.get('cpu_moe'):
+            # Custom placement chosen in the library: llama.cpp's own fitting would override it.
+            args[args.index('-fit')+1]='off'
+            layers=launch.get('gpu_layers');layers=999 if layers in (None,-1) else layers
+            args+=['-ngl',str(layers)]
+            if launch.get('cpu_moe'):args+=['--n-cpu-moe',str(launch['cpu_moe'])]
+            if layers==0:args+=['--no-kv-offload']
         tuning=entry.get('tuning')
-        if tuning and tuning_hardware:
+        if tuning and tuning_hardware and not launch:
             from .hardware import provenance
             if tuning.get('provenance',{}).get('key')==provenance(entry,tuning_hardware)['key']:
                 args[args.index('-t')+1]=str(tuning['threads'])
                 args[args.index('-fit')+1]='off'
                 args+=['-ngl',str(tuning['gpu_layers'])]
+                if tuning.get('cpu_moe'):args+=['--n-cpu-moe',str(tuning['cpu_moe'])]
+                if tuning.get('ubatch'):args[args.index('-ub')+1]=str(tuning['ubatch']);args[args.index('-b')+1]=str(max(512,tuning['ubatch']))
                 if tuning['gpu_layers']==0:args+=['--no-kv-offload']
         if entry.get('projector_file') and Path(entry['projector_file']).is_file(): args+=['--mmproj',entry['projector_file'],'--no-mmproj-offload','--image-max-tokens','1024']
         command=' '.join('"'+str(a).replace('\\','/').replace('"','\\"')+'"' for a in args)

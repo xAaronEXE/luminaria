@@ -140,11 +140,14 @@ class Engine:
         from .brief import load as load_brief,prompt as brief_prompt
         pinned=brief_prompt(load_brief(self.store,chat))
         if pinned: messages[0]['content']+='\n\n'+pinned
+        # Fast-changing state goes on the last message (see context_shaping) so the
+        # long prefix stays identical between steps and the prompt cache is reused.
+        state=[]
         plan=self.store.setting('plan:'+chat,None)
         if plan and plan.get('steps'):
-            messages[0]['content']+=('\n\nSaved plan for this chat (version '+str(plan.get('version',1))+'). When the user asks to see, review or '
+            state.append('Saved plan for this chat (version '+str(plan.get('version',1))+'). When the user asks to see, review or '
             'continue the plan, present it from here with current statuses. Keep it current with update_plan as work progresses.\n'+plan_text(plan))
-        if run and run.get('plan_only') and run.get('plan_finalize'): messages[0]['content']+='\n\n'+PLAN_FINALIZE
+        if run and run.get('plan_only') and run.get('plan_finalize'): state.append(PLAN_FINALIZE)
         if summary: messages[0]['content']+='\n\nWorking summary of prior conversation. Original messages are retrievable by ID.\n'+summary['content']
         recent=self.store.messages(chat,summary['through_id'] if summary else 0)
         refs=[p['id'] for m in recent if isinstance(m.get('content'),list) for p in m['content'] if p.get('type')=='image_ref']
@@ -167,7 +170,11 @@ class Engine:
                     else: content.append(part)
                 c['content']=content
             messages.append(c)
-        return messages
+        from .context_shaping import shape,attach_state
+        shaped,stats=shape(messages[1:],keep_turns=CONFIG.get('full_tool_turns',2))
+        messages=[messages[0]]+shaped
+        if run is not None: run['shaping']=stats
+        return attach_state(messages,state)
 
     async def token_count(self,messages,definitions=None):
         # llama.cpp applies its exact chat template before counting text tokens.
@@ -277,6 +284,8 @@ class Engine:
             if isinstance(c.get('content'),list): c['content']='\n'.join(p.get('text','[Saved image '+p.get('id','')+']') for p in c['content'])
             transcript.append({'message_id':m['id'],**c})
         from .compaction import summarize_detailed
+        from .context_shaping import for_summary
+        transcript=for_summary(transcript)
         if tokens_before is None: tokens_before,_=await self.token_count(self.context(chat,run))
         started=time.monotonic()
         key=f"{chat}:{through}:{uid()}"
@@ -341,7 +350,7 @@ class Engine:
         if tokens+CONFIG['output_tokens']>self.context_limit():
             result=await self.compact(chat,force=True,run=run,tokens_before=tokens)
             if result['compacted']:messages=self.context(chat,run);tokens,method=await self.token_count(messages,defs)
-        run['context']={'used':tokens,'reserved':CONFIG['output_tokens'],'limit':self.context_limit(),'method':method}
+        run['context']={'used':tokens,'reserved':CONFIG['output_tokens'],'limit':self.context_limit(),'method':method,'shaping':run.get('shaping') or {}}
         self.store.set_setting('context:'+chat,run['context'])
         if tokens+CONFIG['output_tokens']>self.context_limit(): raise ValueError(self.overflow_reason(messages,tokens))
         run['phase']='Thinking' if run.get('reasoning') else 'Generating'; self.emit('changed',chat=chat)

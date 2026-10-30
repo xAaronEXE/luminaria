@@ -56,7 +56,7 @@ class PlanningModeTests(unittest.IsolatedAsyncioTestCase):
    self.assertEqual(saved['steps'][0]['detail'],'One page, checked by opening it');self.assertNotIn('detail',saved['steps'][1])
    h.store.add(chat,{'role':'user','content':'show me the plan'})
    h.engine.start(chat);await h.engine.tasks[chat]
-   system=bodies[2]['messages'][0]['content']
+   system=bodies[2]['messages'][-1]['content'] # Plan rides on the last message to keep the prompt cache warm.
    self.assertIn('Saved plan for this chat',system);self.assertIn('Goal: Ship a todo app',system);self.assertIn('1. [pending] Build the list UI — One page',system)
    self.assertIn('(after ui)',system)
   finally:h.close()
@@ -70,7 +70,7 @@ class PlanningModeTests(unittest.IsolatedAsyncioTestCase):
    h.engine.start(chat,plan_only=True);await h.engine.tasks[chat]
    self.assertIn('read_file',{t['function']['name'] for t in bodies[3]['tools']})
    self.assertEqual({t['function']['name'] for t in bodies[4]['tools']},{'update_plan'})
-   self.assertIn('Investigation budget',bodies[4]['messages'][0]['content'])
+   self.assertIn('Investigation budget',bodies[4]['messages'][-1]['content'])
    self.assertNotIn('tools',bodies[5])
    self.assertEqual(h.engine.runs[chat]['phase'],'Complete');self.assertEqual(len(bodies),6)
   finally:h.close()

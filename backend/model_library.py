@@ -260,9 +260,41 @@ def _projector_active(path):
     try: return bool(configured) and Path(configured).resolve() == path.resolve()
     except OSError: return False
 
+def machine_profile():
+    """This PC's memory picture for fit estimates. Never fails the library if detection does."""
+    from . import fit
+    try:
+        from .hardware import cached_information
+        info = cached_information()
+    except Exception:
+        info = {}
+    return fit.machine(info, CONFIG.get('hardware_override'))
+
+def fit_for(entry, quant, hw, benchmarks=()):
+    """Fit rating for one catalog quantization on this PC, or a size-only guess for local files."""
+    from . import fit
+    from .model_catalog import cache_bytes
+    from .model_catalog_data import REPOS
+    facts = REPOS.get(entry.get('repo') or '')
+    size = quant.get('bytes') or quant.get('bytes_on_disk')
+    if not size: return None
+    if facts:
+        active, total = fit.parse_billions(entry.get('active_parameters')), fit.parse_billions(entry.get('parameters'))
+        model = {'bytes': size, 'layers': facts['layers'], 'architecture': facts['architecture'],
+                 'context_supported': facts['context'], 'active_ratio': active / total if active and total else None}
+        cache = lambda context: cache_bytes(facts, context)
+    else:
+        # A file registered from disk: no architecture facts, so assume a typical dense model.
+        model = {'bytes': size, 'layers': 40, 'architecture': '', 'context_supported': entry.get('context') or 32768, 'active_ratio': None}
+        cache = lambda context: int(size * 0.012 * context / 4096)
+    measured = next((b for b in benchmarks or () if isinstance(b, dict) and b.get('tps')), None)
+    return fit.public(fit.estimate(model, hw, cache), measured)
+
 def library(store):
     load_state()
     from .benchmark_store import evaluations, history
+    from . import fit
+    hw = machine_profile()
     folder = models_folder()
     registry = models.registry()
     downloads = {job['id']: job for job in jobs_view()}
@@ -286,6 +318,8 @@ def library(store):
                            'verified': verified, 'bytes_on_disk': path.stat().st_size if installed else None,
                            'benchmarks': benchmarks, 'evaluations': evaluations(registered['id']) if registered else [], 'active': bool(registered) and _active(registered['id'], path),
                            'job': downloads.get(quant['id']), 'downloadable': True, 'managed': True})
+            quants[-1]['fit'] = fit_for(entry, quant, hw, benchmarks)
+            quants[-1]['launch'] = (registered or {}).get('launch') or {}
         projector = None
         if entry['projector']:
             spec = entry['projector']; path = folder / spec['filename']; installed = path.is_file()
@@ -313,10 +347,20 @@ def library(store):
                                     'verified': False, 'bytes_on_disk': path.stat().st_size if installed else None, 'benchmarks': benchmarks, 'evaluations': evaluations(item['id']),
                                     'active': _active(item['id'], path) if installed else CONFIG.get('model') == item['id'], 'job': None,
                                     'downloadable': False, 'managed': installed and _inside_models(path), 'sha256': ''}]})
+        entries[-1]['quants'][0]['fit'] = fit_for(entries[-1], entries[-1]['quants'][0], hw, benchmarks)
+        entries[-1]['quants'][0]['launch'] = item.get('launch') or {}
     storage = models.model_storage(records)
     storage['partial_bytes'] = _partial_bytes()
     spent = _catalog_spent()
-    return {'active': CONFIG.get('model'), 'context': CONFIG.get('context'), 'storage': storage,
+    for entry in entries:
+        rated = [q['fit'] for q in entry['quants'] if q.get('fit')]
+        best = min(rated, key=lambda f: fit.ORDER.index(f['rating']), default=None)
+        entry['fit'] = best and {k: best[k] for k in ('rating', 'label', 'meaning')}
+        # Highlight the highest-quality quantization that still earns the best rating.
+        top = [q for q in entry['quants'] if q.get('fit') and best and q['fit']['rating'] == best['rating']]
+        if top: max(top, key=lambda q: q.get('bytes') or 0)['best_fit'] = True
+    machine = {k: hw[k] for k in ('gpu', 'vram_total', 'vram_free', 'integrated', 'ram_total', 'source')}
+    return {'active': CONFIG.get('model'), 'context': CONFIG.get('context'), 'storage': storage, 'machine': machine,
             'budget': {'limit': BUDGET, 'used': spent, 'remaining': max(0, BUDGET - spent)},
             'downloads': list(downloads.values()), 'models': entries}
 

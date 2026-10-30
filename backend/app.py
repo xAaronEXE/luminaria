@@ -732,6 +732,45 @@ async def model_context(id:str,request:Request):
         return {'context':model['context'],'message':'Context saved. The model reloads on its next request.'}
     finally:benchmarking=False
 
+@app.post('/api/models/{id}/launch')
+async def model_launch(id:str,request:Request):
+    """Save fine-tuned load settings (GPU layers, experts on CPU, batch size, context) and reload."""
+    global benchmarking
+    if benchmarking or any(not r.get('finished') for r in engine.runs.values()):
+        raise ValueError('Finish active tasks and benchmarks before changing load settings')
+    from .models import set_launch
+    from .runtime import stop_owned,start_swap,manager_state
+    body=await request.json()
+    manager=manager_state()
+    if manager.get('running') and not manager.get('owned'):
+        raise ValueError('The model manager belongs to another Luminaria process. Close that app first.')
+    benchmarking=True
+    try:
+        model=set_launch(id,body)
+        await asyncio.to_thread(stop_owned)
+        await asyncio.to_thread(start_swap)
+        broadcast({'type':'changed'})
+        return {'launch':model.get('launch') or {},'context':model.get('context'),'message':'Load settings saved. The model reloads on its next request.'}
+    finally:benchmarking=False
+
+@app.get('/api/hardware/profile')
+async def hardware_profile(refresh:bool=False):
+    """The memory picture used for fit ratings, re-detected on request."""
+    from .hardware import cached_information
+    from . import fit
+    info=await asyncio.to_thread(cached_information,600,refresh)
+    return {'machine':fit.machine(info,CONFIG.get('hardware_override')),'override':CONFIG.get('hardware_override')}
+
+@app.post('/api/hardware/profile')
+async def hardware_profile_save(request:Request):
+    """Let people correct detection: graphics memory in GB (0 = no usable GPU), or clear to auto-detect."""
+    body=await request.json()
+    if body.get('auto'):save_config({'hardware_override':None});return await hardware_profile()
+    value=body.get('vram_gb')
+    if isinstance(value,bool) or not isinstance(value,(int,float)) or not 0<=value<=512:raise ValueError('Graphics memory must be a number of GB from 0 to 512')
+    save_config({'hardware_override':{'vram_bytes':int(value*1024**3),'integrated':bool(body.get('integrated',False))}})
+    return await hardware_profile()
+
 @app.post('/api/models/{id}/evaluate')
 async def evaluate_model(id:str):
     global benchmarking
@@ -1093,9 +1132,23 @@ async def tuning_start(request:Request):
     from .hardware import information
     model=next((m for m in registry() if m['id']==body.get('model') and Path(m.get('model_file','')).is_file()),None)
     if not model:raise ValueError('Select an installed model; no weights are downloaded.')
+    hardware=await asyncio.to_thread(information)
+    if body.get('smart'):
+        # Measure around this PC's estimated fit point instead of fixed guesses.
+        from .hardware import smart_candidates
+        from .model_library import fit_for,machine_profile
+        from .model_catalog import CATALOG
+        from .model_catalog_data import REPOS
+        from . import fit
+        name=Path(model['model_file']).name
+        entry=next((e for e in CATALOG if any(q['filename']==name for q in e['quants'])),None)
+        quant=next((q for q in entry['quants'] if q['filename']==name),None) if entry else {'bytes':Path(model['model_file']).stat().st_size}
+        plan=fit_for(entry or {'context':model.get('context')},quant,fit.machine(hardware,CONFIG.get('hardware_override')))
+        layers=(REPOS.get(entry['repo']) or {}).get('layers',40) if entry else 40
+        body={**body,**smart_candidates(plan and {**plan,**plan['settings']},layers,hardware.get('physical_cores')),'ubatch':(plan or {}).get('settings',{}).get('ubatch',128)}
     benchmarking=True
     try:
-        result=tuning_service().start(model,body,await asyncio.to_thread(information))
+        result=tuning_service().start(model,body,hardware)
         def finished(task):
             global benchmarking
             benchmarking=False

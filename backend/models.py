@@ -66,3 +66,22 @@ def set_context(id,value):
     model['context']=value;save(models)
     if CONFIG['model']==id:save_config({'context':value})
     return model
+
+LAUNCH_FIELDS={'gpu_layers':(-1,512),'cpu_moe':(0,256),'ubatch':(64,4096)}
+
+def set_launch(id,body):
+    """Save how llama-server loads one model. 'auto' clears custom settings and lets llama.cpp fit it."""
+    models=registry();model=next((m for m in models if m['id']==id),None)
+    if not model or not Path(model['model_file']).is_file():raise ValueError('Install this model first')
+    if body.get('mode')=='auto':
+        model.pop('launch',None);save(models);return model
+    launch={}
+    for key,(low,high) in LAUNCH_FIELDS.items():
+        value=body.get(key)
+        if value is None:continue
+        if isinstance(value,bool) or not isinstance(value,int) or not low<=value<=high:raise ValueError(f'{key.replace("_"," ")} must be a whole number from {low} to {high}')
+        launch[key]=value
+    if launch.get('ubatch') and launch['ubatch']&(launch['ubatch']-1):raise ValueError('Batch size must be a power of two, such as 128, 256 or 512')
+    model['launch']=launch;save(models)
+    if body.get('context') is not None:return set_context(id,body['context'])
+    return model
