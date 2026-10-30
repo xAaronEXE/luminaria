@@ -12,13 +12,21 @@
   <div class="sidebar-label">Your chats</div>
   <nav id="chats" class="chat-list" aria-label="Saved tasks"></nav>
   <div class="sidebar-bottom">
-   <button data-panel="memory"><span data-icon="memory"></span>Memory<span id="memory-count" class="count">0</span></button>
-   <button data-panel="tools"><span data-icon="tools"></span>Tools<span id="tools-count" class="count">—</span></button>
-   <button data-panel="integrations"><span data-icon="plug"></span>Integrations</button>
-   <button data-panel="skills"><span data-icon="book"></span>Skills</button>
-   <button data-panel="schedules"><span data-icon="clock"></span>Automations</button>
-   <button data-panel="models"><span data-icon="models"></span>Model library</button>
-   <button id="archive-trash"><span data-icon="archive"></span>Archive & trash</button>
+   <div class="library" id="library">
+    <div class="library-menu" id="library-menu" role="menu" aria-label="Library" hidden>
+     <div class="library-group">Your library</div>
+     <button role="menuitem" data-panel="models"><span data-icon="models"></span><span class="library-text">Models<small>Download, load and switch models</small></span></button>
+     <button role="menuitem" data-panel="skills"><span data-icon="book"></span><span class="library-text">Skills<small>Step-by-step workflows it can follow</small></span></button>
+     <button role="menuitem" data-panel="memory"><span data-icon="memory"></span><span class="library-text">Memory<small>Facts you asked it to keep</small></span><span id="memory-count" class="count">0</span></button>
+     <button role="menuitem" data-panel="schedules"><span data-icon="clock"></span><span class="library-text">Automations<small>Prompts that run on a schedule</small></span></button>
+     <div class="library-group">Connections</div>
+     <button role="menuitem" data-panel="tools"><span data-icon="tools"></span><span class="library-text">Tools<small>What it can use, and what asks first</small></span><span id="tools-count" class="count">—</span></button>
+     <button role="menuitem" data-panel="integrations"><span data-icon="plug"></span><span class="library-text">Integrations<small>Apps and servers you've connected</small></span></button>
+     <div class="library-divider"></div>
+     <button role="menuitem" id="archive-trash"><span data-icon="archive"></span><span class="library-text">Archive and trash<small>Tasks you put away</small></span></button>
+    </div>
+    <button class="library-toggle" id="library-toggle" aria-expanded="false" aria-controls="library-menu" aria-haspopup="menu"><span data-icon="models"></span><span class="library-text">Library<small>Models, skills, memory and more</small></span><span data-icon="chevron"></span></button>
+   </div>
    <button class="profile" data-panel="settings" aria-label="Account and settings"><span class="profile-symbol">L</span><span id="profile-label">Account & settings<small>On your machine</small></span><span data-icon="settings"></span></button>
   </div>
  </aside>

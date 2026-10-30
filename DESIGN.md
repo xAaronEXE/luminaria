@@ -165,3 +165,21 @@ Voice state, interrupt and end controls remain explicit. Conversation keeps tran
 - Don't restore the superseded graphite/ivory-only palette or temporary Studio branding.
 - Don't present spatial animation as hidden model thoughts or proof of model correctness.
 - Don't claim native, voice, installer or model acceptance from mocked browser previews.
+
+## Aurora glass layer (current)
+
+Supersedes the Elevation & Depth and Layout notes above where they differ. Implemented in `web/glass.css` and `web/glass.js`, loaded after the other stylesheets and built on the same appearance tokens, so Light, Dark, Follow system and custom accents still apply.
+
+**Thesis.** The assistant is a presence, not wallpaper. Glass panels float over slow colored light; the conversation stays the sharpest thing on screen.
+
+**Background glow.** Three blurred light fields drift behind the app (`--aurora-1/2/3`). Users pick a palette in Settings › Appearance › Background glow: Aurora, Ember, Ocean, Forest, Mono or Off. The choice is stored per PC (`luminaria-glow`).
+
+**Glass.** Sidebar, top bar, inspector, composer, messages and sheets use translucent panel color, a 1px light border, an inner top highlight and `backdrop-filter` blur. Low-end PCs (4 or fewer cores, or 4 GB or less memory) get solid panels and no glow automatically; `luminaria-effects` = `full` or `low` overrides.
+
+**The Lumen.** A glass orb with a swirling glow replaces the torus in everyday use: large beside the welcome headline, small in the top bar beside a plain status ("Ready", "Working", the current step). It mirrors the state core.js already publishes and never claims more than that. The WebGL scene remains for Task overview and voice conversation. States: idle (slow), working/generating (fast swirl), listening/speaking (quick pulse), waiting (warning color), error (danger color).
+
+**Layout.** The sidebar holds tasks. One Library button opens a menu of Models, Skills, Memory, Automations, Tools, Integrations and Archive and trash, each with a one-line description. Account and settings stays at the bottom. The top bar shows the Lumen status, the task path, Task overview and a permission chip (Ask me first / Hands-free) that opens Settings.
+
+**Settings.** Checkboxes render as on/off switches. Access mode is two choice cards, Ask me first and Hands-free, which drive the original select so saving is unchanged. Log out is an outlined secondary button, not a full-width red bar.
+
+**Motion.** Glow drift, the composer's edge light, the approval pulse and the Lumen all stop under the Motion preference or system reduced motion.

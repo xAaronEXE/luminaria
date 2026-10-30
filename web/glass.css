@@ -176,3 +176,82 @@ body.effects-low .approval{background:color-mix(in srgb,var(--warning) 10%,var(-
 .choice-card:disabled{opacity:.5;cursor:not-allowed;transform:none}
 /* Mode cards in Appearance glow when selected */
 .sheet [aria-pressed=true]{box-shadow:0 0 0 1px color-mix(in srgb,var(--aurora-1) 50%,transparent),0 14px 40px -18px var(--glow)!important}
+
+/* ---------- Everyday view: the Lumen orb replaces the torus ---------- */
+body:not(.task-overview):not([data-voice=conversation]) #ambient-field{opacity:0!important}
+body:not(.task-overview):not([data-voice=conversation]) .entity-status{opacity:0!important}
+body.glow-off .aurora{display:none}
+
+.lumen{position:relative;border-radius:50%;flex:none;isolation:isolate;
+  --spin:14s;--pulse:5s;--lift:1}
+.lumen i{position:absolute;inset:0;border-radius:50%;display:block}
+.lumen .lumen-glow{inset:-35%;background:radial-gradient(circle,color-mix(in srgb,var(--aurora-1) 55%,transparent),transparent 62%);filter:blur(10px);opacity:.75;animation:lumen-pulse var(--pulse) ease-in-out infinite}
+.lumen .lumen-swirl{background:conic-gradient(from 0deg,var(--aurora-1),var(--aurora-2),var(--aurora-3),var(--aurora-1));filter:blur(6px) saturate(130%);animation:lumen-spin var(--spin) linear infinite;
+  -webkit-mask:radial-gradient(circle,#000 58%,transparent 71%);mask:radial-gradient(circle,#000 58%,transparent 71%)}
+.lumen .lumen-swirl.lumen-two{inset:12%;opacity:.85;mix-blend-mode:screen;animation:lumen-spin calc(var(--spin) * .6) linear infinite reverse;
+  background:conic-gradient(from 120deg,transparent,var(--aurora-2),transparent 45%,var(--aurora-3),transparent 80%)}
+.lumen .lumen-core{inset:34%;background:radial-gradient(circle,#FFFFFF,color-mix(in srgb,var(--aurora-2) 60%,#FFFFFF) 45%,transparent 72%);filter:blur(2px);animation:lumen-pulse var(--pulse) ease-in-out infinite}
+.lumen .lumen-shine{background:radial-gradient(circle at 32% 26%,rgba(255,255,255,.75),transparent 22%),radial-gradient(circle at 50% 50%,transparent 60%,rgba(255,255,255,.18) 70%,transparent 72%);
+  box-shadow:inset 0 0 0 1px rgba(255,255,255,.22),inset 0 -10px 24px rgba(0,0,0,.25)}
+.lumen[data-state=working],.lumen[data-state=generating]{--spin:3.2s;--pulse:1.6s}
+.lumen[data-state=listening],.lumen[data-state=speaking]{--spin:6s;--pulse:1.1s}
+.lumen[data-state=waiting]{--spin:20s;--pulse:1.8s;--aurora-1:var(--warning);--aurora-2:color-mix(in srgb,var(--warning) 60%,#FFFFFF)}
+.lumen[data-state=error]{--aurora-1:var(--danger);--aurora-2:color-mix(in srgb,var(--danger) 60%,#FFFFFF)}
+@keyframes lumen-spin{to{transform:rotate(360deg)}}
+@keyframes lumen-pulse{0%,100%{transform:scale(1);opacity:.75}50%{transform:scale(1.08);opacity:1}}
+.lumen-hero{width:148px;height:148px;margin:0 0 28px}
+.lumen-small{width:26px;height:26px}
+.lumen-small .lumen-glow{inset:-60%}
+body.motion-off .lumen i{animation:none!important}
+@media (prefers-reduced-motion:reduce){.lumen i{animation:none!important}}
+
+.presence{display:flex;align-items:center;gap:9px;flex:none;padding-right:14px;margin-right:4px;border-right:1px solid var(--glass-line)}
+.presence-text{font-size:12px;font-weight:600;color:var(--text);white-space:nowrap}
+.presence[data-state=waiting] .presence-text{color:var(--warning)}
+.breadcrumb{flex:1;min-width:0}
+.topbar{justify-content:flex-start!important}
+
+/* ---------- Permission chip ---------- */
+.permission-chip{height:32px;padding:0 12px 0 28px;margin-right:6px;border-radius:999px;border:1px solid var(--glass-line);background:color-mix(in srgb,var(--text) 5%,transparent);color:var(--text);font-size:12px;font-weight:600;position:relative;white-space:nowrap}
+.permission-chip::before{content:'';position:absolute;left:11px;top:50%;width:8px;height:8px;margin-top:-4px;border-radius:50%;background:var(--success);box-shadow:0 0 0 3px color-mix(in srgb,var(--success) 22%,transparent)}
+.permission-chip[data-mode=full]{border-color:color-mix(in srgb,var(--warning) 55%,transparent);background:color-mix(in srgb,var(--warning) 12%,transparent)}
+.permission-chip[data-mode=full]::before{background:var(--warning);box-shadow:0 0 0 3px color-mix(in srgb,var(--warning) 25%,transparent)}
+.permission-chip:hover{background:color-mix(in srgb,var(--text) 10%,transparent)}
+
+/* ---------- Sidebar Library menu ---------- */
+.sidebar-bottom{padding:10px 0 12px;display:flex;flex-direction:column;gap:6px}
+.library{position:relative}
+.library-toggle,.library-menu button{display:flex!important;align-items:center;gap:11px;width:100%;text-align:left;border:0;background:transparent;color:var(--text);padding:9px 10px;border-radius:12px}
+.library-toggle:hover,.library-toggle[aria-expanded=true],.library-menu button:hover,.library-menu button:focus-visible{background:color-mix(in srgb,var(--text) 8%,transparent)}
+.library-text{display:flex;flex-direction:column;flex:1;min-width:0;font-size:13px;font-weight:550;line-height:1.3}
+.library-text small{font-size:11.5px;font-weight:400;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.library-toggle [data-icon=chevron]{transition:transform .2s ease}
+.library-toggle[aria-expanded=true] [data-icon=chevron]{transform:rotate(180deg)}
+.library-menu{position:absolute;left:-4px;right:-4px;bottom:calc(100% + 8px);z-index:40;padding:8px;border-radius:18px;
+  background:var(--glass-strong);border:1px solid var(--glass-line);backdrop-filter:blur(34px) saturate(180%);-webkit-backdrop-filter:blur(34px) saturate(180%);
+  box-shadow:inset 0 1px 0 var(--glass-hi),0 30px 80px -20px color-mix(in srgb,#000 60%,transparent);animation:library-in .18s cubic-bezier(.16,1,.3,1)}
+.library-menu[hidden]{display:none}
+.library-group{font-size:11px;font-weight:600;color:var(--muted);padding:8px 10px 4px}
+.library-divider{height:1px;background:var(--glass-line);margin:6px 4px}
+.library-menu .count{margin-left:auto}
+@keyframes library-in{from{opacity:0;transform:translateY(6px) scale(.98)}}
+body.effects-low .library-menu{background:var(--panel);backdrop-filter:none;-webkit-backdrop-filter:none}
+
+/* ---------- Background glow picker (Appearance) ---------- */
+.glow-options{display:grid;grid-template-columns:repeat(auto-fill,minmax(92px,1fr));gap:10px;margin:10px 0 18px}
+.glow-option{display:flex;flex-direction:column;align-items:center;gap:8px;padding:10px 8px 9px;border-radius:16px;border:1px solid var(--glass-line);background:color-mix(in srgb,var(--text) 4%,transparent);color:var(--text);font-size:12.5px}
+.glow-swatch{width:46px;height:46px;border-radius:50%;background:repeating-linear-gradient(45deg,color-mix(in srgb,var(--text) 14%,transparent) 0 4px,transparent 4px 8px);box-shadow:inset 0 0 0 1px var(--glass-line),inset 0 -6px 14px rgba(0,0,0,.2)}
+.glow-option[aria-checked=true]{border-color:color-mix(in srgb,var(--aurora-1) 65%,transparent);box-shadow:0 0 0 1px color-mix(in srgb,var(--aurora-1) 45%,transparent),0 10px 28px -14px var(--glow);font-weight:600}
+.glow-option:hover{border-color:color-mix(in srgb,var(--aurora-1) 40%,transparent)}
+
+/* Fit pass: hero orb size, library menu room */
+.lumen-hero{width:104px;height:104px;margin:0 0 22px}
+.welcome{padding-top:clamp(24px,6vh,70px)!important;margin-top:0!important}
+.sidebar{overflow:visible!important}
+.chat-list{flex:1;min-height:0;overflow-y:auto}
+.library-menu{right:auto;width:300px}
+.library-text small{white-space:normal}
+.lumen-hero{float:right;width:128px;height:128px;margin:18px 8px 0 28px}
+.welcome{padding-top:clamp(20px,5vh,60px)!important}
+.library-menu{background:color-mix(in srgb,var(--bg) 90%,var(--aurora-1))!important}
+@media (max-width:900px){.lumen-hero{width:84px;height:84px;margin:6px 0 0 16px}}
