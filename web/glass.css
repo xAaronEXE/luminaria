@@ -258,3 +258,21 @@ body.effects-low .library-menu{background:var(--panel);backdrop-filter:none;-web
 
 /* Brand mark: the orb file leaves room for its glow, so show it a little larger */
 .brand img{transform:scale(1.35)}
+
+/* ---------- Clipping fixes ---------- */
+/* Library menu lives on <body> while open, above the chat */
+.library-menu.portal{position:fixed;right:auto;z-index:1000;overflow-y:auto}
+/* Top bar: the task title gets the room; the folder name lives in Files and Settings */
+.topbar .breadcrumb [data-icon=folder],.topbar .breadcrumb #workspace-name,.topbar .breadcrumb .separator{display:none}
+.topbar .breadcrumb{min-width:0;flex:1 1 auto}
+.topbar .breadcrumb #task-title{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0}
+/* Messages fade out under the top bar and above the composer instead of being cut */
+.messages-scroll{-webkit-mask-image:linear-gradient(to bottom,transparent 0,#000 22px,#000 calc(100% - 26px),transparent 100%);mask-image:linear-gradient(to bottom,transparent 0,#000 22px,#000 calc(100% - 26px),transparent 100%);scroll-padding-top:24px}
+.messages-scroll>:first-child{margin-top:18px}
+.messages-scroll>:last-child{margin-bottom:26px}
+/* Sidebar task rows: options appear on hover or focus; the full title shows as a tooltip */
+.chat-row .chat-options{opacity:0;transition:opacity .15s ease}
+.chat-row:hover .chat-options,.chat-row:focus-within .chat-options,.chat-row .chat-options[aria-expanded=true]{opacity:1}
+@media (hover:none){.chat-row .chat-options{opacity:1}}
+.chat-item span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0}
+@media (max-width:1400px){#task-overview>span:not([data-icon]):not(.icon){position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0)}#task-overview{padding-left:9px;padding-right:9px}}

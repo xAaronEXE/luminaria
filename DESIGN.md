@@ -183,3 +183,12 @@ Supersedes the Elevation & Depth and Layout notes above where they differ. Imple
 **Settings.** Checkboxes render as on/off switches. Access mode is two choice cards, Ask me first and Hands-free, which drive the original select so saving is unchanged. Log out is an outlined secondary button, not a full-width red bar.
 
 **Motion.** Glow drift, the composer's edge light, the approval pulse and the Lumen all stop under the Motion preference or system reduced motion.
+
+## Settings layout
+
+Settings pages share one compact layout (web/settings-compact.css):
+- One column, at most 720 px wide. The model library gets 1080 px for its two-column browser.
+- Related settings sit together in a card. Each row has the label and a one-line hint on the left, and the control on the right. Loose rows are grouped into cards automatically.
+- Each page ends with a save bar: secondary links on the left, status and the primary button on the right.
+- Explanations and limits fold into "How this works" style sections. Use `details.s-more`.
+- Multi-select lists use real checkboxes (`input.check`). On/off switches are only for single settings.

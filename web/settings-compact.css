@@ -1,0 +1,111 @@
+/* Compact settings: one column, grouped cards, label left and control right, details folded away. Loaded last. */
+.settings-sheet .settings-layout{grid-template-columns:212px minmax(0,1fr)}
+.settings-sheet .settings-nav{padding:14px 10px 0}
+.settings-sheet .settings-search input{height:34px;font-size:12px}
+.settings-sheet .settings-nav-group h3{margin:16px 10px 4px;font-size:10px;letter-spacing:.09em}
+.settings-sheet .settings-nav button{padding:7px 10px;margin-bottom:1px;font-size:12.5px;border-radius:9px}
+.settings-sheet .settings-nav p{padding:10px;font-size:10.5px}
+
+.settings-sheet .settings-body{padding:26px max(36px,calc((100% - 720px)/2)) 64px}
+.settings-sheet .settings-body>*{max-width:none;margin-left:0;margin-right:0}
+.settings-sheet .settings-page-title{font-size:20px;font-weight:600;letter-spacing:-.01em;margin-top:0;margin-bottom:0}
+.settings-sheet .settings-intro{font-size:12.5px;margin-top:4px;margin-bottom:18px}
+.settings-sheet .settings-body .section-heading{font-size:10.5px;font-weight:650;letter-spacing:.09em;text-transform:uppercase;color:var(--muted);margin:22px 2px 8px}
+.settings-sheet .settings-body .note{font-size:12px;line-height:1.55;max-width:68ch}
+.settings-sheet .settings-body .small-note{font-size:11.5px;line-height:1.5}
+
+/* Cards hold related rows; rows divide with a hairline */
+.s-card{border:1px solid var(--glass-line,var(--line));border-radius:14px;background:color-mix(in srgb,var(--text) 3%,transparent);margin:0 0 12px;overflow:hidden}
+.s-card.s-pad{padding:14px 16px}
+.s-card>.setting-row,.s-card>.control-row,.s-card>label.setting-row{padding:12px 16px;margin:0;border:0;border-bottom:1px solid var(--line)}
+.s-card>:last-child{border-bottom:0!important}
+.settings-sheet .setting-row{display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:center;gap:6px 20px}
+.settings-sheet .setting-row h3{font-size:13px;font-weight:600;margin:0 0 2px;display:flex;align-items:center;gap:8px}
+.settings-sheet .setting-row p{font-size:11.5px;line-height:1.45;max-width:54ch}
+.settings-sheet .setting-row select{min-width:0;width:260px;max-width:100%;height:34px;font-size:12.5px;padding:0 10px}
+.settings-sheet .setting-row .s-num{width:96px;height:34px;text-align:right;font-variant-numeric:tabular-nums}
+.settings-sheet .setting-row .row-actions{display:flex;gap:6px}
+.settings-sheet .setting-row .btn{padding:6px 12px;font-size:12px}
+.s-value{font-variant-numeric:tabular-nums;font-size:13px}
+.settings-sheet .control-row{padding:14px 16px}
+.s-label{display:block;font-size:13px;font-weight:600;margin:0 0 8px}
+.s-status{display:flex;align-items:center;gap:8px;font-size:12px;color:var(--muted);margin:10px 0 0}
+.s-status .dot{width:7px;height:7px;border-radius:50%;background:var(--success,#3fb950);box-shadow:0 0 8px currentColor}
+.s-status .dot.warn{background:var(--warning,#d29922)}
+
+/* Section header with a count on the right */
+.s-head{display:flex;align-items:baseline;justify-content:space-between;gap:12px}
+.s-count{font-size:11.5px;color:var(--muted);font-variant-numeric:tabular-nums}
+
+/* Save bar: secondary links left, status and primary right */
+.s-actions{display:flex;align-items:center;justify-content:flex-start;gap:14px;flex-wrap:wrap;margin:4px 0 8px}
+.s-actions>.save-state{margin-left:auto}
+.s-actions .text-button+.text-button{margin-left:-2px}
+.s-actions .text-button{font-size:12px}
+.s-actions .btn.primary{min-width:84px;padding:8px 18px}
+.s-actions .save-state{font-size:11.5px;color:var(--muted)}
+.s-actions .small-note{margin:0}
+
+/* Folded detail */
+.s-more{margin:10px 0 0;border-top:1px solid var(--line);padding-top:10px}
+.s-more>summary{cursor:pointer;font-size:12px;font-weight:600;color:var(--muted);list-style:none;display:flex;align-items:center;gap:6px;padding:4px 2px}
+.s-more>summary::-webkit-details-marker{display:none}
+.s-more>summary::before{content:'';width:6px;height:6px;border-right:1.5px solid currentColor;border-bottom:1.5px solid currentColor;transform:rotate(-45deg);transition:transform .15s ease;margin-right:2px}
+.s-more[open]>summary::before{transform:rotate(45deg)}
+.s-more>summary:hover{color:var(--text)}
+.s-more>p,.s-more>div>p{font-size:12px;line-height:1.55;color:var(--muted);max-width:68ch;margin:8px 2px}
+.s-more .s-card{margin-top:8px}
+
+/* Auto mode model picker */
+.pool-bar{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:12px 16px;border-bottom:1px solid var(--line);flex-wrap:wrap}
+.pool-bar .segmented{grid-column:auto}
+.pool-bar .segmented small{opacity:.6;margin-left:3px;font-variant-numeric:tabular-nums}
+.pool-bulk{display:flex;gap:12px}
+.pool-bulk[hidden]{display:none}
+.pool-list{display:block}
+.pool-row{display:grid;grid-template-columns:auto minmax(0,1fr) auto;grid-template-rows:auto auto;column-gap:12px;align-items:center;padding:9px 16px;border-bottom:1px solid var(--line);font-size:12.5px;cursor:default}
+.pool-row:last-child{border-bottom:0}
+.pool-row .check{grid-row:1/3}
+.pool-list:not(.custom) .pool-row .check{display:none}
+.pool-list:not(.custom) .pool-row{grid-template-columns:minmax(0,1fr) auto}
+.pool-list.custom .pool-row{cursor:pointer}
+.pool-list.custom .pool-row:hover{background:color-mix(in srgb,var(--text) 4%,transparent)}
+.pool-name{font-weight:600;display:flex;align-items:center;gap:6px;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.pool-tags{grid-column:-3/-2;color:var(--muted);font-size:11px}
+.pool-list:not(.custom) .pool-tags{grid-column:1}
+.pool-state{grid-row:1/3;grid-column:-2;font-size:11px;color:var(--muted);text-align:right;white-space:nowrap}
+.pool-state.in{color:var(--success,#3fb950)}
+.pool-state.in::before{content:'';display:inline-block;width:6px;height:6px;border-radius:50%;background:currentColor;margin-right:6px;vertical-align:1px}
+.pool-row.excluded .pool-name{color:var(--muted)}
+
+/* A real checkbox, not a switch, for multi-select lists */
+.sheet input[type=checkbox].check{width:16px;height:16px;border-radius:5px;background:transparent;border:1.5px solid color-mix(in srgb,var(--text) 35%,transparent);box-shadow:none}
+.sheet input[type=checkbox].check::after{top:2px;left:5px;width:4px;height:8px;border-radius:0;background:transparent;box-shadow:none;border-right:2px solid #06070C;border-bottom:2px solid #06070C;transform:rotate(45deg) scale(0);transition:transform .12s ease}
+.sheet input[type=checkbox].check:checked{background:linear-gradient(135deg,var(--aurora-1),var(--aurora-2));border-color:transparent;box-shadow:none}
+.sheet input[type=checkbox].check:checked::after{transform:rotate(45deg) scale(1)}
+
+/* Working folder */
+.s-card .folder-picker-row{display:flex;gap:8px;align-items:center}
+.s-card .folder-picker-row input{flex:1;height:36px;padding:0 12px;font-family:var(--mono,ui-monospace,monospace);font-size:12px}
+.s-card .field{margin:0 0 10px}
+
+/* Sign-in & devices: one page, two sections */
+.settings-body[data-account-view="Sign-in & devices"] [data-account-section]{margin-bottom:8px}
+
+@media(max-width:850px){
+ .settings-sheet .settings-layout{grid-template-columns:170px minmax(0,1fr)}
+ .settings-sheet .settings-body{padding:20px 18px 48px}
+ .settings-sheet .setting-row{grid-template-columns:1fr}
+ .settings-sheet .setting-row select{width:100%}
+}
+
+/* Older folded sections match the new ones */
+.settings-sheet .settings-body details.advanced-settings{margin-top:10px;padding-top:10px;border-top:1px solid var(--line)}
+.settings-sheet .settings-body details.advanced-settings>summary{cursor:pointer;font-size:12px;font-weight:600;color:var(--muted);list-style:none;display:flex;align-items:center;gap:8px;padding:4px 2px}
+.settings-sheet .settings-body details.advanced-settings>summary::-webkit-details-marker{display:none}
+.settings-sheet .settings-body details.advanced-settings>summary::before{content:'';width:6px;height:6px;border-right:1.5px solid currentColor;border-bottom:1.5px solid currentColor;transform:rotate(-45deg);transition:transform .15s ease}
+.settings-sheet .settings-body details.advanced-settings[open]>summary::before{transform:rotate(45deg)}
+.settings-sheet .settings-body details.advanced-settings>summary:hover{color:var(--text)}
+
+/* The model library needs room for its two-column browser */
+.settings-sheet .settings-body[data-account-view="Models"]{padding-left:max(28px,calc((100% - 1080px)/2));padding-right:max(28px,calc((100% - 1080px)/2))}

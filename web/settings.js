@@ -1,8 +1,9 @@
 /* Categorized settings backed by the local API. */
 (()=>{
- const groups=[['Your account',['Profile','Sign-in methods','Devices & security','Cloud sync','Insights']],['Workspace',['Working folder','Memory & context','Tools & permissions','Integrations']],['Models & voice',['Models','Orchestration','Voice','Hardware & tuning']],['Application',['Appearance','Updates']]];
+ const groups=[['Account',['Profile','Sign-in & devices','Cloud sync','Insights']],['Workspace',['Working folder','Tools & permissions','Memory & context','Integrations']],['Models & voice',['Models','Orchestration','Hardware & tuning','Voice']],['App',['Appearance','Updates']]];
+ const labels={Models:'Model library',Orchestration:'Auto mode','Tools & permissions':'Permissions'};
  const sections=groups.flatMap(([,pages])=>pages);
- const aliases={Inference:'Working folder','Model library':'Models',Account:'Profile',Accounts:'Profile'};
+ const aliases={Inference:'Working folder','Model library':'Models',Account:'Profile',Accounts:'Profile','Sign-in methods':'Sign-in & devices','Devices & security':'Sign-in & devices','Auto mode':'Orchestration',Permissions:'Tools & permissions'};
  let library,selectedKey,selectedQuant,modelFilter='all',capabilityFilter='',benchmarkOpen=false,libraryGeneration=0,libraryTimer;
  const original=openPanel;
  openPanel=async function(name){if(['settings','models'].includes(name))return settingsView(name==='models'?'Models':({Account:'Profile',Accounts:'Profile'}[window.studioSettingsCategory]||window.studioSettingsCategory||'Profile'));$('.sheet').classList.remove('settings-sheet');return original(name)};
@@ -13,7 +14,7 @@
   stopLibraryPoll();
   const generation=libraryGeneration;
   const oldNav=$('.settings-navigation'),navScroll=oldNav?.scrollTop||0,search=$('#settings-search')?.value||'';
-  showPanel('Settings','Your app, configured your way.',`<div class="settings-layout"><nav class="settings-nav" aria-label="Settings categories"><label class="settings-search"><input id="settings-search" type="search" placeholder="Find a setting…" aria-label="Find a setting"></label><div class="settings-navigation">${groups.map(([label,pages])=>`<section class="settings-nav-group"><h3>${label}</h3>${pages.map(s=>`<button data-settings-section="${s}" aria-current="${s===section?'page':'false'}">${s==='Models'?'Model library':s}</button>`).join('')}</section>`).join('')}</div><p>Settings are saved<br>on this PC.</p><button id="settings-logout" class="settings-logout" type="button">Log out</button></nav><section id="settings-body" class="settings-body"></section></div>`);
+  showPanel('Settings','Your app, configured your way.',`<div class="settings-layout"><nav class="settings-nav" aria-label="Settings categories"><label class="settings-search"><input id="settings-search" type="search" placeholder="Find a setting…" aria-label="Find a setting"></label><div class="settings-navigation">${groups.map(([label,pages])=>`<section class="settings-nav-group"><h3>${label}</h3>${pages.map(s=>`<button data-settings-section="${s}" aria-current="${s===section?'page':'false'}">${labels[s]||s}</button>`).join('')}</section>`).join('')}</div><p>Settings are saved<br>on this PC.</p><button id="settings-logout" class="settings-logout" type="button">Log out</button></nav><section id="settings-body" class="settings-body"></section></div>`);
   $('.sheet').classList.add('settings-sheet');$$('[data-settings-section]').forEach(b=>b.onclick=safe(()=>settingsView(b.dataset.settingsSection)));
   $('#settings-search').oninput=e=>{const q=e.target.value.toLowerCase();$$('[data-settings-section]').forEach(b=>b.hidden=!b.textContent.toLowerCase().includes(q));$$('.settings-nav-group').forEach(g=>g.hidden=![...g.querySelectorAll('button')].some(b=>!b.hidden))};
   $('#settings-logout').onclick=safe(async()=>{if(!confirm('Log out on this PC? Your chats and files stay here.'))return;const button=$('#settings-logout');button.disabled=true;try{const r=await api('/identity/logout','POST',{});closePanel();await showGate({reason:r.message||'Signed out. Choose an account to continue.'})}finally{button.disabled=false}});
@@ -22,7 +23,7 @@
   body.innerHTML='<p role="status" class="settings-loading">Loading settings…</p>';
   try{
   if(section==='Cloud sync'){await renderCloudSync(body);return}
-  if(['Profile','Sign-in methods','Devices & security'].includes(section)){await renderAccounts(body);return}
+  if(['Profile','Sign-in & devices'].includes(section)){await renderAccounts(body);return}
   if(section==='Integrations'){await closePanel();await openPanel('integrations');return}
   if(section==='Working folder'){await studioSettingsSection('Inference',body);await renderAccountProfiles(body);return}
   if(section==='Models'){
@@ -154,5 +155,15 @@
   }
   }catch(error){if(body.isConnected){body.replaceChildren();const text=document.createElement('p');text.setAttribute('role','alert');text.textContent=error.message;const retry=document.createElement('button');retry.className='btn';retry.textContent='Try again';retry.onclick=safe(()=>settingsView(section));body.append(text,retry)}}
  }
+ /* Group loose rows on every settings page into cards, so pages read as tidy blocks. */
+ function cardRows(root){
+  for(const row of root.querySelectorAll('.setting-row')){
+   const parent=row.parentElement;if(!parent||parent.closest('.s-card')||parent.closest('.pool-list'))continue;
+   const before=row.previousElementSibling;
+   if(before&&before.matches('.s-card[data-auto]')){before.append(row);continue}
+   const card=document.createElement('div');card.className='s-card';card.dataset.auto='';row.before(card);card.append(row);
+  }
+ }
+ new MutationObserver(()=>{const body=$('#settings-body');if(body)cardRows(body)}).observe(document.body,{childList:true,subtree:true});
  const originalClose=closePanel;closePanel=function(){stopLibraryPoll();$('.sheet').classList.remove('settings-sheet');return originalClose()};
 })();

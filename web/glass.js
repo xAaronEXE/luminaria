@@ -88,6 +88,15 @@
   const menu = document.getElementById('library-menu');
   function setLibrary(open, focusFirst) {
     if (!toggle || !menu) return;
+    if (open) {
+      /* Render above everything: the glass sidebar is its own layer, so a menu inside it gets painted over by the chat. */
+      if (menu.parentElement !== document.body) { document.body.append(menu); menu.classList.add('portal'); }
+      const r = toggle.getBoundingClientRect();
+      menu.style.left = Math.max(8, r.left - 4) + 'px';
+      menu.style.bottom = Math.max(8, innerHeight - r.top + 8) + 'px';
+      menu.style.width = Math.min(300, innerWidth - 16) + 'px';
+      menu.style.maxHeight = Math.max(160, r.top - 24) + 'px';
+    }
     menu.hidden = !open;
     toggle.setAttribute('aria-expanded', String(open));
     if (open && focusFirst) menu.querySelector('[role=menuitem]')?.focus();
@@ -103,7 +112,9 @@
       if (e.key === 'ArrowDown') { e.preventDefault(); items[(i + 1) % items.length].focus(); }
       if (e.key === 'ArrowUp') { e.preventDefault(); items[(i - 1 + items.length) % items.length].focus(); }
     });
-    document.addEventListener('click', (e) => { if (!menu.hidden && !e.target.closest('#library')) setLibrary(false); });
+    document.addEventListener('click', (e) => { if (!menu.hidden && !e.target.closest('#library') && !e.target.closest('#library-menu')) setLibrary(false); });
+    addEventListener('resize', () => { if (!menu.hidden) setLibrary(false); });
+    document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && !menu.hidden) { setLibrary(false); toggle.focus(); } });
   }
 
   /* ---------- The Lumen orb ---------- */

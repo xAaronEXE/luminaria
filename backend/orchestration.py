@@ -72,7 +72,7 @@ def explain_none(rows, setting):
         for reason in r['reasons']: key = reason.split(' is smaller')[0] if reason.startswith('Context') else reason; counts[key] = counts.get(key, 0) + 1
     detail = '; '.join(f'{k.lower()} ({v})' for k, v in sorted(counts.items(), key=lambda x: -x[1])[:4])
     return ('No model in your orchestration selection can handle this task' + (f': {detail}' if detail else '') +
-            '. Auto never routes outside your selection. Change it in Settings → Orchestration, or pick a model in the composer.')
+            '. Auto never routes outside your selection. Change it in Settings → Auto mode, or pick a model in the composer.')
 
 def pool(models, setting, vision=False, context_needed=0):
     allowed = {r['id'] for r in eligibility(models, setting, vision, context_needed) if r['included']}
