@@ -58,7 +58,7 @@
      if(busy(job))buttons.push('<button class="btn" id="cancel-model" type="button">Pause download</button>');
      else if(job&&(job.status==='paused'||(job.status==='error'&&job.received)))buttons.push(`<button class="btn primary" id="download-model" type="button" ${check.ok?'':'disabled'}>Resume download</button>`,'<button class="btn" id="discard-model" type="button">Cancel and delete partial</button>');
      else if(job&&job.status==='error')buttons.push(`<button class="btn primary" id="download-model" type="button" ${check.ok?'':'disabled'}>Try again</button>`,'<button class="btn" id="discard-model" type="button">Dismiss</button>');
-     else buttons.push(`<button class="btn primary" id="download-model" type="button" ${check.ok?'':'disabled'}>Download ${quant.label} · ${formatBytes(quant.bytes)}</button>`);
+     else buttons.push(`<button class="btn primary" id="download-model" type="button" ${check.ok?'':'disabled'}>Download ${esc(quant.label)} · ${formatBytes(quant.bytes)}</button>`);
      return buttons.join('');
     }
     buttons.push(`<button class="btn ${quant.installed&&!quant.active?'primary':''}" id="choose-model" type="button" ${!quant.installed||quant.active?'disabled':''}>${quant.active?'Active model':quant.installed?'Use this model':'File missing'}</button>`);

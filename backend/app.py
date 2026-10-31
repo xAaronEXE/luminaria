@@ -94,7 +94,10 @@ async def local_only(request,call_next):
     # Base64 adds a third, so a 25 MB document needs about 34 MB of request body.
     path=request.url.path
     limit=35_000_000 if path=='/api/attachments' or (path.startswith('/api/imports/') and path.endswith('/files')) else 12_000_000
-    if request.headers.get('content-length') and int(request.headers['content-length'])>limit: return JSONResponse({'error':'Request too large'},413)
+    declared=request.headers.get('content-length')
+    if declared:
+        if not declared.isdigit(): return JSONResponse({'error':'Bad request'},400)
+        if int(declared)>limit: return JSONResponse({'error':'Request too large'},413)
     response=await call_next(request)
     response.headers['X-Content-Type-Options']='nosniff'
     response.headers['Referrer-Policy']='no-referrer'
@@ -314,6 +317,7 @@ async def files(path:str='.'):
 
 @app.get('/api/file')
 async def file(path:str):
+    workspace_path(path)  # previews never leave the working folder, even with Whole PC on
     return await engine.tools.call('read_file',{'path':path,'limit':32000},{})
 
 @app.get('/api/file/download')
@@ -589,19 +593,27 @@ async def market_mcp(q:str='',cursor:str=''):
     have=set(CONFIG.get('mcp',{}))
     from .marketplace import connector_for
     for row in data['items']:
-        row['installed']=any(connector_for(row['id'],p)[0] in have for p in row['packages'])
+        names=[]
+        for pkg in row['packages']:
+            try:names.append(connector_for(row['id'],pkg)[0])
+            except ValueError:row['installable']=False  # unsafe package name: shown, never installable
+        row['installed']=any(n in have for n in names)
     return data
 
 @app.post('/api/marketplace/mcp/install')
 async def market_mcp_install(request:Request):
     from .marketplace import connector_for,search_mcp
     b=await request.json()
-    server=next((i for i in search_mcp(str(b.get('id','')))['items'] if i['id']==b.get('id')),None)
+    if b.get('confirm') is not True: raise ValueError('Confirm that you want to download and run this connector')
+    found=await asyncio.to_thread(search_mcp,str(b.get('id','')))
+    server=next((i for i in found['items'] if i['id']==b.get('id')),None)
     if not server or not server['packages']:raise ValueError('This connector has no installable package')
     package=server['packages'][min(int(b.get('package',0)),len(server['packages'])-1)]
     if package['needs']:raise ValueError('This connector needs '+', '.join(package['needs'])+' set first. Add it as a custom connector in Settings › Integrations.')
     name,command,args=connector_for(server['id'],package)
-    configs=CONFIG.get('mcp',{}).copy();configs[name]={'command':command,'args':args,'cwd':CONFIG['workspace']}
+    configs=CONFIG.get('mcp',{}).copy()
+    if name in configs: raise ValueError('A connector named '+name+' is already installed')
+    configs[name]={'command':command,'args':args,'cwd':CONFIG['workspace']}
     save_config({'mcp':configs});await restart_connector(name,configs[name]);return {'ok':True,'name':name}
 
 @app.post('/api/permissions/reset')

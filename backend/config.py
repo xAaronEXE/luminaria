@@ -58,10 +58,25 @@ def save_config(changes):
     CONFIG.update(changes)
     CONFIG_PATH.write_text(json.dumps(CONFIG,indent=2),encoding='utf-8')
 
+def protected_roots():
+    # Places the assistant never reads or writes through file tools, even with Whole PC on:
+    # Luminaria's own data (settings, tokens, history), the program itself, Windows, and credential folders.
+    home=Path.home()
+    roots=[DATA,BASE_DATA,APP_HOME,home/'.ssh',home/'.aws',home/'.gnupg',home/'.azure',home/'.config'/'gcloud',home/'.kube']
+    for name in ('WINDIR','SystemRoot','PROGRAMFILES','PROGRAMFILES(X86)','PROGRAMDATA'):
+        if os.environ.get(name): roots.append(Path(os.environ[name]))
+    if os.name!='nt': roots+=[Path('/etc'),Path('/proc'),Path('/sys'),Path('/boot'),Path('/root')]
+    for name in ('APPDATA','LOCALAPPDATA'):
+        if os.environ.get(name): roots+= [Path(os.environ[name])/'Microsoft'/'Credentials',Path(os.environ[name])/'Microsoft'/'Protect']
+    return [r.resolve() for r in roots]
+
 def workspace_path(path='.',roam=False):
     root=Path(CONFIG['workspace']).resolve()
     target=(root/path).resolve()
     if not target.is_relative_to(root):
-        if roam and whole_pc(): return target
+        if roam and whole_pc():
+            if any(target==r or target.is_relative_to(r) for r in protected_roots()):
+                raise PermissionError('That location is protected: Luminaria\'s own data, program files, Windows and credential folders are never available to the assistant.')
+            return target
         raise ValueError('Path is outside the selected workspace. Turn on "Whole PC" in Settings › Permissions to let the assistant use other folders and drives.')
     return target

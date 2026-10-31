@@ -47,10 +47,14 @@
     addRepo.onclick = () => { const repo = prompt('GitHub repository with skills (owner/name)'); if (!repo) return; saveRepos([...new Set([...extraRepos(), repo.trim()])]); load(); };
     list.onclick = async (event) => {
       const button = event.target.closest('button[data-skill],button[data-mcp]'); if (!button) return;
+      const what = button.dataset.mcp
+        ? 'This downloads and RUNS code from a third party on your PC (' + button.dataset.mcp + '). Only install connectors you trust.\n\nInstall it?'
+        : 'Skills are instructions the assistant will follow. A skill from a stranger can steer it, so read what you install.\n\nInstall ' + button.dataset.skill + '?';
+      if (!confirm(what)) return;
       button.disabled = true; button.textContent = 'Installing…';
       try {
         if (button.dataset.skill) await api('/marketplace/skills/install', 'POST', { repo: button.dataset.skill, path: button.dataset.path });
-        else await api('/marketplace/mcp/install', 'POST', { id: button.dataset.mcp });
+        else await api('/marketplace/mcp/install', 'POST', { id: button.dataset.mcp, confirm: true });
         button.replaceWith(Object.assign(document.createElement('span'), { className: 'badge good', textContent: 'Installed' }));
         if (typeof toast === 'function') toast('Installed');
         if (typeof refresh === 'function') refresh();

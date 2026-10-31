@@ -94,7 +94,11 @@ def connector_for(server_id,package):
     # Registry names look like io.github.owner/server; connector names are short, lowercase, unique.
     base=re.sub(r'[^a-z0-9_]+','_',server_id.split('/')[-1].lower()).strip('_') or 'connector'
     name=('m_'+base)[:30]
-    ident=package['identifier']
+    ident=str(package['identifier']);version=str(package.get('version') or '')
+    # A package name must never be able to smuggle a command-line flag or a shell character.
+    if not re.fullmatch(r'(@[a-z0-9][a-z0-9._~-]*/)?[a-z0-9][a-z0-9._~-]*',ident,re.I):raise ValueError('Unsafe package name')
+    if version and not re.fullmatch(r'[0-9A-Za-z][0-9A-Za-z.+_-]*',version):raise ValueError('Unsafe package version')
+    package={**package,'identifier':ident,'version':version or None}
     if package['kind']=='npm':command,args=('npx.cmd' if os.name=='nt' else 'npx'),['-y',ident+('@'+package['version'] if package.get('version') else '')]
     else:command,args=('uvx.exe' if os.name=='nt' else 'uvx'),[ident+('=='+package['version'] if package.get('version') else '')]
     return name,command,args

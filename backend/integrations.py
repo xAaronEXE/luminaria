@@ -52,7 +52,10 @@ def write_secrets(name,values):
         import win32crypt
         raw=win32crypt.CryptProtectData(raw,'Luminaria integration '+name,None,None,None,1)
     except ImportError:pass
-    path=_secret_path(name);tmp=path.with_suffix('.tmp');tmp.write_bytes(raw);os.replace(tmp,path)
+    path=_secret_path(name);tmp=path.with_suffix('.tmp');tmp.write_bytes(raw)
+    try:os.chmod(tmp,0o600)  # owner-only where the platform supports it
+    except OSError:pass
+    os.replace(tmp,path)
 
 def forget(name):
     _secret_path(name).unlink(missing_ok=True)
