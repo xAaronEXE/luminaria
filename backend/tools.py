@@ -8,6 +8,8 @@ def schema(name,description,properties,required=(),tier='auto',group='workspace'
 S={'type':'string'}; I={'type':'integer'}
 BUILTINS=[
  schema('list_skills','List installed reusable workflow skills.',{},[],'auto','skills'),
+ schema('find_capability','Search Luminaria\'s built-in catalog of thousands of real skills (workflows) and connectors (tools for other apps and services) when no installed skill or tool fits the task. Returns IDs to pass to install_capability.',{'query':S,'kind':{'type':'string','enum':['any','skills','connectors']}},['query'],'auto','skills'),
+ schema('install_capability','Install a skill or connector from find_capability by its ID so you can use it in this task. Skills are downloaded at a pinned commit; connectors run third-party code. Requires user approval.',{'id':S},['id'],'approve','skills'),
  schema('load_skill','Read a named workflow skill before using it.',{'name':S},['name'],'auto','skills'),
  schema('finish_skill','Verify output files and finish a loaded skill. Supply successful evidence action IDs from this run. File readback/hashes establish existence, not semantic correctness.',{'name':S,'outputs':{'type':'array','items':S,'minItems':1,'maxItems':10},'evidence_actions':{'type':'array','items':S,'minItems':1,'maxItems':30}},['name','outputs','evidence_actions'],'auto','skills'),
  schema('create_file_workflow','Propose a bounded file workflow for user review in Tools → File workflows. Does not execute file steps. Declare the user objective, allowed workspace locations, completion criteria, and read/create/edit/trash steps. No shell, permanent deletion, or application control.',{'objective':S,'completion_criteria':S,'allowed_locations':{'type':'array','items':S,'minItems':1,'maxItems':10},'steps':{'type':'array','minItems':1,'maxItems':50,'items':{'type':'object','properties':{'action':{'type':'string','enum':['read','create','edit','trash']},'path':S,'content':S,'old_text':S,'new_text':S},'required':['action','path'],'additionalProperties':False}}},['objective','completion_criteria','allowed_locations','steps'],'approve','planning'),
@@ -45,7 +47,7 @@ def mcp_tier(group,name):
     return 'approve'
 
 class Toolbox:
-    def __init__(self,store,connectors): self.store=store; self.connectors=connectors
+    def __init__(self,store,connectors): self.store=store; self.connectors=connectors; self.connector_installer=None
     def catalog(self):
         result=[dict(t) for t in BUILTINS if external_tools_enabled() or t['group']!='execution']
         if CONFIG.get('ask_reads',False):
@@ -109,6 +111,21 @@ class Toolbox:
         if name=='update_brief':
             from .brief import tool_update
             return tool_update(self.store,run['chat'],a)
+        if name=='find_capability':
+            from .catalog import search
+            found=await asyncio.to_thread(search,a['query'],{'any':None}.get(a.get('kind','any'),a.get('kind')),8)
+            return {**found,'next':'Pick the best match and call install_capability with its id. Prefer items with more stars. Skip connectors with needs unless the user can supply them.'}
+        if name=='install_capability':
+            from .catalog import find,install_skill,connector_plan
+            kind,item=find(a['id'])
+            if kind=='skills':
+                done=await asyncio.to_thread(install_skill,item)
+                return {**done,'next':f"Call load_skill with name {done['name']} to use it."}
+            if not self.connector_installer: raise ValueError('Connectors can only be installed while Luminaria is running')
+            name,command,args=connector_plan(item)
+            if name in CONFIG.get('mcp',{}): return {'kind':'connector','name':name,'status':'already installed','next':f'Call discover_tools with category all, then use tools named {name}__*.'}
+            await self.connector_installer(name,{'command':command,'args':args,'cwd':CONFIG['workspace']})
+            return {'kind':'connector','name':name,'status':'installed','next':f'Call discover_tools with category all, then use tools named {name}__*.'}
         if name=='list_skills':
             from .skills import catalog
             return [{k:s[k] for k in ('name','description','category','missing')} for s in catalog(self.connectors) if self.store.setting('skill:'+s['name'],True)]

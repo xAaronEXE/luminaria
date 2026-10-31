@@ -74,3 +74,6 @@ App/
 archive/
 .build/
 auth-service/worker-configuration.d.ts
+
+# Built-in catalog, refreshed by build.ps1
+catalog/*.json.gz

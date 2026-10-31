@@ -42,7 +42,7 @@ You need a Windows 10 or 11 PC. Everything else, including Python, Node.js and t
 ### Memory, skills and connectors
 - **Persistent memory** you control: facts and preferences the assistant may carry between tasks, each with its source.
 - **Skills**: reusable workflows (documents, research, code review, planning and more) that the assistant loads when a task calls for them.
-- **Marketplace** (Settings › Marketplace): browse and install free skills from public GitHub repositories and connectors from the official MCP Registry. Connectors run third-party code on your PC, so each install asks for confirmation first.
+- **Thousands of skills and connectors built in.** A searchable catalog of openly licensed skills from public GitHub repositories and connectors from the official MCP Registry ships with the app, with about 100 vetted skills pre-installed. When a task needs something new, the assistant finds it with `find_capability` and adds it with your approval. Settings › Marketplace searches the same catalog. Connectors run third-party code on your PC, so each install asks first.
 - **Integrations** for services such as GitHub, Gmail, Google Drive and Calendar and Slack, each added with its own sign-in. Their tools follow your permission settings.
 - **Browser and Windows desktop tools** the assistant can discover and use when you allow them.
 

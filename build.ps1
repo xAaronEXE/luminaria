@@ -22,6 +22,13 @@ $python=if($env:STUDIO_BUILD_PYTHON){$env:STUDIO_BUILD_PYTHON}elseif(Test-Path "
 if(!(Test-Path "$PSScriptRoot/runtime/local-ai/runtime-vulkan/llama-server.exe")){throw 'Bundled model runtime is missing'}
 # Built-in Python, Node.js, browser/Windows connectors and the WebView2 installer, so the app works on any Windows 10/11 PC.
 if(!(Test-Path "$PSScriptRoot/runtime/agent-tools/python/python.exe") -or !(Test-Path "$PSScriptRoot/runtime/agent-tools/node/node.exe") -or !(Test-Path "$PSScriptRoot/runtime/prereqs/MicrosoftEdgeWebview2Setup.exe")){& "$PSScriptRoot/scripts/fetch-agent-tools.ps1"}
+# Built-in catalog of skills (openly licensed GitHub repositories) and connectors (official MCP Registry), refreshed each build.
+foreach($kind in 'skills','connectors'){
+  & $python "$PSScriptRoot/scripts/build-catalog.py" $kind
+  if($LASTEXITCODE){if(Test-Path "$PSScriptRoot/catalog/$kind.json.gz"){Write-Host "Could not refresh the $kind catalog; keeping the previous one."}else{throw "Could not build the $kind catalog"}}
+}
+& $python "$PSScriptRoot/scripts/build-catalog.py" preinstall "$PSScriptRoot/.build/community-skills"
+if($LASTEXITCODE){throw 'Could not prepare the pre-installed skills'}
 # Microsoft C++ runtime files next to the model server and the built-in Python, so they start without the Visual C++ Redistributable.
 foreach($dll in 'msvcp140.dll','msvcp140_1.dll','msvcp140_2.dll','vcruntime140.dll','vcruntime140_1.dll'){
   $src=Join-Path $env:SystemRoot "System32\$dll"
@@ -51,7 +58,7 @@ VSVersionInfo(
   ]
 )
 "@ | Set-Content .build/version-info.txt -Encoding ascii
-& $python -m PyInstaller --noconfirm --clean --workpath .build/work --distpath .build/dist --specpath .build --windowed --onedir --name LocalAIStudio --icon "$PSScriptRoot/web/brand/luminaria.ico" --version-file "$PSScriptRoot/.build/version-info.txt" --add-data "$PSScriptRoot/VERSION;." --add-data "$PSScriptRoot/web;web" --add-data "$PSScriptRoot/skills;skills" --add-data "$PSScriptRoot/runtime/llama-swap.exe;runtime" --add-data "$PSScriptRoot/runtime/local-ai/runtime-vulkan;runtime/local-ai/runtime-vulkan" --collect-all webview --collect-submodules langgraph --collect-submodules mcp.client --collect-submodules ddgs --collect-all primp --hidden-import bs4 --hidden-import pypdf --collect-all faster_whisper --collect-all ctranslate2 --collect-all piper --collect-all onnxruntime --collect-all av --exclude-module matplotlib --exclude-module pandas --exclude-module scipy --exclude-module IPython desktop.py
+& $python -m PyInstaller --noconfirm --clean --workpath .build/work --distpath .build/dist --specpath .build --windowed --onedir --name LocalAIStudio --icon "$PSScriptRoot/web/brand/luminaria.ico" --version-file "$PSScriptRoot/.build/version-info.txt" --add-data "$PSScriptRoot/VERSION;." --add-data "$PSScriptRoot/web;web" --add-data "$PSScriptRoot/skills;skills" --add-data "$PSScriptRoot/catalog;catalog" --add-data "$PSScriptRoot/.build/community-skills;skills" --add-data "$PSScriptRoot/runtime/llama-swap.exe;runtime" --add-data "$PSScriptRoot/runtime/local-ai/runtime-vulkan;runtime/local-ai/runtime-vulkan" --collect-all webview --collect-submodules langgraph --collect-submodules mcp.client --collect-submodules ddgs --collect-all primp --hidden-import bs4 --hidden-import pypdf --collect-all faster_whisper --collect-all ctranslate2 --collect-all piper --collect-all onnxruntime --collect-all av --exclude-module matplotlib --exclude-module pandas --exclude-module scipy --exclude-module IPython desktop.py
 if($LASTEXITCODE){throw 'Executable build failed'}
 Sign-File "$PSScriptRoot/.build/dist/LocalAIStudio/LocalAIStudio.exe"
 & "$PSScriptRoot\runtime\inno\ISCC.exe" "/DAppVersion=$version" installer.iss

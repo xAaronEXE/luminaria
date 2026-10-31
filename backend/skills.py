@@ -4,6 +4,15 @@ from .config import DATA,ROOT,CONFIG,external_tools_enabled
 NEEDS={'execution':'Computer and command tools (Settings → Tools & permissions)',
        'github':'GitHub integration','browser':'Browser connector','windows':'Windows desktop connector'}
 
+def describe(text):
+    """Description from SKILL.md frontmatter, else the first line of prose."""
+    m=re.match(r'^\ufeff?---\s*\n(.*?)\n---',text,re.S)
+    if m:
+        d=re.search(r'^description:\s*(?:[>|][-+]?\s*\n((?:[ \t]+.*\n?)+)|(.+))$',m.group(1),re.M)
+        if d: return re.sub(r'\s+',' ',(d.group(1) or d.group(2) or '')).strip('"\' ')
+        text=text[m.end():]
+    return next((l.strip() for l in text.splitlines() if l.strip() and not l.startswith(('#','<!--','```'))),'')
+
 def inventory():
     path=ROOT/'skills'/'inventory.json'
     return json.loads(path.read_text('utf-8')) if path.is_file() else {'categories':[],'skills':{}}
@@ -24,8 +33,8 @@ def catalog(connectors=None):
             for p in folder.glob('*/SKILL.md'):
                 text=p.read_text('utf-8');name=p.parent.name;local=folder==DATA/'skills';info=meta.get(name,{}) if not local else {}
                 requires=info.get('requires',[]);gaps=missing(requires,connectors)
-                result[name]={'name':name,'description':next((l for l in text.splitlines() if l.strip() and not l.startswith('#')),'')[:200],'local':local,
-                              'category':info.get('category','Imported' if local else 'Other'),'requires':[NEEDS.get(r,r) for r in requires],'missing':gaps,'available':not gaps,
+                result[name]={'name':name,'description':describe(text)[:200],'local':local,
+                              'category':info.get('category','Imported' if local else ('Community' if (p.parent/'SOURCE.json').is_file() else 'Other')),'requires':[NEEDS.get(r,r) for r in requires],'missing':gaps,'available':not gaps,
                               'state':'Needs setup' if gaps else 'Ready','reason':'; '.join(gaps) if gaps else 'Declared dependencies are available; instructions do not grant permissions.',
                               'permissions':'Uses the same per-action permissions as the chat.',
                               'inputs':info.get('inputs','User task and explicitly provided sources'),
@@ -46,7 +55,9 @@ def load_skill(name):
     if not re.fullmatch(r'[a-z0-9-]{1,60}',name): raise ValueError('Invalid skill name')
     for root in [DATA/'skills',ROOT/'skills']:
         p=root/name/'SKILL.md'
-        if p.exists(): return {'name':name,'instructions':p.read_text('utf-8')[:20000],'note':'Workflow guidance; does not grant credentials or override user approvals.'}
+        if p.exists():
+            extra=sorted(str(f.relative_to(p.parent)) for f in p.parent.rglob('*') if f.is_file() and f.name not in ('SKILL.md','SOURCE.json'))[:40]
+            return {'name':name,'folder':str(p.parent),'files':extra,'instructions':p.read_text('utf-8')[:20000],'note':'Workflow guidance; does not grant credentials or override user approvals.'}
     raise ValueError('Skill not found')
 
 def save_skill(name,content):
@@ -59,7 +70,6 @@ def remove_skill(name):
     if not re.fullmatch(r'[a-z0-9-]{1,60}',name): raise ValueError('Invalid skill name')
     p=DATA/'skills'/name/'SKILL.md'
     if not p.is_file(): raise ValueError('Only skills you imported can be removed')
-    p.unlink()
-    try: p.parent.rmdir()
-    except OSError: pass
+    import shutil
+    shutil.rmtree(p.parent)
     return {'name':name}

@@ -64,6 +64,15 @@ async def lifespan(app):
     conn=await aiosqlite.connect(DATA/'checkpoints.sqlite3')
     saver=AsyncSqliteSaver(conn); await saver.setup()
     engine=Engine(store,Toolbox(store,connectors),broadcast,saver)
+    async def install_connector(name,config):
+        configs=CONFIG.get('mcp',{}).copy(); configs[name]=config
+        save_config({'mcp':configs}); await restart_connector(name,config)
+        # First start downloads the package; give it time so the assistant can use it in the same task.
+        c=connectors.get(name)
+        if c:
+            with contextlib.suppress(asyncio.TimeoutError): await asyncio.wait_for(c.ready.wait(),180)
+            if c.status!='connected': raise ValueError(f'The connector was added but has not started ({c.status}). It may need an account key; check Settings › Integrations.')
+    engine.tools.connector_installer=install_connector
     await engine.restore()
     task=asyncio.create_task(scheduler());sync_task=asyncio.create_task(sync_loop())
     yield
@@ -569,6 +578,32 @@ async def open_external(request:Request):
     if parts.scheme not in ('http','https') or not parts.hostname: raise ValueError('Only web addresses can be opened')
     if parts.hostname in ('127.0.0.1','localhost','::1'): raise ValueError('That address belongs to Luminaria itself')
     return {'opened':bool(await asyncio.to_thread(webbrowser.open,url,new=2,autoraise=True))}
+
+@app.get('/api/catalog')
+async def catalog_search(q:str='',kind:str='skills',offset:int=0):
+    from .catalog import search
+    from .skills import catalog as installed
+    data=await asyncio.to_thread(search,q,kind,40,max(0,offset))
+    skills={s['name'] for s in installed(connectors)}; mcp=CONFIG.get('mcp',{})
+    from .marketplace import connector_for
+    for row in data['items']:
+        if row['kind']=='skill': row['installed']=row['name'] in skills
+        else:
+            try: row['installed']=connector_for(row['id'],{'kind':'npm','identifier':'x'})[0] in mcp
+            except ValueError: row['installed']=False
+    return data
+
+@app.post('/api/catalog/install')
+async def catalog_install(request:Request):
+    from .catalog import find,install_skill,connector_plan
+    b=await request.json()
+    if b.get('confirm') is not True: raise ValueError('Confirm the install first')
+    kind,item=find(str(b.get('id','')))
+    if kind=='skills': return await asyncio.to_thread(install_skill,item)
+    name,command,args=connector_plan(item)
+    if name in CONFIG.get('mcp',{}): raise ValueError('A connector named '+name+' is already installed')
+    await engine.tools.connector_installer(name,{'command':command,'args':args,'cwd':CONFIG['workspace']})
+    return {'kind':'connector','name':name}
 
 @app.get('/api/marketplace/skills')
 async def market_skills(q:str='',repos:str=''):

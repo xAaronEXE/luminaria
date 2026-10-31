@@ -15,7 +15,7 @@ from .usage import Usage
 
 class AlreadyDone(Exception):pass
 
-PLAN_TOOLS=frozenset({'list_skills','load_skill','list_files','read_file','search_files','web_search','memory_search','history_read','update_plan','update_brief'})
+PLAN_TOOLS=frozenset({'list_skills','load_skill','find_capability','list_files','read_file','search_files','web_search','memory_search','history_read','update_plan','update_brief'})
 PLAN_ONLY_PROMPT=('Planning-only mode is on for this turn. Build a concrete plan around what the user described. '
  '1) Restate the goal in one sentence. 2) Draft the plan straight away from the description and call update_plan with a goal and '
  'specific, ordered steps; give each step a short detail saying what will be done and how it will be checked. Every step is pending '
@@ -167,7 +167,7 @@ class Engine:
         'File tools are workspace-scoped; shell and Windows tools can access the PC under the active permission mode. '
         'You have persistent history and durable memory tools across sessions. Describe actual available tools and results instead of claiming generic lack of internet, execution, computer access or memory. Missing connectors and operating-system permissions still limit capabilities. '
         'Document packages in the bundled Python: python-docx, python-pptx, openpyxl, xlsxwriter, reportlab, pypdf, PyMuPDF, matplotlib, pandas, Pillow. '
-        'Use list_skills and load_skill for reusable workflows. '
+        'Use list_skills and load_skill for reusable workflows. If nothing installed fits, call find_capability: a catalog of thousands of real skills and connectors is built in, and install_capability adds one with the user\'s approval. '
         'Loading a skill starts its workflow; use finish_skill with successful source-evidence actions and output paths to verify file outputs. Never call loading alone completion. '
         'For a bounded multi-step file run, propose create_file_workflow with the user objective, allowed workspace locations and completion criteria; tell the user to review and execute it under Tools → File workflows. '
         'For tasks with several steps, call update_plan with your plan and keep step status current; skip it for simple questions. '
