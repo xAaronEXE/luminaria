@@ -55,6 +55,10 @@ if(!$builder){throw 'Python 3.14 is needed on the build PC to prepare the built-
 $bexe=$builder[0]; $bargs=@($builder|Select-Object -Skip 1)
 & $bexe @bargs -m pip install --disable-pip-version-check --no-warn-script-location --target $site -r "$spec/requirements.txt"
 if($LASTEXITCODE){throw 'Installing Python packages failed'}
+# Command-line tools from packages (uv, uvx, pip) go where Windows expects them
+New-Item -ItemType Directory -Force "$work/python/Scripts" | Out-Null
+if(Test-Path "$site/bin"){Get-ChildItem "$site/bin" -File | Move-Item -Destination "$work/python/Scripts" -Force; Remove-Item -Recurse -Force "$site/bin"}
+if(!(Test-Path "$work/python/Scripts/uvx.exe")){throw 'uv was not installed; Python connectors would not start'}
 Get-ChildItem $site -Recurse -Directory -Filter '__pycache__' | Remove-Item -Recurse -Force
 
 # Node.js (official build, checked against nodejs.org checksums and its Authenticode signature)
@@ -78,6 +82,8 @@ $env:PATH="$work/python;$work/node;$env:SystemRoot\System32;$env:SystemRoot"
 if($LASTEXITCODE){throw 'Built-in Python self-test failed'}
 & "$work/node/node.exe" "$work/node_modules/@playwright/mcp/cli.js" --help | Out-Null
 if($LASTEXITCODE){throw 'Browser connector self-test failed'}
+& "$work/python/Scripts/uv.exe" --version
+if($LASTEXITCODE){throw 'uv self-test failed'}
 
 if(Test-Path $out){Remove-Item -Recurse -Force $out}
 Move-Item $work $out

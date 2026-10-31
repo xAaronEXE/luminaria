@@ -11,11 +11,16 @@ class Connector:
     def changed(self):
         if self.on_change:self.on_change({'type':'connectors_changed','connector':self.name})
     def start(self): self.task=asyncio.create_task(self.worker())
+    def environment(self):
+        from .config import runtime_path_dirs
+        # Put Luminaria's built-in Python and Node first, so connectors that start other tools find them.
+        # uvx gets its own Python for each connector instead of borrowing the built-in one.
+        return {**os.environ,'PATH':os.pathsep.join(runtime_path_dirs()+[os.environ.get('PATH','')]),'UV_PYTHON_PREFERENCE':'only-managed',**self.config.get('env',{})}
     def transport(self):
         if self.config.get('url'):
             from .integrations import transport
             return transport(self)
-        p=StdioServerParameters(command=self.config['command'],args=self.config.get('args',[]),env={**os.environ,**self.config.get('env',{})},cwd=self.config.get('cwd'))
+        p=StdioServerParameters(command=self.config['command'],args=self.config.get('args',[]),env=self.environment(),cwd=self.config.get('cwd'))
         return stdio_client(p)
     async def worker(self):
         async def message_handler(message):

@@ -39,6 +39,13 @@ def bundled_runtime(kind):
     exe=tools/('python' if kind=='python' else 'node')/('python.exe' if kind=='python' else 'node.exe')
     return str(exe) if exe.is_file() else None
 
+def launcher(name):
+    """Full path of a bundled npx or uvx, falling back to the bare name so a PC install still works."""
+    tools=agent_tools_dir()
+    exe={'npx':('node','npx.cmd'),'uvx':('python/Scripts','uvx.exe'),'uv':('python/Scripts','uv.exe')}[name]
+    if tools and (tools/exe[0]/exe[1]).is_file(): return str(tools/exe[0]/exe[1])
+    return exe[1] if os.name=='nt' else name
+
 def runtime_path_dirs():
     """Folders to put first on PATH for commands, so `python`, `pip`, `node` and `npx` use the bundled copies."""
     tools=agent_tools_dir()

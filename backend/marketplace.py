@@ -99,6 +99,7 @@ def connector_for(server_id,package):
     if not re.fullmatch(r'(@[a-z0-9][a-z0-9._~-]*/)?[a-z0-9][a-z0-9._~-]*',ident,re.I):raise ValueError('Unsafe package name')
     if version and not re.fullmatch(r'[0-9A-Za-z][0-9A-Za-z.+_-]*',version):raise ValueError('Unsafe package version')
     package={**package,'identifier':ident,'version':version or None}
-    if package['kind']=='npm':command,args=('npx.cmd' if os.name=='nt' else 'npx'),['-y',ident+('@'+package['version'] if package.get('version') else '')]
-    else:command,args=('uvx.exe' if os.name=='nt' else 'uvx'),[ident+('=='+package['version'] if package.get('version') else '')]
+    from .config import launcher
+    if package['kind']=='npm':command,args=launcher('npx'),['-y',ident+('@'+package['version'] if package.get('version') else '')]
+    else:command,args=launcher('uvx'),[ident+('=='+package['version'] if package.get('version') else '')]
     return name,command,args

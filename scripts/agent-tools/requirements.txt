@@ -112,3 +112,4 @@ windows-mcp==0.8.8
 xlsxwriter==3.2.9
 reportlab>=4.2,<5
 pip
+uv
