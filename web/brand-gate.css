@@ -1,7 +1,6 @@
 /* The sign-in scene shares the ivory/green-black palette of the brand cover. */
 #sign-in-gate{grid-template-columns:minmax(0,1.2fr) minmax(360px,.8fr);padding:0;background:#121815;color:#f4ecdc;overflow:auto;color-scheme:dark}
 .gate-scene{position:relative;isolation:isolate;align-self:stretch;min-height:620px;width:100%;overflow:hidden;background:radial-gradient(ellipse at center,#383b332e,transparent 68%)}
-.gate-scene:before{content:"";position:absolute;inset:0;background:url('/brand/sign-in-toroidal.svg') center 42%/110% auto no-repeat;opacity:.32;animation:gate-lattice 65s linear infinite,gate-light 9s ease-in-out infinite;pointer-events:none}
 .gate-wordmark{position:absolute;left:48px;top:40px;font-size:16px;letter-spacing:.06em;font-weight:600}
 .gate-ribbon{position:absolute;left:50%;top:44%;width:min(94%,720px);transform:translate(-50%,-50%);transform-origin:50% 50%;animation:gate-orbit 48s linear infinite;filter:drop-shadow(2px 0 3px #f9e9c316) drop-shadow(-2px -1px 4px #f7edd814);pointer-events:none}
 .gate-backlight{position:absolute;left:50%;top:72%;width:65%;height:65px;transform:translate(-50%,-50%);background:radial-gradient(ellipse,#e4d3aa30,#d4c29d15 30%,transparent 72%);filter:blur(10px);pointer-events:none}
@@ -24,7 +23,7 @@
 @media(max-width:700px){#sign-in-gate{display:flex;flex-direction:column}.gate-scene{min-height:260px;flex-shrink:0}.gate-ribbon{width:340px;top:42%}.gate-wordmark{left:24px;top:20px;font-size:13px}.gate-tagline{font-size:24px;left:24px;bottom:20px}.gate-backlight{top:80%;height:35px}#sign-in-gate .gate-card{border-left:0;border-top:1px solid #333a32;max-width:none;padding:32px 24px;flex:1}.gate-card>img{display:none}}
 @media(prefers-reduced-motion:reduce){.gate-ribbon,.gate-scene:before{animation:none!important}}
 /* Nested orbit: uniform .36 scale gives >28 SVG units of clearance at all angles. */
-.gate-scene{--orbit-size:min(112%,850px,78vh)}.gate-scene:before{display:none}
+.gate-scene{--orbit-size:min(112%,850px,78vh)}
 .gate-orbit{position:absolute;left:50%;top:44%;width:var(--orbit-size);height:auto;transform:translate(-50%,-50%);transform-origin:50% 50%;opacity:.65;animation:gate-counter-orbit 48s linear infinite;pointer-events:none}
 .gate-ribbon{width:calc(var(--orbit-size) * .36);top:44%;animation:gate-orbit 48s linear infinite}
 .gate-backlight{top:60%;width:38%;height:42px}
