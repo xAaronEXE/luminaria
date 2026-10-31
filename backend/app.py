@@ -74,6 +74,9 @@ async def lifespan(app):
             if c.status!='connected': raise ValueError(f'The connector was added but has not started ({c.status}). It may need an account key; check Settings › Integrations.')
     engine.tools.connector_installer=install_connector
     await engine.restore()
+    with contextlib.suppress(Exception):
+        from .updates import cleanup
+        await asyncio.to_thread(cleanup)
     task=asyncio.create_task(scheduler());sync_task=asyncio.create_task(sync_loop())
     yield
     sync_task.cancel()

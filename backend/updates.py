@@ -53,6 +53,24 @@ async def check():
             'installer': {k: installer[k] for k in ('name', 'size', 'sha256', 'url')}, 'signing': SIGNING,
             'message': f'Version {version} is available.' if available else f'You have the latest version ({CONFIG["version"]}).'}
 
+def cleanup():
+    """After an update has installed, remove what it left behind: the downloaded installer for this or any
+    older version, unfinished downloads, and the one-time handoff script. A newer installer is kept so an
+    update that has not run yet still can. Logs stay for troubleshooting."""
+    folder = DATA / 'updates'
+    if not folder.is_dir(): return []
+    removed = []
+    try: current = Version(CONFIG['version'])
+    except InvalidVersion: return []
+    for p in folder.iterdir():
+        if not p.is_file(): continue
+        m = re.fullmatch(r'Luminaria-(\d+\.\d+\.\d+)-Setup\.exe', p.name)
+        stale = p.name.endswith('.partial') or p.name == 'update-handoff.ps1' or (m and Version(m.group(1)) <= current)
+        if stale:
+            try: p.unlink(); removed.append(p.name)
+            except OSError: pass
+    return removed
+
 async def install():
     info = await check()
     if not info.get('installable'): raise ValueError(info.get('message') or 'No newer release is available.')

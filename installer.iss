@@ -34,7 +34,9 @@ CloseApplications=yes
 RestartApplications=no
 
 [InstallDelete]
-; Replace the built-in tools as a whole so files from an older version never linger.
+; Program files are replaced as a whole so nothing from an older version lingers.
+; Chats, settings, models and files live in data, models and Files, which are never touched.
+Type: filesandordirs; Name: "{app}\_internal"
 Type: filesandordirs; Name: "{app}\runtime\agent-tools"
 
 [Files]
