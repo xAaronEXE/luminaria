@@ -1,6 +1,6 @@
 import asyncio, base64, json, os, re, subprocess
 from pathlib import Path
-from .config import CONFIG, DATA, workspace_path as _wp, full_access, external_tools_enabled, find_runtime, runtime_missing_message
+from .config import CONFIG, DATA, workspace_path as _wp, full_access, external_tools_enabled, find_runtime, runtime_missing_message, runtime_path_dirs
 def workspace_path(path='.'): return _wp(path,roam=True)
 
 def schema(name,description,properties,required=(),tier='auto',group='workspace'):
@@ -17,7 +17,7 @@ BUILTINS=[
  schema('edit_file','Replace exactly one occurrence of old_text in a workspace file.',{'path':S,'old_text':S,'new_text':S},['path','old_text','new_text'],'approve'),
  schema('delete_file','Delete one workspace file (never directories). Always asks.',{'path':S},['path'],'always'),
  schema('search_files','Search text files in the workspace for a literal string.',{'query':S},['query']),
- schema('run_command','Run a PowerShell command in the workspace. Full PC access after approval; not a sandbox. Use python/node configured paths from system prompt.',{'command':S,'timeout':I},['command'],'always','execution'),
+ schema('run_command','Run a PowerShell command in the workspace. Full PC access after approval; not a sandbox. python, pip, node and npx are available.',{'command':S,'timeout':I},['command'],'always','execution'),
  schema('run_code','Execute a Python or JavaScript script in the workspace. Saved as a file; no hidden REPL state.',{'language':{'type':'string','enum':['python','javascript']},'code':S,'timeout':I},['language','code'],'always','execution'),
  schema('web_search','Search the public web. Returns status, titles, snippets and source URLs. An empty result means no matches for these words, not that the information does not exist.',{'query':S},['query'],'auto','research'),
  schema('web_fetch','Fetch a public HTTP(S) page or PDF. Network request requires approval. browser_fallback explicitly authorizes navigation and snapshot in the connected browser if JavaScript or sign-in is needed; never completes login dialogs or bypasses blocks. Public cache is bypassed for sensitive responses.',{'url':S,'refresh':{'type':'boolean'},'browser_fallback':{'type':'boolean'}},['url'],'approve','research'),
@@ -66,7 +66,7 @@ class Toolbox:
         return next((t for t in self.catalog() if t['name']==name),None)
     async def process(self,argv,timeout=60):
         flags=subprocess.CREATE_NO_WINDOW if os.name=='nt' else 0
-        proc=await asyncio.create_subprocess_exec(*argv,cwd=CONFIG['workspace'],stdout=asyncio.subprocess.PIPE,stderr=asyncio.subprocess.PIPE,creationflags=flags,env={**os.environ,'PYTHONIOENCODING':'utf-8'})
+        proc=await asyncio.create_subprocess_exec(*argv,cwd=CONFIG['workspace'],stdout=asyncio.subprocess.PIPE,stderr=asyncio.subprocess.PIPE,creationflags=flags,env={**os.environ,'PATH':os.pathsep.join(runtime_path_dirs()+[os.environ.get('PATH','')]),'PYTHONIOENCODING':'utf-8'})
         try:
             out,err=await asyncio.wait_for(proc.communicate(),min(max(timeout,1),180))
             return {'exit_code':proc.returncode,'stdout':out.decode('utf-8','replace'),'stderr':err.decode('utf-8','replace')}

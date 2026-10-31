@@ -130,7 +130,7 @@ class Engine:
         f"Workspace: {CONFIG['workspace']}. Python runtime: {find_runtime('python') or 'not installed on this PC'}. Node runtime: {find_runtime('node') or 'not installed on this PC'}. "
         'File tools are workspace-scoped; shell and Windows tools can access the PC under the active permission mode. '
         'You have persistent history and durable memory tools across sessions. Describe actual available tools and results instead of claiming generic lack of internet, execution, computer access or memory. Missing connectors and operating-system permissions still limit capabilities. '
-        'Document packages: python-docx, reportlab, openpyxl, python-pptx, Pillow. '
+        'Document packages in the bundled Python: python-docx, python-pptx, openpyxl, xlsxwriter, reportlab, pypdf, PyMuPDF, matplotlib, pandas, Pillow. '
         'Use list_skills and load_skill for reusable workflows. '
         'Loading a skill starts its workflow; use finish_skill with successful source-evidence actions and output paths to verify file outputs. Never call loading alone completion. '
         'For a bounded multi-step file run, propose create_file_workflow with the user objective, allowed workspace locations and completion criteria; tell the user to review and execute it under Tools → File workflows. '

@@ -27,11 +27,31 @@ CONFIG.pop('release_repo',None)
 # Permission mode is read live, so choosing Hands-free applies to the next task without a restart.
 if CONFIG.get('access_mode') not in ('review','full'): CONFIG['access_mode']='review'
 
+def agent_tools_dir():
+    """Folder with the bundled Python, Node and connectors that ship with the installer."""
+    for folder in (APP_HOME/'runtime'/'agent-tools', ROOT/'runtime'/'agent-tools', APP_HOME.parent/'runtime'/'agent-tools'):
+        if folder.is_dir(): return folder
+    return None
+
+def bundled_runtime(kind):
+    tools=agent_tools_dir()
+    if not tools: return None
+    exe=tools/('python' if kind=='python' else 'node')/('python.exe' if kind=='python' else 'node.exe')
+    return str(exe) if exe.is_file() else None
+
+def runtime_path_dirs():
+    """Folders to put first on PATH for commands, so `python`, `pip`, `node` and `npx` use the bundled copies."""
+    tools=agent_tools_dir()
+    if not tools: return []
+    return [str(d) for d in (tools/'python', tools/'python'/'Scripts', tools/'node') if d.is_dir()]
+
 def find_runtime(kind):
     """Find Python or Node on this PC without asking the user. Returns a path string or None."""
     import shutil
     name={'python':'python','node':'node'}[kind]
     configured=str(CONFIG.get(kind) or name)
+    bundled=bundled_runtime(kind)
+    if bundled and configured==name: return bundled  # the copy shipped with Luminaria, unless the user chose another
     def real(path):
         low=str(path).lower().replace('/','\\')
         return bool(path) and Path(path).is_file() and '\\windowsapps\\' not in low  # the Store shortcut is not a real install
@@ -57,11 +77,11 @@ def find_runtime(kind):
             except Exception: pass
     for c in candidates:
         if real(c): return str(c)
-    return None
+    return bundled
 
 def runtime_missing_message(kind):
-    if kind=='python': return 'Python is not installed on this PC, so Luminaria cannot run Python code yet. Install Python 3 from python.org (tick "Add python.exe to PATH"), then ask again. Nothing was changed.'
-    return 'Node.js is not installed on this PC, so Luminaria cannot run JavaScript yet. Install the LTS version from nodejs.org, then ask again. Nothing was changed.'
+    if kind=='python': return 'Luminaria could not find its built-in Python. Reinstall Luminaria to restore it, then ask again. Nothing was changed.'
+    return 'Luminaria could not find its built-in Node.js. Reinstall Luminaria to restore it, then ask again. Nothing was changed.'
 
 def full_access():
     return CONFIG.get('access_mode','review')=='full'

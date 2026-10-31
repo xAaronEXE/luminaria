@@ -12,7 +12,7 @@
 - Builders and tinkerers who run models locally and want a proper desktop app around them instead of a terminal.
 - Anyone who wants an assistant that can actually do work (edit files, run commands, research, draft documents) under controls they set.
 
-You need a Windows PC. A graphics card with 8 GB or more of memory makes local models far more pleasant, but Luminaria rates every model against your own hardware so you can see what will and will not run well before you download it.
+You need a Windows 10 or 11 PC. Everything else, including Python, Node.js and the model runtime, is included. A graphics card with 8 GB or more of memory makes local models far more pleasant, but Luminaria rates every model against your own hardware so you can see what will and will not run well before you download it.
 
 ## What it does
 
@@ -65,7 +65,7 @@ You need a Windows PC. A graphics card with 8 GB or more of memory makes local m
 
 ## Run from source
 
-Use Python 3.14 on Windows. In a virtual environment, install `requirements-build.txt`, then run:
+Use Python 3.14 on Windows. In a virtual environment, install `requirements-build.txt`, run `scripts/fetch-agent-tools.ps1` once for the built-in tools, then run:
 
 ```
 python desktop.py
@@ -77,7 +77,7 @@ Model weights and inference executables are not included. Install a model from t
 
 Run `build.ps1` from the configured Python environment. It produces the program with PyInstaller and the installer with Inno Setup, and `publish-release.ps1` publishes a GitHub release with checksums.
 
-Required build inputs, excluded from Git on purpose: `runtime/llama-swap.exe`, the model runtime at `runtime/local-ai/runtime-vulkan/` (run `scripts/fetch-model-runtime.ps1` to fetch the checksum-pinned archive), and the Inno Setup compiler at `runtime/inno/ISCC.exe`.
+Required build inputs, excluded from Git on purpose: `runtime/llama-swap.exe`, the model runtime at `runtime/local-ai/runtime-vulkan/` (run `scripts/fetch-model-runtime.ps1` to fetch the checksum-pinned archive), the Inno Setup compiler at `runtime/inno/ISCC.exe`, and Python 3.14 on the build PC. `build.ps1` runs `scripts/fetch-agent-tools.ps1` when needed, which prepares the built-in Python, Node.js, browser and Windows connectors and the WebView2 installer from pinned, verified downloads.
 
 The installer's AppId stays stable so upgrades work. The installed app keeps its data in a `data/` folder inside its installation directory; see [FOLDER-GUIDE.md](FOLDER-GUIDE.md). Design notes are in [DESIGN.md](DESIGN.md) and [PRODUCT.md](PRODUCT.md), and each release has notes in [docs/release-notes](docs/release-notes).
 

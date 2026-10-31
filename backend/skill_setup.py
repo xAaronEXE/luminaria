@@ -1,6 +1,6 @@
 """Live prerequisite checklist; opening it never changes permissions or installs code."""
 from pathlib import Path
-from .config import CONFIG,APP_HOME,external_tools_enabled,find_runtime
+from .config import CONFIG,external_tools_enabled,agent_tools_dir,bundled_runtime
 from .skills import inventory,preflight
 
 def checklist(name,connectors):
@@ -12,7 +12,7 @@ def checklist(name,connectors):
   if need=='execution':
    ready=external_tools_enabled()
    steps.append({'id':need,'title':'Allow computer and command tools','ready':ready,'action':'permissions',
-    'description':'Open Tools & permissions, enable Computer and command tools, then Save permissions. You can keep Review actions: Full access is not required. Changing access mode requires restart; enabling this switch does not.'})
+    'description':'Open Tools & permissions, enable Computer and command tools, then Save permissions. You can keep Ask me first: Full access is not required.'})
   elif need=='github':
    connector=connectors.get(need);ready=bool(connector and connector.status=='connected')
    steps.append({'id':need,'title':'Connect GitHub','ready':ready,'action':'github',
@@ -32,17 +32,16 @@ def checklist(name,connectors):
 def connector_config(name):
  if name not in ('browser','windows'):raise ValueError('Unsupported skill connector')
  existing=CONFIG.get('mcp',{}).get(name)
- if existing:return existing
- # Use only already-installed app-owned runtimes; never run an installer or package manager.
- home=APP_HOME.parent if APP_HOME.name.lower()=='app' else APP_HOME
- runtime=home/'runtime'/'local-ai'/'agent-tools'
+ if existing and Path(str(existing.get('command',''))).is_file():return existing
+ # Use only the runtimes that ship with Luminaria; never run an installer or package manager.
+ tools=agent_tools_dir()
+ from .config import DATA
  if name=='browser':
-  script=runtime/'node_modules'/'@playwright'/'mcp'/'cli.js'
-  node=Path(find_runtime('node') or '')
-  if not script.is_file() or not node.is_file():raise ValueError('The bundled browser connector is missing. Open Integrations to configure an existing trusted MCP server; no software was installed.')
-  from .config import DATA
-  return {'command':str(node),'args':[str(script),'--browser','msedge','--user-data-dir',str(DATA/'browser-profile'),'--output-dir',str(DATA/'browser-output')],'cwd':CONFIG['workspace']}
- python=runtime/'python-env'/'Scripts'/'python.exe'
- module=runtime/'python-env'/'Lib'/'site-packages'/'windows_mcp'
- if not python.is_file() or not module.is_dir():raise ValueError('The bundled Windows connector is missing. Open Integrations to configure an existing trusted MCP server; no software was installed.')
- return {'command':str(python),'args':['-m','windows_mcp','serve','--transport','stdio'],'cwd':CONFIG['workspace']}
+  script=tools/'node_modules'/'@playwright'/'mcp'/'cli.js' if tools else None
+  node=bundled_runtime('node')
+  if not script or not script.is_file() or not node:raise ValueError('The built-in browser connector is missing. Reinstall Luminaria to restore it; nothing was installed.')
+  return {'command':node,'args':[str(script),'--browser','msedge','--user-data-dir',str(DATA/'browser-profile'),'--output-dir',str(DATA/'browser-output')],'cwd':CONFIG['workspace']}
+ python=bundled_runtime('python')
+ module=tools/'python'/'Lib'/'site-packages'/'windows_mcp' if tools else None
+ if not python or not module or not module.is_dir():raise ValueError('The built-in Windows connector is missing. Reinstall Luminaria to restore it; nothing was installed.')
+ return {'command':python,'args':['-m','windows_mcp','serve','--transport','stdio'],'cwd':CONFIG['workspace'],'env':{'ANONYMIZED_TELEMETRY':'false'}}

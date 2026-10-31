@@ -19,6 +19,30 @@ class RuntimeDetect(unittest.TestCase):
             finally: shutil.which=real
         finally: config.CONFIG['node']=old
     def test_messages_are_plain_and_name_the_fix(self):
-        self.assertIn('python.org',config.runtime_missing_message('python'))
-        self.assertIn('nodejs.org',config.runtime_missing_message('node'))
+        self.assertIn('Reinstall',config.runtime_missing_message('python'))
+        self.assertIn('Reinstall',config.runtime_missing_message('node'))
+class Bundled(unittest.TestCase):
+    def setUp(self):
+        self.tmp=Path(tempfile.mkdtemp())
+        (self.tmp/'python').mkdir(); (self.tmp/'python'/'python.exe').write_text('x')
+        (self.tmp/'node').mkdir(); (self.tmp/'node'/'node.exe').write_text('x')
+        (self.tmp/'python'/'Lib'/'site-packages'/'windows_mcp').mkdir(parents=True)
+        (self.tmp/'node_modules'/'@playwright'/'mcp').mkdir(parents=True); (self.tmp/'node_modules'/'@playwright'/'mcp'/'cli.js').write_text('x')
+        self.real=config.agent_tools_dir; config.agent_tools_dir=lambda:self.tmp
+    def tearDown(self): config.agent_tools_dir=self.real
+    def test_bundled_copies_win_over_whatever_is_on_the_pc(self):
+        self.assertEqual(config.find_runtime('python'),str(self.tmp/'python'/'python.exe'))
+        self.assertEqual(config.find_runtime('node'),str(self.tmp/'node'/'node.exe'))
+    def test_bundled_folders_go_first_on_path(self):
+        self.assertEqual(config.runtime_path_dirs()[0],str(self.tmp/'python'))
+    def test_connectors_use_the_bundled_runtimes(self):
+        from backend import skill_setup
+        old=config.CONFIG.get('mcp'); config.CONFIG['mcp']={'browser':{'command':'C:/gone/node.exe'}}
+        try:
+            b=skill_setup.connector_config('browser'); w=skill_setup.connector_config('windows')
+        finally: config.CONFIG['mcp']=old if old is not None else {}
+        self.assertEqual(b['command'],str(self.tmp/'node'/'node.exe'))
+        self.assertEqual(w['command'],str(self.tmp/'python'/'python.exe'))
+        self.assertEqual(w['env'],{'ANONYMIZED_TELEMETRY':'false'})
+
 if __name__=='__main__': unittest.main()

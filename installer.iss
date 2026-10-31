@@ -20,6 +20,7 @@ DefaultDirName={userdesktop}\Luminaria\App
 UsePreviousAppDir=no
 DefaultGroupName=Luminaria
 PrivilegesRequired=lowest
+MinVersion=10.0
 ArchitecturesAllowed=x64compatible
 ArchitecturesInstallIn64BitMode=x64compatible
 OutputDir=release
@@ -32,15 +33,38 @@ WizardStyle=modern
 CloseApplications=yes
 RestartApplications=no
 
+[InstallDelete]
+; Replace the built-in tools as a whole so files from an older version never linger.
+Type: filesandordirs; Name: "{app}\runtime\agent-tools"
+
 [Files]
 Source: ".build\dist\LocalAIStudio\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
 Source: "licenses\llama.cpp.txt"; DestDir: "{app}\licenses"; Flags: ignoreversion
+Source: "runtime\agent-tools\*"; DestDir: "{app}\runtime\agent-tools"; Flags: ignoreversion recursesubdirs createallsubdirs
+Source: "runtime\prereqs\MicrosoftEdgeWebview2Setup.exe"; DestDir: "{tmp}"; Flags: deleteafterinstall; Check: NeedsWebView2
 
 [Icons]
 Name: "{group}\Luminaria"; Filename: "{app}\LocalAIStudio.exe"
 Name: "{autodesktop}\Luminaria"; Filename: "{app}\LocalAIStudio.exe"
 
 [Run]
+Filename: "{tmp}\MicrosoftEdgeWebview2Setup.exe"; Parameters: "/silent /install"; StatusMsg: "Installing Microsoft Edge WebView2 (needed to show the app)..."; Flags: waituntilterminated; Check: NeedsWebView2
 Filename: "{app}\LocalAIStudio.exe"; Description: "Open Luminaria"; Flags: nowait postinstall skipifsilent
 
 ; Uninstallation removes program files only. History, models and workspace are retained.
+
+[Code]
+const WebView2Key = '\Microsoft\EdgeUpdate\Clients\{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}';
+
+function HasVersion(Root: Integer; Key: String): Boolean;
+var V: String;
+begin
+  Result := RegQueryStringValue(Root, Key, 'pv', V) and (V <> '') and (V <> '0.0.0.0');
+end;
+
+function NeedsWebView2: Boolean;
+begin
+  Result := not (HasVersion(HKLM, 'SOFTWARE\WOW6432Node' + WebView2Key) or
+                 HasVersion(HKLM, 'SOFTWARE' + WebView2Key) or
+                 HasVersion(HKCU, 'Software' + WebView2Key));
+end;

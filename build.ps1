@@ -20,6 +20,15 @@ function Sign-File($path){
 }
 $python=if($env:STUDIO_BUILD_PYTHON){$env:STUDIO_BUILD_PYTHON}elseif(Test-Path "$PSScriptRoot/runtime/local-ai/agent-tools/python-env/Scripts/python.exe"){"$PSScriptRoot/runtime/local-ai/agent-tools/python-env/Scripts/python.exe"}else{(Get-Command python -ErrorAction Stop).Source}
 if(!(Test-Path "$PSScriptRoot/runtime/local-ai/runtime-vulkan/llama-server.exe")){throw 'Bundled model runtime is missing'}
+# Built-in Python, Node.js, browser/Windows connectors and the WebView2 installer, so the app works on any Windows 10/11 PC.
+if(!(Test-Path "$PSScriptRoot/runtime/agent-tools/python/python.exe") -or !(Test-Path "$PSScriptRoot/runtime/agent-tools/node/node.exe") -or !(Test-Path "$PSScriptRoot/runtime/prereqs/MicrosoftEdgeWebview2Setup.exe")){& "$PSScriptRoot/scripts/fetch-agent-tools.ps1"}
+# Microsoft C++ runtime files next to the model server and the built-in Python, so they start without the Visual C++ Redistributable.
+foreach($dll in 'msvcp140.dll','msvcp140_1.dll','msvcp140_2.dll','vcruntime140.dll','vcruntime140_1.dll'){
+  $src=Join-Path $env:SystemRoot "System32\$dll"
+  if(!(Test-Path $src)){if($dll -in 'msvcp140.dll','vcruntime140.dll','vcruntime140_1.dll'){throw "$dll is missing on the build PC; install the Visual C++ Redistributable"};continue}
+  Copy-Item -Force $src "$PSScriptRoot/runtime/local-ai/runtime-vulkan/"
+  Copy-Item -Force $src "$PSScriptRoot/runtime/agent-tools/python/"
+}
 # Windows file details (Properties > Details, Task Manager): publisher, product name and version.
 $publisher='Desselle Solution Software'
 $parts=($version.Split('.')|ForEach-Object{[int]$_})+@(0)
