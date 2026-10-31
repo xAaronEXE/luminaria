@@ -566,6 +566,44 @@ async def open_external(request:Request):
     if parts.hostname in ('127.0.0.1','localhost','::1'): raise ValueError('That address belongs to Luminaria itself')
     return {'opened':bool(await asyncio.to_thread(webbrowser.open,url,new=2,autoraise=True))}
 
+@app.get('/api/marketplace/skills')
+async def market_skills(q:str='',repos:str=''):
+    from .marketplace import search_skills
+    from .skills import catalog
+    extra=[r for r in repos.split(',') if r.strip()]
+    data=await asyncio.to_thread(search_skills,q,extra)
+    have={s['name'] for s in catalog(connectors)}
+    for row in data['items']:row['installed']=row['name'] in have
+    return data
+
+@app.post('/api/marketplace/skills/install')
+async def market_skill_install(request:Request):
+    from .marketplace import install_skill
+    b=await request.json()
+    return await asyncio.to_thread(install_skill,str(b.get('repo','')),str(b.get('path','')))
+
+@app.get('/api/marketplace/mcp')
+async def market_mcp(q:str='',cursor:str=''):
+    from .marketplace import search_mcp
+    data=await asyncio.to_thread(search_mcp,q,cursor or None)
+    have=set(CONFIG.get('mcp',{}))
+    from .marketplace import connector_for
+    for row in data['items']:
+        row['installed']=any(connector_for(row['id'],p)[0] in have for p in row['packages'])
+    return data
+
+@app.post('/api/marketplace/mcp/install')
+async def market_mcp_install(request:Request):
+    from .marketplace import connector_for,search_mcp
+    b=await request.json()
+    server=next((i for i in search_mcp(str(b.get('id','')))['items'] if i['id']==b.get('id')),None)
+    if not server or not server['packages']:raise ValueError('This connector has no installable package')
+    package=server['packages'][min(int(b.get('package',0)),len(server['packages'])-1)]
+    if package['needs']:raise ValueError('This connector needs '+', '.join(package['needs'])+' set first. Add it as a custom connector in Settings › Integrations.')
+    name,command,args=connector_for(server['id'],package)
+    configs=CONFIG.get('mcp',{}).copy();configs[name]={'command':command,'args':args,'cwd':CONFIG['workspace']}
+    save_config({'mcp':configs});await restart_connector(name,configs[name]);return {'ok':True,'name':name}
+
 @app.post('/api/permissions/reset')
 async def reset_permissions(): store.execute("DELETE FROM settings WHERE key LIKE 'permission:%'");return {'ok':True}
 

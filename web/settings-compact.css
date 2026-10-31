@@ -109,3 +109,13 @@
 
 /* The model library needs room for its two-column browser */
 .settings-sheet .settings-body[data-account-view="Models"]{padding-left:max(28px,calc((100% - 1080px)/2));padding-right:max(28px,calc((100% - 1080px)/2))}
+
+/* Marketplace */
+.market-bar{display:flex;gap:12px;align-items:center;justify-content:space-between;flex-wrap:wrap;margin:0 0 12px}
+.market-bar input{flex:1 1 220px;max-width:360px;height:36px;padding:0 12px}
+.market-row .row-actions{align-items:center}
+.market-row p{display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+.badge.warn{color:var(--warning)}
+.market-bar .segmented{display:inline-flex;gap:2px;padding:3px;border-radius:12px;border:1px solid var(--glass-line,var(--line));background:color-mix(in srgb,var(--text) 4%,transparent)}
+.market-bar .segmented button{border:0;background:transparent;color:var(--muted);font:inherit;font-size:12.5px;font-weight:600;padding:6px 14px;border-radius:9px;cursor:pointer}
+.market-bar .segmented button[aria-selected=true]{background:linear-gradient(135deg,var(--aurora-1),var(--aurora-2));color:#06070C}

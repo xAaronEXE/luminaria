@@ -126,3 +126,13 @@ body.motion-off .model-option.abliterated::after,body.motion-off #model-detail.a
 .tuning-mode span{display:flex;flex-direction:column;gap:3px}
 .tuning-mode small{color:var(--muted);font-size:12px;line-height:1.45}
 #tuning-manual[hidden]{display:none}
+
+/* Saved benchmark result on each quantization row */
+.quant-bench{display:inline-flex;align-items:center;margin-left:8px}
+.quant-untested{font-size:11px;color:var(--muted)}
+.quant-choices label{grid-template-columns:16px 64px 70px minmax(0,1fr) auto auto auto}
+.quant-choices .quant-bench{margin:0}
+.quant-choices .fit-dot{margin-left:0}
+@media(max-width:1100px){.quant-choices label{grid-template-columns:16px 56px 64px minmax(0,1fr) auto}.quant-choices .quant-bench,.quant-choices .fit-dot{grid-column:2/-1}}
+.best-fit{white-space:nowrap}
+.quant-choices label{grid-template-columns:16px 64px 70px minmax(0,1fr) auto auto auto auto}
