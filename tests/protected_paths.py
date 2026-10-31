@@ -17,4 +17,11 @@ class Protected(unittest.TestCase):
  def test_off_without_whole_pc(self):
   config.CONFIG['whole_pc']=False
   with self.assertRaises(ValueError):config.workspace_path(str(Path(tempfile.mkdtemp())/'a'),roam=True)
+class SyncScope(unittest.TestCase):
+ def test_too_broad_folders_refused(self):
+  from backend.cloud_sync import CloudSync
+  sync=CloudSync.__new__(CloudSync)
+  for bad in (Path.home(),Path(Path.home().anchor or '/'),config.APP_HOME.parent):
+   with self.assertRaises(ValueError):sync.check_scope(bad)
+  sync.check_scope(Path(tempfile.mkdtemp()))
 if __name__=='__main__':unittest.main()

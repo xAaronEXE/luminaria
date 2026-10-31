@@ -28,6 +28,10 @@ PLAN_FINALIZE=('Investigation budget for this plan is used up. Do not call more 
  'if you have not already, then present it to the user.')
 
 PLAN_ROUND_LIMIT=4
+NUDGE_TEXT=('[Automatic reminder, not from the user] You described an action but called no tool, so nothing happened. '
+ 'Call the tool that does it now. If something truly blocks you, say exactly what and stop. Do not repeat your earlier reply.')
+def with_nudge(messages,run):
+    return messages+[{'role':'user','content':NUDGE_TEXT}] if run.get('nudge_pending') else messages
 
 def routing_evidence(model_id):
     """Latest measured speed and quality check on this PC, if any."""
@@ -150,7 +154,6 @@ class Engine:
             state.append('Saved plan for this chat (version '+str(plan.get('version',1))+'). When the user asks to see, review or '
             'continue the plan, present it from here with current statuses. Keep it current with update_plan as work progresses.\n'+plan_text(plan))
         if run and run.get('plan_only') and run.get('plan_finalize'): state.append(PLAN_FINALIZE)
-        if run and run.get('nudge_pending'): state.append('Hands-free: you said what you would do but called no tool. Call the tool that does it now. If something truly blocks you, say exactly what and stop. Do not repeat your earlier reply.')
         if summary: messages[0]['content']+='\n\nWorking summary of prior conversation. Original messages are retrievable by ID.\n'+summary['content']
         recent=self.store.messages(chat,summary['through_id'] if summary else 0)
         refs=[p['id'] for m in recent if isinstance(m.get('content'),list) for p in m['content'] if p.get('type')=='image_ref']
@@ -245,7 +248,9 @@ class Engine:
             async for line in response.aiter_lines():
                 if not line.startswith('data: '): continue
                 if line[6:]=='[DONE]': break
-                chunk=json.loads(line[6:]); usage=chunk.get('usage') or usage; timings=chunk.get('timings') or timings
+                try: chunk=json.loads(line[6:])
+                except ValueError: continue  # one garbled line must not end the whole reply
+                usage=chunk.get('usage') or usage; timings=chunk.get('timings') or timings
                 for choice in chunk.get('choices',[]):
                     finish=choice.get('finish_reason') or finish; d=choice.get('delta',{})
                     if d.get('content'):
@@ -258,7 +263,7 @@ class Engine:
                             if not run['reasoning_text']: self.work(run,'reasoning.started',run.get('round',0),node='gen'+str(run.get('round',0)),label='Reasoning text from the model',source='model-provided',evidence={'run':run['id']})
                             run['reasoning_text']=reasoning; self.emit('reasoning',chat=run['chat'],text=d['reasoning_content'])
                     for c in d.get('tool_calls',[]):
-                        i=c['index']; dest=calls.setdefault(i,{'id':'','type':'function','function':{'name':'','arguments':''}})
+                        i=c.get('index',len(calls) if c.get('id') or not calls else max(calls)); dest=calls.setdefault(i,{'id':'','type':'function','function':{'name':'','arguments':''}})
                         if c.get('id'): dest['id']=c['id']
                         f=c.get('function',{}); dest['function']['name']+=f.get('name',''); dest['function']['arguments']+=f.get('arguments','')
         for c in calls.values(): c['id']=c['id'] or 'call_'+uid()
@@ -341,18 +346,18 @@ class Engine:
             allowed={'update_plan'} if run['plan_finalize'] else PLAN_TOOLS
             if run['plan_finalize'] and run.get('plan_version'): allowed=set()
             defs=[d for d in defs if d['function']['name'] in allowed]
-        messages=self.context(chat,run)
+        messages=with_nudge(self.context(chat,run),run)
         tokens,method=await self.token_count(messages,defs)
         if tokens+CONFIG['output_tokens']>=int(self.context_limit()*CONFIG['compact_ratio']):
             try:
                 result=await self.compact(chat,run=run,tokens_before=tokens)
-                if result['compacted']: messages=self.context(chat,run); tokens,method=await self.token_count(messages,defs)
+                if result['compacted']: messages=with_nudge(self.context(chat,run),run); tokens,method=await self.token_count(messages,defs)
             except (ValueError,RuntimeError,httpx.HTTPError):
                 # Early compaction is an optimisation. If it fails while the request still fits, keep going on full history.
                 if tokens+CONFIG['output_tokens']>self.context_limit(): raise
         if tokens+CONFIG['output_tokens']>self.context_limit():
             result=await self.compact(chat,force=True,run=run,tokens_before=tokens)
-            if result['compacted']:messages=self.context(chat,run);tokens,method=await self.token_count(messages,defs)
+            if result['compacted']:messages=with_nudge(self.context(chat,run),run);tokens,method=await self.token_count(messages,defs)
         run['context']={'used':tokens,'reserved':CONFIG['output_tokens'],'limit':self.context_limit(),'method':method,'shaping':run.get('shaping') or {}}
         self.store.set_setting('context:'+chat,run['context'])
         if tokens+CONFIG['output_tokens']>self.context_limit(): raise ValueError(self.overflow_reason(messages,tokens))
