@@ -30,7 +30,11 @@ if(!$env:GITHUB_TOKEN -and (Get-Command gh -ErrorAction SilentlyContinue)){
 }
 foreach($kind in 'skills','connectors'){
   & $python "$PSScriptRoot/scripts/build-catalog.py" $kind
-  if($LASTEXITCODE){if(Test-Path "$PSScriptRoot/catalog/$kind.json.gz"){Write-Host "Could not refresh the $kind catalog; keeping the previous one."}else{throw "Could not build the $kind catalog"}}
+  if($LASTEXITCODE){
+    if(Test-Path "$PSScriptRoot/catalog/$kind.json.gz"){Write-Host "Could not refresh the $kind catalog; keeping the previous one."}
+    elseif($kind -eq 'connectors'){Write-Host 'MCP Registry unreachable; shipping without the offline connector list (the Marketplace still searches the registry online).'}
+    else{throw "Could not build the $kind catalog"}
+  }
 }
 & $python "$PSScriptRoot/scripts/build-catalog.py" preinstall "$PSScriptRoot/.build/community-skills"
 if($LASTEXITCODE){throw 'Could not prepare the pre-installed skills'}

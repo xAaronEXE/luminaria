@@ -100,11 +100,16 @@ def discover():
             for item in res['items']: take(item)
     return repos
 
+PREVIOUS={}
+
 def repo_skills(info):
     repo=info['repo']
     head=api(f"repos/{repo}/commits/{info['branch']}")
     if not head: return []
     sha=head['sha']
+    old=PREVIOUS.get(repo)
+    if old and old[0]['sha']==sha:  # unchanged since the last catalog: reuse it without downloading again
+        return [{**i,'stars':info['stars'],'reuse':True} for i in old]
     tree=api(f'repos/{repo}/git/trees/{sha}?recursive=1') or {}
     blobs={t['path']:t.get('size',0) for t in tree.get('tree',[]) if t.get('type')=='blob'}
     paths=[p for p in blobs if p.endswith('SKILL.md') and not re.search(r'(^|/)(node_modules|\.git|test|tests|fixtures|examples?/templates)/',p)][:PER_REPO]
@@ -116,6 +121,7 @@ def repo_skills(info):
     return rows
 
 def fill(row):
+    if row.get('reuse'): return {k:v for k,v in row.items() if k!='reuse'}
     text=raw_file(row['repo'],row['sha'],row['path'])
     if not text or len(text)>60_000: return None
     name,desc,own=frontmatter(text)
@@ -130,7 +136,15 @@ def fill(row):
             'license':row['license'],'stars':row['stars'],'files':row['files'],'size':len(text)}
 
 def skills():
+    existing=OUT/'skills.json.gz'
+    if existing.is_file() and time.time()-existing.stat().st_mtime<7*86400 and not os.environ.get('LUMINARIA_REFRESH_CATALOG'):
+        print('Skill catalog is less than 7 days old; keeping it (set LUMINARIA_REFRESH_CATALOG=1 to refresh).',flush=True); return
     if not _token(): raise SystemExit('Sign in with "gh auth login" (or set GITHUB_TOKEN) to build the skill catalog')
+    if existing.is_file():
+        try:
+            with gzip.open(existing,'rt',encoding='utf-8') as f:
+                for i in json.load(f)['items']: PREVIOUS.setdefault(i['repo'],[]).append(i)
+        except (OSError,ValueError): PREVIOUS.clear()
     repos=discover(); print(f'{len(repos)} openly licensed repositories',flush=True)
     with ThreadPoolExecutor(8) as pool: found=[r for rows in pool.map(repo_skills,repos.values()) for r in rows]
     print(f'{len(found)} SKILL.md files',flush=True)
@@ -147,7 +161,15 @@ def connectors():
     while True:
         q={'limit':100,**({'cursor':cursor} if cursor else {})}
         req=urllib.request.Request(url+'?'+urllib.parse.urlencode(q),headers={'Accept':'application/json','User-Agent':'luminaria-catalog'})
-        with urllib.request.urlopen(req,timeout=40) as r: data=json.loads(r.read())
+        data=None
+        for attempt in range(6):
+            try:
+                with urllib.request.urlopen(req,timeout=60) as r: data=json.loads(r.read()); break
+            except (OSError,ValueError) as e:
+                print(f'MCP Registry page failed ({type(e).__name__}); retrying',flush=True); time.sleep(5*(attempt+1))
+        if data is None:
+            if items: print(f'MCP Registry stopped responding; keeping the {len(items)} connectors read so far',flush=True); break
+            raise SystemExit('The MCP Registry did not respond')
         for entry in data.get('servers',[]):
             s=entry.get('server',entry); meta=(entry.get('_meta') or {}).get('io.modelcontextprotocol.registry/official') or {}
             if meta.get('status') not in (None,'active') or meta.get('isLatest') is False: continue
