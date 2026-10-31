@@ -6,7 +6,7 @@ import httpx
 from contextvars import ContextVar
 from langgraph.graph import StateGraph, START, END
 from langgraph.types import interrupt, Command
-from .config import CONFIG, DATA, full_access
+from .config import CONFIG, DATA, full_access, find_runtime
 from .store import uid,now
 from .work import WorkLog,region_for,plan_steps
 from .orchestration import NoEligibleModel
@@ -127,7 +127,7 @@ class Engine:
         'Use discover_tools before browser or Windows tools. Windows USER_CONTROL means the user is using the computer; pause and explain. '
         'Use memory_search/history_read to recover details omitted by summaries. '
         'Use remember for durable facts requested by the user. Images may be supplied by the user or desktop tools. '
-        f"Workspace: {CONFIG['workspace']}. Python runtime: {CONFIG['python']}. Node runtime: {CONFIG['node']}. "
+        f"Workspace: {CONFIG['workspace']}. Python runtime: {find_runtime('python') or 'not installed on this PC'}. Node runtime: {find_runtime('node') or 'not installed on this PC'}. "
         'File tools are workspace-scoped; shell and Windows tools can access the PC under the active permission mode. '
         'You have persistent history and durable memory tools across sessions. Describe actual available tools and results instead of claiming generic lack of internet, execution, computer access or memory. Missing connectors and operating-system permissions still limit capabilities. '
         'Document packages: python-docx, reportlab, openpyxl, python-pptx, Pillow. '

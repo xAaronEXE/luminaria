@@ -1,6 +1,6 @@
 import asyncio, base64, json, os, re, subprocess
 from pathlib import Path
-from .config import CONFIG, DATA, workspace_path as _wp, full_access, external_tools_enabled
+from .config import CONFIG, DATA, workspace_path as _wp, full_access, external_tools_enabled, find_runtime, runtime_missing_message
 def workspace_path(path='.'): return _wp(path,roam=True)
 
 def schema(name,description,properties,required=(),tier='auto',group='workspace'):
@@ -167,7 +167,10 @@ class Toolbox:
             folder=workspace_path('.studio-scripts'); folder.mkdir(exist_ok=True)
             p=folder/(run['id']+'-'+str(__import__('time').time_ns())+('.py' if a['language']=='python' else '.js'))
             p.write_text(a['code'],encoding='utf-8')
-            return await self.process([CONFIG['python'] if a['language']=='python' else CONFIG['node'],str(p)],a.get('timeout',60))
+            kind='python' if a['language']=='python' else 'node'
+            exe=find_runtime(kind)
+            if not exe: return {'status':'error','category':'needs_setup','message':runtime_missing_message(kind)}
+            return await self.process([exe,str(p)],a.get('timeout',60))
         if name=='web_search':
             from .retrieval import search
             return await search(a['query'])

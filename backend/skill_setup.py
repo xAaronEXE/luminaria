@@ -1,6 +1,6 @@
 """Live prerequisite checklist; opening it never changes permissions or installs code."""
 from pathlib import Path
-from .config import CONFIG,APP_HOME,external_tools_enabled
+from .config import CONFIG,APP_HOME,external_tools_enabled,find_runtime
 from .skills import inventory,preflight
 
 def checklist(name,connectors):
@@ -38,7 +38,7 @@ def connector_config(name):
  runtime=home/'runtime'/'local-ai'/'agent-tools'
  if name=='browser':
   script=runtime/'node_modules'/'@playwright'/'mcp'/'cli.js'
-  node=Path(CONFIG.get('node',''))
+  node=Path(find_runtime('node') or '')
   if not script.is_file() or not node.is_file():raise ValueError('The bundled browser connector is missing. Open Integrations to configure an existing trusted MCP server; no software was installed.')
   from .config import DATA
   return {'command':str(node),'args':[str(script),'--browser','msedge','--user-data-dir',str(DATA/'browser-profile'),'--output-dir',str(DATA/'browser-output')],'cwd':CONFIG['workspace']}

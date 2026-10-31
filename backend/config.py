@@ -27,6 +27,42 @@ CONFIG.pop('release_repo',None)
 # Permission mode is read live, so choosing Hands-free applies to the next task without a restart.
 if CONFIG.get('access_mode') not in ('review','full'): CONFIG['access_mode']='review'
 
+def find_runtime(kind):
+    """Find Python or Node on this PC without asking the user. Returns a path string or None."""
+    import shutil
+    name={'python':'python','node':'node'}[kind]
+    configured=str(CONFIG.get(kind) or name)
+    def real(path):
+        low=str(path).lower().replace('/','\\')
+        return bool(path) and Path(path).is_file() and '\\windowsapps\\' not in low  # the Store shortcut is not a real install
+    if real(configured): return configured
+    found=shutil.which(configured) or shutil.which(name)
+    if found and real(found): return found
+    roots=[os.environ.get(k) for k in ('LOCALAPPDATA','ProgramFiles','ProgramFiles(x86)')]
+    candidates=[]
+    for root in filter(None,roots):
+        base=Path(root)
+        if kind=='python':
+            for folder in (base/'Programs'/'Python',base/'Python',base):
+                if folder.is_dir(): candidates+=sorted(folder.glob('Python3*/python.exe'),reverse=True)
+        else:
+            candidates+=[base/'nodejs'/'node.exe',base/'Programs'/'nodejs'/'node.exe']
+    if kind=='python':
+        launcher=shutil.which('py')
+        if launcher:
+            try:
+                import subprocess
+                out=subprocess.run([launcher,'-3','-c','import sys;print(sys.executable)'],capture_output=True,text=True,timeout=8).stdout.strip()
+                if out: candidates.insert(0,Path(out))
+            except Exception: pass
+    for c in candidates:
+        if real(c): return str(c)
+    return None
+
+def runtime_missing_message(kind):
+    if kind=='python': return 'Python is not installed on this PC, so Luminaria cannot run Python code yet. Install Python 3 from python.org (tick "Add python.exe to PATH"), then ask again. Nothing was changed.'
+    return 'Node.js is not installed on this PC, so Luminaria cannot run JavaScript yet. Install the LTS version from nodejs.org, then ask again. Nothing was changed.'
+
 def full_access():
     return CONFIG.get('access_mode','review')=='full'
 
