@@ -1,6 +1,7 @@
 import asyncio, base64, json, os, re, subprocess
 from pathlib import Path
-from .config import CONFIG, DATA, workspace_path, FULL_ACCESS, external_tools_enabled
+from .config import CONFIG, DATA, workspace_path as _wp, full_access, external_tools_enabled
+def workspace_path(path='.'): return _wp(path,roam=True)
 
 def schema(name,description,properties,required=(),tier='auto',group='workspace'):
     return {'name':name,'description':description,'parameters':{'type':'object','properties':properties,'required':list(required),'additionalProperties':False},'tier':tier,'group':group}
@@ -54,7 +55,7 @@ class Toolbox:
             if not external_tools_enabled(): continue
             for t in c.tools:
                 result.append({'name':group+'__'+t['name'],'description':t.get('description',''),'parameters':t['inputSchema'],'tier':mcp_tier(group,t['name']),'group':group})
-        if FULL_ACCESS:
+        if full_access():
             for t in result:
                 t['tier']='auto'
                 t['description']=t['description'].replace('Requires user approval.', 'Runs automatically in Full access mode.').replace('Always asks.', 'Runs automatically in Full access mode.').replace('Network request requires approval.', 'Network requests run automatically.').replace('Full PC access after approval;', 'Full PC access;').replace('Every side effect still needs its normal approval.', 'Actions run automatically in Full access mode.')

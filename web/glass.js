@@ -183,12 +183,13 @@
     } catch { chipLoaded = false; }
   }
   window.addEventListener('studio-state', loadPermission);
+  window.addEventListener('permission-changed', () => { chipLoaded = false; loadPermission(); });
 
   /* ---------- Choice cards in place of dropdowns ---------- */
   const CHOICES = {
     'access-mode': [
       ['review', 'Ask me first', 'Reads and searches run on their own. Changes, commands and network use wait for your OK.'],
-      ['full', 'Hands-free', 'Everything runs without asking, using your Windows permissions. Not a sandbox. Applies after restart.']
+      ['full', 'Hands-free', 'Everything runs without asking, using your Windows permissions. Not a sandbox. Applies to your next message.']
     ]
   };
   function cards(select, options) {
@@ -236,4 +237,19 @@
   }
   new MutationObserver(enhance).observe(body, { childList: true, subtree: true });
   enhance();
+})();
+
+/* Outside links open in the default browser */
+(() => {
+  const outside = (href) => { try { const u = new URL(href, location.href); return /^https?:$/.test(u.protocol) && u.origin !== location.origin ? u.href : ''; } catch { return ''; } };
+  const open = (href) => api('/open-external', 'POST', { url: href }).catch((error) => { if (typeof toast === 'function') toast(error.message, true); });
+  document.addEventListener('click', (event) => {
+    const link = event.target.closest && event.target.closest('a[href]');
+    const href = link && outside(link.getAttribute('href'));
+    if (!href) return;
+    event.preventDefault();
+    open(href);
+  }, true);
+  const nativeOpen = window.open;
+  window.open = function (href, ...rest) { const outer = href && outside(href); if (outer) { open(outer); return null; } return nativeOpen.call(window, href, ...rest); };
 })();

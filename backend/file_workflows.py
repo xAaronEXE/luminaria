@@ -1,7 +1,7 @@
 """Deterministic file-first observe/act/verify/recover workflows, with no shell or UI control."""
 import asyncio,hashlib,json,os,threading
 from pathlib import Path
-from .config import CONFIG,FULL_ACCESS
+from .config import CONFIG,full_access
 from .sources import document
 from .store import uid,now
 
@@ -142,7 +142,7 @@ class Workflows:
         step.update(state='Verified',observation=actual,verified_at=now());persist(self.store,plan);return True
     def start(self,id,all_steps=False):
         if self.busy():raise ValueError('A file workflow is already active.')
-        if all_steps and not FULL_ACCESS:raise ValueError('Review mode runs one approved step at a time. Full Access requires a settings change and restart.')
+        if all_steps and not full_access():raise ValueError('Review mode runs one approved step at a time. Switch to Hands-free in Settings › Permissions to run every step.')
         plan=self.recover(get(self.store,id))
         if plan['state'] in ('Completed','Needs review'):raise ValueError('Completed or uncertain workflows cannot be replayed. Inspect results or create a new plan.')
         if not any(s['state']=='Ready' for s in plan['steps']):raise ValueError('No ready steps remain. Review the results.')

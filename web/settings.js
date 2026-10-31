@@ -24,7 +24,7 @@
   try{
   if(section==='Cloud sync'){await renderCloudSync(body);return}
   if(['Profile','Sign-in & devices'].includes(section)){await renderAccounts(body);return}
-  if(section==='Integrations'){await closePanel();await openPanel('integrations');return}
+  if(section==='Integrations'){body.innerHTML='<h3 class="settings-page-title">Integrations</h3><p class="settings-intro">Connect outside services. Each one adds its own tools once you sign in to it.</p><div id="tools-body"></div>';await renderIntegrations(body.querySelector('#tools-body'));return}
   if(section==='Working folder'){await studioSettingsSection('Inference',body);await renderAccountProfiles(body);return}
   if(section==='Models'){
    library=await api('/model-library'); if(generation!==libraryGeneration)return; window.studioMachine=library.machine||null;

@@ -24,17 +24,23 @@ shared={k:v for k,v in device.items() if k in ('endpoint','tokenizer','model','c
 CONFIG=DEFAULT | shared | (json.loads(CONFIG_PATH.read_text('utf-8')) if CONFIG_PATH.exists() else {})
 CONFIG['version']=VERSION
 CONFIG.pop('release_repo',None)
-# Permission mode is latched at process startup. Saving it never changes a live run.
-FULL_ACCESS = CONFIG.get('access_mode', 'review') == 'full'
-CONFIG['access_mode'] = 'full' if FULL_ACCESS else 'review'
+# Permission mode is read live, so choosing Hands-free applies to the next task without a restart.
+if CONFIG.get('access_mode') not in ('review','full'): CONFIG['access_mode']='review'
+
+def full_access():
+    return CONFIG.get('access_mode','review')=='full'
+
+def whole_pc():
+    # Hands-free plus "whole PC": file tools may reach any drive, not only the working folder.
+    return full_access() and bool(CONFIG.get('whole_pc',False))
 
 def access_status():
-    active = 'full' if FULL_ACCESS else 'review'
-    return {'active': active, 'selected': CONFIG['access_mode'],
-            'restart_required': active != CONFIG['access_mode']}
+    mode='full' if full_access() else 'review'
+    return {'active':mode,'selected':mode,'restart_required':False,'whole_pc':whole_pc()}
 
 def external_tools_enabled():
-    return FULL_ACCESS or CONFIG.get('external_tools', False)
+    return full_access() or CONFIG.get('external_tools',False)
+
 # A missing drive, a file where the folder should be, or no permission must never stop the app from opening.
 # Fall back to the default folder for this session and say why; the saved choice is left for the user to change.
 WORKSPACE_PROBLEM=''
@@ -52,8 +58,10 @@ def save_config(changes):
     CONFIG.update(changes)
     CONFIG_PATH.write_text(json.dumps(CONFIG,indent=2),encoding='utf-8')
 
-def workspace_path(path='.'):
+def workspace_path(path='.',roam=False):
     root=Path(CONFIG['workspace']).resolve()
     target=(root/path).resolve()
-    if not target.is_relative_to(root): raise ValueError('Path is outside the selected workspace')
+    if not target.is_relative_to(root):
+        if roam and whole_pc(): return target
+        raise ValueError('Path is outside the selected workspace. Turn on "Whole PC" in Settings › Permissions to let the assistant use other folders and drives.')
     return target

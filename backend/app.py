@@ -393,7 +393,7 @@ async def browse_workspace():
 @app.post('/api/settings')
 async def settings_save(request:Request):
     if any(not r.get('finished') for r in engine.runs.values()): raise ValueError('Finish or stop active tasks before changing settings')
-    b=await request.json(); allowed={'workspace','endpoint','tokenizer','model','context','output_tokens','compact_ratio','python','node','llama_executable','model_file','projector_file','external_tools','ask_reads'}
+    b=await request.json(); allowed={'workspace','endpoint','tokenizer','model','context','output_tokens','compact_ratio','python','node','llama_executable','model_file','projector_file','external_tools','ask_reads','whole_pc'}
     allowed.update({'access_mode','orchestrator_model','compact_keep_turns','orchestration_pool','orchestration_enabled'})
     if 'orchestration_pool' in b:
         from .orchestration import normalize_pool
@@ -404,7 +404,7 @@ async def settings_save(request:Request):
         if not any(m['id']==b['orchestrator_model'] and Path(m['model_file']).is_file() for m in registry()):raise ValueError('Choose an installed orchestration model')
     if 'access_mode' in b and b['access_mode'] not in ('review','full'): raise ValueError('Choose review or full access')
     changes={k:v for k,v in b.items() if k in allowed}
-    for key in ('external_tools','ask_reads'):
+    for key in ('external_tools','ask_reads','whole_pc'):
         if key in changes and not isinstance(changes[key],bool): raise ValueError('Boolean setting required')
     for key in ['endpoint','tokenizer']:
         if key in changes and not re.match(r'^https?://',changes[key]): raise ValueError('HTTP(S) endpoint required')
@@ -554,6 +554,17 @@ async def clear_chat_plan(id:str):
 
 @app.post('/api/chats/{id}/resume')
 async def resume_chat(id:str): return {'run_id':engine.resume(id)}
+
+@app.post('/api/open-external')
+async def open_external(request:Request):
+    # Every outside web page opens in the user's default browser, never inside Luminaria's own window.
+    from urllib.parse import urlsplit
+    import webbrowser
+    url=str((await request.json()).get('url',''))
+    parts=urlsplit(url)
+    if parts.scheme not in ('http','https') or not parts.hostname: raise ValueError('Only web addresses can be opened')
+    if parts.hostname in ('127.0.0.1','localhost','::1'): raise ValueError('That address belongs to Luminaria itself')
+    return {'opened':bool(await asyncio.to_thread(webbrowser.open,url,new=2,autoraise=True))}
 
 @app.post('/api/permissions/reset')
 async def reset_permissions(): store.execute("DELETE FROM settings WHERE key LIKE 'permission:%'");return {'ok':True}
@@ -1068,9 +1079,9 @@ def workflow_service():
 
 @app.get('/api/file-workflows')
 async def workflow_list():
-    from .config import FULL_ACCESS
+    from .config import full_access
     service=workflow_service()
-    return {'workflows':service.list(),'active':service.active,'full_access':FULL_ACCESS}
+    return {'workflows':service.list(),'active':service.active,'full_access':full_access()}
 
 @app.post('/api/file-workflows')
 async def workflow_create(request:Request):

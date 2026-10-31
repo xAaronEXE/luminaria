@@ -13,7 +13,7 @@ class FileWorkflowTests(unittest.IsolatedAsyncioTestCase):
  async def test_read_create_edit_trash_and_recovery_are_verified(self):
   directory=self.workspace/'reports';directory.mkdir();(directory/'source.txt').write_bytes(b'original\r\ntext')
   plan=self.plan([{'action':'read','path':'reports/source.txt'},{'action':'create','path':'reports/result.txt','content':'draft'},{'action':'edit','path':'reports/result.txt','old_text':'draft','new_text':'final'},{'action':'trash','path':'reports/source.txt'}])
-  with patch.object(files,'FULL_ACCESS',True):self.service.start(plan['id'],True)
+  with patch.object(files,'full_access',lambda:True):self.service.start(plan['id'],True)
   await self.service.task;result=files.get(self.store,plan['id'])
   self.assertEqual(result['state'],'Awaiting review');self.assertTrue(all(s['state']=='Verified' for s in result['steps']))
   self.assertEqual((directory/'result.txt').read_text(),'final');self.assertFalse((directory/'source.txt').exists())
@@ -39,7 +39,7 @@ class FileWorkflowTests(unittest.IsolatedAsyncioTestCase):
   self.assertEqual(files.get(self.store,plan['id'])['steps'][0]['state'],'Uncertain')
  async def test_stop_prevents_next_effect_and_review_cannot_run_all(self):
   plan=self.plan([{'action':'create','path':'reports/a.txt','content':'a'},{'action':'create','path':'reports/b.txt','content':'b'}])
-  with patch.object(files,'FULL_ACCESS',False),self.assertRaises(ValueError):self.service.start(plan['id'],True)
+  with patch.object(files,'full_access',lambda:False),self.assertRaises(ValueError):self.service.start(plan['id'],True)
   self.service.start(plan['id']);self.service.stop();await self.service.task
   self.assertFalse((self.workspace/'reports/b.txt').exists())
   self.assertEqual(files.get(self.store,plan['id'])['state'],'Stopped')

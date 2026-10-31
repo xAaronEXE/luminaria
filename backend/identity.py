@@ -75,8 +75,7 @@ async def open_sign_in_page(url):
     import webbrowser
     if not isinstance(url,str) or not re.fullmatch(re.escape(ORIGIN)+r'/authorize\?device=[a-f0-9]{64}',url):
         raise ValueError('Invalid sign-in browser address')
-    from .auth_browser import desktop_browser
-    if await asyncio.to_thread(desktop_browser,url):return True
+    # Always the user's own default browser, so their existing Google/GitHub/Discord sessions and password manager work.
     try:return bool(await asyncio.to_thread(webbrowser.open,url,new=2,autoraise=True))
     except (OSError,webbrowser.Error):return False
 

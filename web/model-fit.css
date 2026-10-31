@@ -1,10 +1,11 @@
 /* Model library: per-PC fit ratings, tuning panel, and the "Unbound" look for abliterated models. */
 :root{
-  --fit-recommended:color-mix(in oklab,var(--aurora-2,#18C8E8) 70%,var(--success));
-  --fit-good:var(--success);
-  --fit-slow:color-mix(in oklab,var(--warning) 55%,var(--muted));
-  --fit-unstable:var(--warning);
-  --fit-too_large:var(--danger);
+  /* Easiest to run is green; heavier runs shift through lime, amber and orange to red. */
+  --fit-recommended:#2FD07A;
+  --fit-good:#8FD14F;
+  --fit-slow:#F2C230;
+  --fit-unstable:#F58A2E;
+  --fit-too_large:#EF4B4B;
   --fit-unknown:var(--muted);
   --unbound-1:#FF3D6E;
   --unbound-2:#9B5CFF;
@@ -23,15 +24,12 @@
 .fit-unstable{--fit-c:var(--fit-unstable)}
 .fit-too_large{--fit-c:var(--fit-too_large)}
 .fit-unknown{--fit-c:var(--fit-unknown)}
-.fit-badge.fit-recommended{color:var(--text);border-color:transparent;
-  background:linear-gradient(var(--panel),var(--panel)) padding-box,linear-gradient(120deg,var(--aurora-1,#7C5CFF),var(--aurora-2,#18C8E8)) border-box;border:1px solid transparent}
-.fit-badge.fit-recommended svg{color:var(--aurora-2,#18C8E8)}
 .model-option.rated-too_large{opacity:.62}
 .model-option.rated-too_large:hover,.model-option.rated-too_large.selected{opacity:1}
 
 .fit-dot{display:inline-block;width:9px;height:9px;border-radius:50%;background:var(--fit-c);box-shadow:0 0 0 3px color-mix(in srgb,var(--fit-c) 22%,transparent);margin-left:8px;vertical-align:middle}
 .best-fit{display:inline-flex;align-items:center;margin-left:8px;padding:1px 7px;border-radius:999px;font-size:10.5px;font-weight:700;color:#06070C;
-  background:linear-gradient(120deg,var(--aurora-1,#7C5CFF),var(--aurora-2,#18C8E8))}
+  background:var(--fit-recommended)}
 
 /* ---------- This PC strip ---------- */
 .fit-machine:empty{display:none}
