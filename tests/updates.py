@@ -50,6 +50,7 @@ class UpdateTests(unittest.IsolatedAsyncioTestCase):
   with patch.object(updates.httpx,'AsyncClient',lambda *a,**k:original(transport=httpx.MockTransport(fail))):
    result=await updates.check()
   self.assertFalse(result['reachable']);self.assertIn('Could not reach',result['message'])
+ @unittest.skipUnless(__import__('os').name=='nt','Windows update handoff')
  def test_packaged_handoff_waits_for_owned_processes_before_setup(self):
   import sys
   from backend import update_handoff,runtime
@@ -65,6 +66,7 @@ class UpdateTests(unittest.IsolatedAsyncioTestCase):
     script=(Path(folder)/'update-handoff.ps1').read_text('utf-8-sig')
     self.assertLess(script.index('WaitForExit(30000)'),script.index('Start-Process -FilePath $Installer'))
     self.assertIn('Process identity changed',script);self.assertIn('Installer checksum changed',script)
+ @unittest.skipUnless(__import__('os').name=='nt','Windows update handoff')
  def test_unowned_model_server_is_not_targeted(self):
   import sys
   from backend import update_handoff,runtime

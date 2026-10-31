@@ -6,16 +6,15 @@ class ProfileAndPermissionsTests(unittest.TestCase):
   env={**os.environ,'STUDIO_DATA':str(folder)}
   p=subprocess.run([sys.executable,'-c',code],env=env,capture_output=True,text=True,check=True)
   return json.loads(p.stdout)
- def test_permission_change_is_latched_until_restart(self):
+ def test_permission_change_applies_immediately(self):
+  # Access mode is read live: switching takes effect on the next message, with no restart.
   with tempfile.TemporaryDirectory() as tmp:
    a=self.run_config(tmp,"import json;from backend.config import save_config,access_status;save_config({'access_mode':'full'});print(json.dumps(access_status()))")
-   self.assertEqual(a,{'active':'review','selected':'full','restart_required':True})
-   b=self.run_config(tmp,"import json;from backend.config import access_status;print(json.dumps(access_status()))")
-   self.assertEqual(b,{'active':'full','selected':'full','restart_required':False})
-   c=self.run_config(tmp,"import json;from backend.config import save_config,access_status;save_config({'access_mode':'review'});print(json.dumps(access_status()))")
-   self.assertEqual(c['active'],'full');self.assertTrue(c['restart_required'])
-   d=self.run_config(tmp,"import json;from backend.config import access_status;print(json.dumps(access_status()))")
-   self.assertEqual(d['active'],'review')
+   self.assertEqual(a,{'active':'full','selected':'full','restart_required':False,'whole_pc':False})
+   b=self.run_config(tmp,"import json;from backend.config import save_config,access_status;save_config({'access_mode':'review'});print(json.dumps(access_status()))")
+   self.assertEqual(b,{'active':'review','selected':'review','restart_required':False,'whole_pc':False})
+   c=self.run_config(tmp,"import json;from backend.config import access_status;print(json.dumps(access_status()))")
+   self.assertEqual(c['active'],'review')
  def test_profiles_resolve_separate_history_memory_and_files(self):
   with tempfile.TemporaryDirectory() as tmp:
    root=Path(tmp);profiles=[{'id':'a'*32,'name':'One'},{'id':'b'*32,'name':'Two'}];results=[]

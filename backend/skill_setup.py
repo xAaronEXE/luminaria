@@ -32,7 +32,10 @@ def checklist(name,connectors):
 def connector_config(name):
  if name not in ('browser','windows'):raise ValueError('Unsupported skill connector')
  existing=CONFIG.get('mcp',{}).get(name)
- if existing and Path(str(existing.get('command',''))).is_file():return existing
+ # Keep a connector the user set up, unless it points at a program file that no longer exists
+ # (for example the old tools folder from a previous version). Bare names like npx are found on PATH.
+ command=str((existing or {}).get('command',''))
+ if existing and command and (not any(sep in command for sep in '/\\') or Path(command).is_file()):return existing
  # Use only the runtimes that ship with Luminaria; never run an installer or package manager.
  tools=agent_tools_dir()
  from .config import DATA

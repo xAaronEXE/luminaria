@@ -2,6 +2,7 @@ import os,sys,unittest
 from types import SimpleNamespace
 from unittest.mock import patch
 from backend import auth_browser
+@unittest.skipUnless(os.name=='nt','Windows browser placement')
 class BrowserPlacementTests(unittest.TestCase):
  def test_external_window_uses_owner_monitor_including_negative_coordinates(self):
   owner=SimpleNamespace(x=-1600,y=100,width=1400,height=900)

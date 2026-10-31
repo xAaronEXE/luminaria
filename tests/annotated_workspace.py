@@ -87,7 +87,9 @@ class RoutingTests(unittest.IsolatedAsyncioTestCase):
    async with httpx.AsyncClient(transport=httpx.MockTransport(lambda r:httpx.Response(200,json={'choices':[{'message':{'content':'{"model_id":"download-something","needs":["coding"],"complexity":"high"}'}}]}))) as client:
     result=await choose(client,'http://local/v1','small',registry,'task','code')
     self.assertIn(result['model_id'],{'small','code'})
-   with self.assertRaises(ValueError):await choose(None,'http://local/v1','missing',registry,'task','code')
+   # A missing routing model is not an error: the choice falls back to keywords, still among installed models.
+   result=await choose(None,'http://local/v1','missing',registry,'task','code')
+   self.assertIn(result['model_id'],{'small','code'})
  async def test_truncated_compaction_is_retried_without_accepting_partial_result(self):
   calls=[]
   async def count(messages):return 200,'fixture'
