@@ -23,6 +23,11 @@ if(!(Test-Path "$PSScriptRoot/runtime/local-ai/runtime-vulkan/llama-server.exe")
 # Built-in Python, Node.js, browser/Windows connectors and the WebView2 installer, so the app works on any Windows 10/11 PC.
 if(!(Test-Path "$PSScriptRoot/runtime/agent-tools/python/python.exe") -or !(Test-Path "$PSScriptRoot/runtime/agent-tools/node/node.exe") -or !(Test-Path "$PSScriptRoot/runtime/prereqs/MicrosoftEdgeWebview2Setup.exe")){& "$PSScriptRoot/scripts/fetch-agent-tools.ps1"}
 # Built-in catalog of skills (openly licensed GitHub repositories) and connectors (official MCP Registry), refreshed each build.
+# The skill catalog reads GitHub with the same signed-in gh account that publishes releases.
+if(!$env:GITHUB_TOKEN -and (Get-Command gh -ErrorAction SilentlyContinue)){
+  $ghToken=(& gh auth token 2>$null | Out-String).Trim()
+  if($ghToken){$env:GITHUB_TOKEN=$ghToken}else{Write-Host 'gh is installed but not signed in:'; & gh auth status 2>&1 | Write-Host}
+}
 foreach($kind in 'skills','connectors'){
   & $python "$PSScriptRoot/scripts/build-catalog.py" $kind
   if($LASTEXITCODE){if(Test-Path "$PSScriptRoot/catalog/$kind.json.gz"){Write-Host "Could not refresh the $kind catalog; keeping the previous one."}else{throw "Could not build the $kind catalog"}}

@@ -21,8 +21,14 @@ TEXT=re.compile(r'\.(md|txt|py|js|mjs|cjs|ts|json|yaml|yml|toml|sh|ps1|html|css|
 def _token():
     token=os.environ.get('GITHUB_TOKEN') or os.environ.get('GH_TOKEN')
     if not token:
-        try: token=subprocess.run(['gh','auth','token'],capture_output=True,text=True,timeout=20).stdout.strip()
-        except (OSError,subprocess.SubprocessError): token=''
+        import shutil
+        gh=shutil.which('gh') or next((p for p in (r'C:\Program Files\GitHub CLI\gh.exe',os.path.expandvars(r'%LOCALAPPDATA%\Programs\GitHub CLI\gh.exe')) if os.path.isfile(p)),None)
+        if not gh: print('GitHub CLI (gh) was not found',flush=True); return ''
+        try:
+            p=subprocess.run([gh,'auth','token'],capture_output=True,text=True,timeout=20)
+            token=p.stdout.strip()
+            if not token: print('gh auth token gave no token: '+(p.stderr or '').strip()[:300],flush=True)
+        except (OSError,subprocess.SubprocessError) as e: print(f'gh auth token failed: {e}',flush=True); token=''
     return token
 TOKEN=None
 
