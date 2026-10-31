@@ -30,6 +30,42 @@ PLAN_FINALIZE=('Investigation budget for this plan is used up. Do not call more 
 PLAN_ROUND_LIMIT=4
 NUDGE_TEXT=('[Automatic reminder, not from the user] You described an action but called no tool, so nothing happened. '
  'Call the tool that does it now. If something truly blocks you, say exactly what and stop. Do not repeat your earlier reply.')
+def _json_objects(text):
+    """Yield (start,end,obj) for each top-level JSON object in text."""
+    dec=json.JSONDecoder(); i=0
+    while True:
+        i=text.find('{',i)
+        if i<0: return
+        try: obj,end=dec.raw_decode(text,i)
+        except ValueError: i+=1; continue
+        yield i,end,obj; i=end
+
+def text_tool_calls(text,names):
+    """Some local models write a tool call as text instead of making it. Turn those into real calls.
+    Accepts {"name":..,"arguments":{..}} on its own, inside a ```json block, or inside <tool_call> tags.
+    Only names of tools offered this turn are accepted. Returns (calls, remaining_text)."""
+    calls=[]; spans=[]
+    for start,end,obj in _json_objects(text):
+        items=obj if isinstance(obj,list) else [obj]
+        for o in items:
+            if not isinstance(o,dict): continue
+            fn=o.get('function') if isinstance(o.get('function'),dict) else o
+            name=fn.get('name') or o.get('tool')
+            args=fn.get('arguments',fn.get('parameters',o.get('args',{})))
+            if name not in names: continue
+            if isinstance(args,str):
+                try: args=json.loads(args or '{}')
+                except ValueError: continue
+            if not isinstance(args,dict): continue
+            calls.append({'id':'call_'+uid(),'type':'function','function':{'name':name,'arguments':json.dumps(args,ensure_ascii=False)}})
+            spans.append((start,end))
+    if not calls: return [],text
+    rest=text
+    for start,end in reversed(spans): rest=rest[:start]+rest[end:]
+    rest=re.sub(r'</?tool_call>','',rest)
+    rest=re.sub(r'```[a-zA-Z]*\s*```','',rest).strip()
+    return calls,rest
+
 def with_nudge(messages,run):
     return messages+[{'role':'user','content':NUDGE_TEXT}] if run.get('nudge_pending') else messages
 
@@ -127,7 +163,7 @@ class Engine:
         'Use discover_tools before browser or Windows tools. Windows USER_CONTROL means the user is using the computer; pause and explain. '
         'Use memory_search/history_read to recover details omitted by summaries. '
         'Use remember for durable facts requested by the user. Images may be supplied by the user or desktop tools. '
-        f"Workspace: {CONFIG['workspace']}. Python runtime: {find_runtime('python') or 'not installed on this PC'}. Node runtime: {find_runtime('node') or 'not installed on this PC'}. "
+        f"Working folder: {CONFIG['workspace']}. When the user asks about your files, folder or environment, start with the working folder (path '.'). Call tools through the tool interface, never by writing tool JSON in your reply.  Python runtime: {find_runtime('python') or 'not installed on this PC'}. Node runtime: {find_runtime('node') or 'not installed on this PC'}. "
         'File tools are workspace-scoped; shell and Windows tools can access the PC under the active permission mode. '
         'You have persistent history and durable memory tools across sessions. Describe actual available tools and results instead of claiming generic lack of internet, execution, computer access or memory. Missing connectors and operating-system permissions still limit capabilities. '
         'Document packages in the bundled Python: python-docx, python-pptx, openpyxl, xlsxwriter, reportlab, pypdf, PyMuPDF, matplotlib, pandas, Pillow. '
@@ -267,6 +303,9 @@ class Engine:
                         if c.get('id'): dest['id']=c['id']
                         f=c.get('function',{}); dest['function']['name']+=f.get('name',''); dest['function']['arguments']+=f.get('arguments','')
         for c in calls.values(): c['id']=c['id'] or 'call_'+uid()
+        if not calls and tools and text and '{' in text:
+            found,rest=text_tool_calls(text,{d['function']['name'] for d in tools})
+            if found: calls={i:c for i,c in enumerate(found)}; text=rest
         if run:
             elapsed=time.monotonic()-started
             run['metrics']={'elapsed':round(elapsed,1),'completion_tokens':usage.get('completion_tokens'), 'prompt_tokens':usage.get('prompt_tokens'),'tokens_per_second':round(usage['completion_tokens']/max(elapsed,0.01),1) if usage.get('completion_tokens') else None,'first_token_seconds':round(first-started,2) if first else None}
