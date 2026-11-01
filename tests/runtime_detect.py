@@ -13,10 +13,14 @@ class RuntimeDetect(unittest.TestCase):
     def test_missing_node_returns_none_not_a_crash(self):
         old=config.CONFIG.get('node'); config.CONFIG['node']='definitely-not-installed-node'
         try:
-            import shutil; real=shutil.which
-            shutil.which=lambda n:None
-            try: self.assertIsNone(config.find_runtime('node'))
-            finally: shutil.which=real
+            import shutil; real=shutil.which; bundled=config.bundled_runtime
+            shutil.which=lambda n:None; config.bundled_runtime=lambda kind:None
+            empty=tempfile.mkdtemp()
+            from unittest.mock import patch
+            try:
+                with patch.dict(os.environ,{'LOCALAPPDATA':empty,'ProgramFiles':empty,'ProgramFiles(x86)':empty}):
+                    self.assertIsNone(config.find_runtime('node'))
+            finally: shutil.which=real; config.bundled_runtime=bundled
         finally: config.CONFIG['node']=old
     def test_messages_are_plain_and_name_the_fix(self):
         self.assertIn('Reinstall',config.runtime_missing_message('python'))

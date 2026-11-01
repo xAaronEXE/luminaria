@@ -1,7 +1,9 @@
 import json,os,tempfile,unittest
 
-FOLDER=tempfile.TemporaryDirectory()
+FOLDER=tempfile.TemporaryDirectory(ignore_cleanup_errors=True)
 os.environ['STUDIO_DATA']=FOLDER.name
+# A fresh install requires sign-in; these route tests start from an open local profile.
+(__import__('pathlib').Path(FOLDER.name)/'profiles.json').write_text(__import__('json').dumps({'selected':'local','profiles':[{'id':'local','name':'Personal','provider':'local'}]}))
 os.environ.setdefault('STUDIO_PORT','3210')
 
 from fastapi.testclient import TestClient

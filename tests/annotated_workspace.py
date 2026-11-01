@@ -96,7 +96,7 @@ class RoutingTests(unittest.IsolatedAsyncioTestCase):
   async def complete(messages,max_tokens):
    calls.append(messages)
    if len(calls)==1:return {'content':'Incomplete summary with enough characters to pass length validation.','finish_reason':'length'}
-   return {'content':'Goal: finish project. Constraints: no sending. Open work: verify results.'}
+   return {'content':'Goal: finish project.\nConstraints: no sending.\nOpen work: verify results.'}
   result=await summarize([{'message_id':12,'content':'Important instructions'}],'',4096,count,complete)
   self.assertEqual(len(calls),2);self.assertIn('Source messages: 12 through 12',result)
 
