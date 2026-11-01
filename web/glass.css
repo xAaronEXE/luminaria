@@ -276,3 +276,26 @@ body.effects-low .library-menu{background:var(--panel);backdrop-filter:none;-web
 @media (hover:none){.chat-row .chat-options{opacity:1}}
 .chat-item span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0}
 @media (max-width:1400px){#task-overview>span:not([data-icon]):not(.icon){position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0)}#task-overview{padding-left:9px;padding-right:9px}}
+
+/* Tool steps: one quiet, collapsible line per group; details one click deeper. */
+.steps{margin:6px 0 10px;max-width:640px}
+.steps>summary{display:flex;align-items:center;gap:8px;cursor:pointer;list-style:none;color:var(--muted);font-size:13.5px;padding:4px 0;width:fit-content}
+.steps>summary::-webkit-details-marker,.step>summary::-webkit-details-marker{display:none}
+.steps>summary::after{content:"";width:0;height:0;border-left:4px solid transparent;border-right:4px solid transparent;border-top:5px solid currentColor;transition:transform .15s}
+.steps[open]>summary::after{transform:rotate(180deg)}
+.steps>summary:hover{color:var(--text)}
+.steps-note{font-size:12px}
+.steps-note.waiting,.step-note.waiting,.step-note.requested{color:var(--warning)}
+.steps-note.failed,.step-note.failed,.step-note.error,.step-note.denied{color:var(--danger)}
+.steps-note.running,.step-note.running{color:var(--muted)}
+.steps-list{margin-top:6px;border:1px solid var(--glass-line);border-radius:10px;overflow:hidden;background:var(--glass)}
+.step+.step{border-top:1px solid var(--glass-line)}
+.step>summary{display:flex;justify-content:space-between;gap:12px;align-items:center;cursor:pointer;list-style:none;padding:9px 12px;font-size:13px;color:var(--text)}
+.step>summary>span:first-child{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.step>summary::after{content:"";flex:none;margin-left:auto;width:0;height:0;border-top:4px solid transparent;border-bottom:4px solid transparent;border-left:5px solid var(--muted);transition:transform .15s}
+.step[open]>summary::after{transform:rotate(90deg)}
+.step-note{font-size:12px;flex:none}
+.step-detail{padding:0 12px 10px}
+.step-tool{font:12px var(--mono);color:var(--muted);margin-bottom:4px}
+.step-detail pre{max-height:240px;overflow:auto;margin:4px 0;font-size:12px;white-space:pre-wrap;word-break:break-word}
+@media (prefers-reduced-motion:reduce){.steps>summary::after,.step>summary::after{transition:none}}

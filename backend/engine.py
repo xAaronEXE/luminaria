@@ -409,11 +409,21 @@ class Engine:
         self.measure('generation',run,message_id,self.model_id(),run.get('metrics',{}),raw.get('usage') or {},raw.get('timings'),run.get('reasoning'))
         self.store.save_run(run); self.emit('changed',chat=chat)
         run.pop('nudge_pending',None)
-        run['announced']=bool(not msg.get('tool_calls') and defs and self.INTENT.search(str(msg.get('content') or '')[-600:]))
+        run['announced']=bool(not msg.get('tool_calls') and defs and self.announces(msg.get('content')))
         self.work(run,'generation.completed',turn,node=node,status='done',region='generation',tool_calls=len(msg.get('tool_calls',[])),evidence={'message':message_id},metrics={k:run.get('metrics',{}).get(k) for k in ('completion_tokens','tokens_per_second','elapsed')})
         return {'run':run,'calls':msg.get('tool_calls',[]),'steps':state['steps']+1}
 
-    INTENT=re.compile(r"\b(i(?:'ll| will|'m going to| am going to| can)|let me|next,? i|i(?:'ll| will) now|going to (?:run|create|write|open|search|install|download|check))\b",re.I)
+    # A promise to act right now: "I'll create…", "Let me check…", "Next, I will run…". Offers ("I can…",
+    # "if you want, I'll…"), "let me know" and replies that end with a question are not promises.
+    INTENT=re.compile(r"(?:\bi(?:'ll| will|'m going to| am going to)(?: now)?|\blet me|\bnext,? i(?:'ll| will)|\bnow i(?:'ll| will))\s+(?:go ahead and\s+)?"
+                      r"(?:create|write|run|open|search|install|download|check|read|list|look|fetch|make|build|edit|save|delete|move|copy|update|generate|start|execute|scan|find|add|apply|draft)\b",re.I)
+    OFFER=re.compile(r"\b(?:if you(?:'d| would)? (?:like|want)|would you like|do you want|shall i|should i|let me know|feel free)\b",re.I)
+    @classmethod
+    def announces(cls,text):
+        text=re.sub(r"```.*?```","",str(text or ''),flags=re.S).strip()
+        if not text or text.rstrip().endswith('?'): return False
+        tail=' '.join(re.split(r'(?<=[.!])\s+',text)[-2:])
+        return any(cls.INTENT.search(s) and not cls.OFFER.search(s) for s in re.split(r'(?<=[.!])\s+',tail))
     def should_nudge(self,run):
         # A hands-free run that announces an action but calls no tool would otherwise just end and repeat itself next turn.
         return bool(full_access() and run.get('announced') and run.get('nudges',0)<2 and not run.get('denied') and not run.get('plan_only'))

@@ -23,15 +23,27 @@ function render(){
  const scroller=$('#messages-scroll'),bottom=scroller.scrollHeight-scroller.scrollTop-scroller.clientHeight<130;
  const messages=state.messages||[];$('#welcome').hidden=!!messages.length;$('#messages').innerHTML='';
  const summaries=new Map((state.summaries||[]).map(s=>[s.through_id,s]));
+ // One Luminaria message per reply: its tool steps (grouped, plain English) and its text share one heading.
+ let turn=null,group=null;
  for(const m of messages){
   if(m.role==='tool')continue;
-  const el=document.createElement('article');el.className='message '+m.role+(m.checkpoint?' checkpoint':'');
   let text=typeof m.content==='string'?m.content:(m.content||[]).filter(p=>p.type==='text').map(p=>p.text).join('\n');
-  el.innerHTML=`<div class="message-heading">${m.role==='assistant'?'<img src="/brand/luminaria.png" alt="" width="20" height="20">':''}<strong>${m.role==='user'?'You':'Luminaria'}</strong><span>${new Date(m.created*1000).toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'})}</span></div>${m.reasoning?`<details><summary>Reasoning</summary><pre>${esc(m.reasoning)}</pre></details>`:''}<div class="markdown">${markdown(text)}</div>`;
-  for(const c of m.tool_calls||[]){const action=(state.actions||[]).find(a=>a.call_id===c.id)||(state.actions||[]).find(a=>a.name===c.function.name&&JSON.stringify(a.args)===JSON.stringify(parseArgs(c.function.arguments)));const d=document.createElement('details');d.className='tool-inline';d.innerHTML=`<summary>${icon('tools')}<span>${esc(c.function.name.replace('__',' · '))}</span><span class="tool-state ${esc(action?.status||'')}">${esc(action?.status||'requested')}</span></summary><pre>${esc(JSON.stringify(action?.args||parseArgs(c.function.arguments),null,2))}</pre>${action?.result?`<pre>${esc(action.result.text||JSON.stringify(action.result))}</pre>`:''}`;el.append(d)}
+  let el;
+  if(m.role==='assistant'&&turn&&!m.checkpoint){el=turn}
+  else{
+   el=document.createElement('article');el.className='message '+m.role+(m.checkpoint?' checkpoint':'');
+   el.innerHTML=`<div class="message-heading">${m.role==='assistant'?'<img src="/brand/luminaria.png" alt="" width="20" height="20">':''}<strong>${m.role==='user'?'You':'Luminaria'}</strong><span>${new Date(m.created*1000).toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'})}</span></div>`;
+   $('#messages').append(el);turn=m.role==='assistant'?el:null;group=null;
+  }
+  if(m.reasoning){const r=document.createElement('details');r.innerHTML=`<summary>Reasoning</summary><pre>${esc(m.reasoning)}</pre>`;el.append(r)}
+  if(text.trim()){const body=document.createElement('div');body.className='markdown';body.innerHTML=markdown(text);el.append(body);group=null;decorateMarkdown(body)}
+  for(const c of m.tool_calls||[]){
+   const action=(state.actions||[]).find(a=>a.call_id===c.id)||(state.actions||[]).find(a=>a.name===c.function.name&&JSON.stringify(a.args)===JSON.stringify(parseArgs(c.function.arguments)));
+   if(!group){group=stepGroup();el.append(group.el)}
+   group.add(c,action);
+  }
   if(Array.isArray(m.content))for(const p of m.content.filter(p=>p.type==='image_ref')){const img=document.createElement('img');img.className='chat-image';img.alt='Attached image';el.append(img);loadImage(p.id,img)}
-  $('#messages').append(el);decorateMarkdown(el);
-  if(summaries.has(m.id)){const marker=document.createElement('div');marker.className='compaction-marker';marker.innerHTML=icon('compress')+'<span>Context compacted · original history preserved</span>';$('#messages').append(marker)}
+  if(summaries.has(m.id)){const marker=document.createElement('div');marker.className='compaction-marker';marker.innerHTML=icon('compress')+'<span>Context compacted · original history preserved</span>';$('#messages').append(marker);turn=null;group=null}
  }
  const run=state.run;$('#live-message').hidden=!active();$('#live-phase').textContent=run?.phase||'';$('#working-label').textContent=run?.phase||'';$('#live-content').innerHTML=markdown(run?.live||'');$('#live-reasoning').hidden=!run?.reasoning_text;$('#live-reasoning pre').textContent=run?.reasoning_text||'';
  $('#send').hidden=false;$('#send').title=active()?'Queue message':'Send message';$('#stop').hidden=!active();$('#prompt').disabled=false;$('#attach-button').disabled=active();$('#reasoning').disabled=active();$('#plan-only').disabled=active();
