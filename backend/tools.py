@@ -23,14 +23,19 @@ BUILTINS=[
  schema('run_code','Execute a Python or JavaScript script in the workspace. Saved as a file; no hidden REPL state.',{'language':{'type':'string','enum':['python','javascript']},'code':S,'timeout':I},['language','code'],'always','execution'),
  schema('web_search','Search the public web. Returns status, titles, snippets and source URLs. An empty result means no matches for these words, not that the information does not exist.',{'query':S},['query'],'auto','research'),
  schema('web_fetch','Fetch a public HTTP(S) page or PDF. Network request requires approval. browser_fallback explicitly authorizes navigation and snapshot in the connected browser if JavaScript or sign-in is needed; never completes login dialogs or bypasses blocks. Public cache is bypassed for sensitive responses.',{'url':S,'refresh':{'type':'boolean'},'browser_fallback':{'type':'boolean'}},['url'],'approve','research'),
- schema('discover_tools','Load MCP tool schemas for browser or windows. Call before using those tools. Use category all to list every connected tool.',{'category':{'type':'string','enum':['browser','windows','all']}},['category'],'auto','system'),
- schema('memory_search','Search durable cross-chat memory and full saved conversation text by literal query.',{'query':S},['query'],'auto','memory'),
+ schema('discover_tools','Load more tools. more: delete files, schedules, the working brief, conversation history, file workflows. browser or windows: those connectors. all: every connected app.',{'category':{'type':'string','enum':['more','browser','windows','all']}},['category'],'auto','system'),
+ schema('inspect_file','Check that a file you made is real and valid: Word, Excel, PowerPoint, PDF, HTML, JSON, CSV, Markdown, code or image. Returns its type, size, a short preview and any problem found.',{'path':S},['path']),
+ schema('memory_search','Search the user\'s memory (MEMORY.md) and earlier conversations by literal text.',{'query':S},['query'],'auto','memory'),
  schema('history_read','Retrieve bounded verbatim saved message or tool-output JSON by ID, offset and limit in characters. Small results include parsed original data; large results return excerpts with stable references. Original history remains on disk.',{'message_id':I,'action_id':S,'offset':I,'limit':I},[],'auto','memory'),
- schema('remember','Save an explicit durable fact, preference or project decision with provenance. Requires approval.',{'title':S,'content':S},['title','content'],'approve','memory'),
+ schema('remember','Add a lasting fact or preference to the user\'s memory (MEMORY.md, under Notes). title is a short label. Requires approval.',{'title':S,'content':S},['title','content'],'approve','memory'),
  schema('update_plan','Share or revise your plan for a multi-step task. The user sees it as your stated plan, separate from executed actions, and it is saved with the chat. Send the full plan each time. Mark one step active while you work on it; list depends_on only for real dependencies.',{'goal':{'type':'string','description':'One sentence: what the finished work achieves.'},'steps':{'type':'array','minItems':1,'maxItems':24,'items':{'type':'object','properties':{'id':S,'title':S,'detail':{'type':'string','description':'What will be done and how it will be checked.'},'status':{'type':'string','enum':['pending','active','done','blocked','skipped']},'depends_on':{'type':'array','items':S}},'required':['id','title','status'],'additionalProperties':False}}},['steps'],'auto','planning'),
  schema('update_brief','Propose changes to the pinned working brief for this chat when the user states a goal, constraint, decision, pending item or reference to keep. The user sees and can edit it. You cannot add permissions or change entries the user wrote. Never copy passwords, keys or tokens; record where they are kept instead.',{'changes':{'type':'array','minItems':1,'maxItems':8,'items':{'type':'object','properties':{'op':{'type':'string','enum':['add','replace','remove']},'id':{'type':'string','description':'Entry id for replace or remove.'},'section':{'type':'string','enum':['goals','constraints','decisions','pending','references']},'text':{'type':'string','description':'One short sentence, under 300 characters.'}},'required':['op'],'additionalProperties':False}}},['changes'],'auto','planning'),
  schema('create_schedule','Schedule a recurring prompt while Studio is running. Every side effect still needs its normal approval. Minimum interval 5 minutes.',{'title':S,'prompt':S,'interval_minutes':I},['title','prompt','interval_minutes'],'approve','automation'),
 ]
+
+# Shown only after discover_tools(more), or unlocked by the step that needs them, so small local models see a short,
+# clear menu. They can still be called at any time; approvals apply as usual.
+EXTRA_TOOLS=frozenset({'delete_file','history_read','update_brief','create_schedule','create_file_workflow','finish_skill','install_capability'})
 
 RETRIEVAL={'web_search':'web search','web_fetch':'web','memory_search':'memory','search_files':'workspace files','read_file':'workspace file','history_read':'history'}
 
@@ -63,7 +68,11 @@ class Toolbox:
                 t['description']=t['description'].replace('Requires user approval.', 'Runs automatically in Full access mode.').replace('Always asks.', 'Runs automatically in Full access mode.').replace('Network request requires approval.', 'Network requests run automatically.').replace('Full PC access after approval;', 'Full PC access;').replace('Every side effect still needs its normal approval.', 'Actions run automatically in Full access mode.')
         return result
     def definitions(self,enabled):
-        return [{'type':'function','function':{k:t[k] for k in ['name','description','parameters']}} for t in self.catalog() if t['group'] not in self.connectors or t['group'] in enabled]
+        enabled=set(enabled or ())
+        def shown(t):
+            if t['group'] in self.connectors: return t['group'] in enabled
+            return t['name'] not in EXTRA_TOOLS or 'more' in enabled or t['name'] in enabled
+        return [{'type':'function','function':{k:t[k] for k in ['name','description','parameters']}} for t in self.catalog() if shown(t)]
     def get(self,name):
         return next((t for t in self.catalog() if t['name']==name),None)
     @staticmethod
@@ -119,6 +128,7 @@ class Toolbox:
             from .brief import tool_update
             return tool_update(self.store,run['chat'],a)
         if name=='find_capability':
+            run.setdefault('enabled',set()).add('install_capability')
             from .catalog import search
             found=await asyncio.to_thread(search,a['query'],{'any':None}.get(a.get('kind','any'),a.get('kind')),8)
             return {**found,'next':'Pick the best match and call install_capability with its id. Prefer items with more stars. Skip connectors with needs unless the user can supply them.'}
@@ -144,7 +154,7 @@ class Toolbox:
             if not check['available']:
                 if run.get('id'):set_state(self.store,a['name'],'Needs setup',check['reason'],run)
                 return {'status':'error','category':'needs_setup',**check}
-            instructions=load_skill(a['name'])
+            instructions=load_skill(a['name']); run.setdefault('enabled',set()).add('finish_skill')
             if run.get('id'):set_state(self.store,a['name'],'Running','Instructions loaded; workflow outputs have not been verified.',run)
             folder=instructions.get('folder')
             if folder:
@@ -166,6 +176,9 @@ class Toolbox:
         if '__' in name:
             group,tool=name.split('__',1)
             return await self.connectors[group].call(tool,a)
+        if name=='inspect_file':
+            from .file_check import inspect
+            return inspect(workspace_path(a['path']))
         if name=='list_files':
             p=workspace_path(a.get('path','.')); root=Path(CONFIG['workspace']).resolve()
             show=lambda f:str(f.relative_to(root)) if f.is_relative_to(root) else str(f)
@@ -217,13 +230,17 @@ class Toolbox:
                 return await browser_fetch(self.connectors.get('browser'),a['url'])
             return result
         if name=='discover_tools':
+            if a['category']=='more':
+                run['enabled'].add('more')
+                return [{'name':t['name'],'description':t['description'][:300],'approval':t['tier']} for t in self.catalog() if t['name'] in EXTRA_TOOLS]
             cats=list(self.connectors) if a['category']=='all' else [a['category']]
             run['enabled'].update(cats)
             return [{'name':t['name'],'description':t['description'][:300],'approval':t['tier']} for t in self.catalog() if t['group'] in cats]
         if name=='memory_search':
             q=a['query'].lower()
             if not q.strip() or len(q)>500:raise ValueError('Provide a non-empty literal query of at most 500 characters')
-            memories=[m for m in self.store.memory() if q in (m['title']+' '+m['content']).lower()]
+            from .memory_file import search as memory_lines
+            memories=memory_lines(self.store,q)
             rows=self.store.rows('SELECT id,chat,payload FROM messages WHERE instr(lower(payload),?)>0 ORDER BY id DESC LIMIT 15',(q,))
             from .sources import matches
             history=[dict(id=r['id'],chat=r['chat'],matches=matches(str(json.loads(r['payload']).get('content','')),'message:'+str(r['id']),q,3)) for r in rows]
@@ -243,8 +260,8 @@ class Toolbox:
                 return saved_object(p.read_bytes().decode('utf-8'),'action:'+id,'output',offset,limit)
             raise ValueError('Supply message_id or action_id')
         if name=='remember':
-            if len(a['content'])>6000 or sum(len(m['content']) for m in self.store.memory())+len(a['content'])>16000: raise ValueError('Pinned memory is full; shorten existing memories in the UI')
-            return {'memory_id':self.store.save_memory(a['title'],a['content'],'chat:'+run['chat'])}
+            from .memory_file import remember
+            return remember(self.store,a.get('title',''),a['content'])
         if name=='create_schedule':
             from .store import uid,now
             id=uid(); interval=max(5,a['interval_minutes'])*60

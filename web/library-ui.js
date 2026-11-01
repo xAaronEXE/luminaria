@@ -5,13 +5,53 @@
   if(name==='memory')return memoryLibrary();
   const result=await oldOpen(name);decorate();return result;
  };
+ let memoryGuard=null;
  async function memoryLibrary(){
-  showPanel('Memory','Keep useful facts and preferences close at hand.',`<div class="library-toolbar"><input id="memory-search" class="filter-input" type="search" placeholder="Search saved memories…" aria-label="Search saved memories"><button class="btn primary" id="new-memory">Add memory</button></div><p class="small-note">Saved on this PC for use across tasks. Review what is remembered and remove anything you no longer need.</p><form id="memory-form" class="memory-editor" hidden><h3>Add a memory</h3>${field('Give it a short title','title','','text',true)}<label class="field">What should Luminaria remember?<textarea name="content" required placeholder="A preference, project decision or useful fact…"></textarea></label><div class="form-actions"><button class="btn" type="button" id="cancel-memory">Cancel</button><button class="btn primary" type="submit">Save memory</button></div><p role="status" id="memory-status"></p></form><div id="memory-list"></div>`);
-  const form=$('#memory-form');$('#new-memory').onclick=()=>{form.hidden=false;form.elements.title.focus()};$('#cancel-memory').onclick=()=>{form.hidden=true;form.reset()};
-  const draw=()=>{const q=$('#memory-search').value.toLowerCase(),items=(state.memories||[]).filter(m=>(m.title+' '+m.content).toLowerCase().includes(q));$('#memory-list').innerHTML=items.length?`<p class="library-count">${items.length} saved memories</p>`+items.map(m=>`<article class="memory-item"><h3>${esc(m.title)}</h3><p>${esc(m.content)}</p><footer><span>${esc(m.source)} · ${new Date(m.updated*1000).toLocaleDateString()}</span><button class="text-button" data-memory-delete="${esc(String(m.id))}">Delete</button></footer></article>`).join(''):`<div class="library-empty"><h3>${q?'No matching memories':'A place for the details that matter'}</h3><p>${q?'Try another title or phrase.':'Add your first memory above, or ask Luminaria to remember a detail during a conversation.'}</p></div>`;
-   $$('[data-memory-delete]').forEach(b=>b.onclick=safe(async()=>{if(!confirm('Delete this memory? Its original conversation stays saved.'))return;await api('/memories/'+encodeURIComponent(b.dataset.memoryDelete),'DELETE');await refresh();draw()}));
-  };$('#memory-search').oninput=draw;draw();
-  form.onsubmit=safe(async e=>{e.preventDefault();const b=form.querySelector('[type=submit]');b.disabled=true;try{await api('/memories','POST',Object.fromEntries(new FormData(form)));await refresh();form.reset();form.hidden=true;draw();toast('Memory saved')}catch(error){$('#memory-status').textContent=error.message}finally{b.disabled=false}});
+  // Memory is two Markdown files, like CLAUDE.md: MEMORY.md about the user, LUMINARIA.md about the working folder.
+  showPanel('Memory','What Luminaria remembers, in plain Markdown you can edit.',`<div class="memory-bar"><div class="segmented" role="tablist" aria-label="Memory file"><button type="button" role="tab" data-mem-tab="me" aria-selected="true">My memory</button><button type="button" role="tab" data-mem-tab="project" aria-selected="false">This project</button></div><div class="segmented" role="group" aria-label="View"><button type="button" data-mem-view="edit" aria-pressed="true">Edit</button><button type="button" data-mem-view="preview" aria-pressed="false">Preview</button></div></div>
+   <p class="small-note" id="memory-about"></p>
+   <div id="memory-body"><textarea id="memory-text" class="memory-text" spellcheck="true" aria-label="Memory file"></textarea><div id="memory-preview" class="memory-preview markdown" hidden></div></div>
+   <div class="s-actions"><span class="save-state" id="memory-state" role="status"></span><button type="button" class="btn" id="memory-revert">Undo changes</button><button type="button" class="btn primary" id="memory-save">Save</button></div>`);
+  const text=$('#memory-text'),preview=$('#memory-preview'),about=$('#memory-about'),stateEl=$('#memory-state');
+  let tab='me',view='edit',data=await api('/memory'),saved={me:data.content,project:data.project.content||''},draft={...saved};
+  const PROJECT_TEMPLATE='# Project notes\n\nWhat Luminaria should know about this folder. Like CLAUDE.md in a code repository.\n\n## What this is\n\n## How to work here\n\n## Decisions\n';
+  const dirty=()=>draft.me!==saved.me||draft.project!==saved.project;
+  const draw=()=>{
+   $$('[data-mem-tab]').forEach(b=>b.setAttribute('aria-selected',String(b.dataset.memTab===tab)));
+   $$('[data-mem-view]').forEach(b=>b.setAttribute('aria-pressed',String(b.dataset.memView===view)));
+   const missing=tab==='project'&&!data.project.exists&&!draft.project;
+   about.innerHTML=tab==='me'
+    ?`Used in every task. Saved on this PC in <code>${esc(data.path)}</code>. Ask Luminaria to “remember” something and it adds a line under Notes.`
+    :(data.project.path?`Loaded only when you work in this folder: <code>${esc(data.project.path)}</code>.`:'Choose a working folder in Settings to keep project notes.')+(missing?' This folder has no project notes yet.':'');
+   text.value=draft[tab];text.placeholder=tab==='project'?'Click “Start project notes” or type here…':'';
+   text.hidden=view!=='edit';preview.hidden=view!=='preview';
+   if(view==='preview')preview.innerHTML=draft[tab].trim()?markdown(draft[tab]):'<p class="note">Nothing here yet.</p>';
+   $('#memory-save').textContent=missing?'Start project notes':'Save';
+   $('#memory-revert').hidden=draft[tab]===saved[tab];
+   stateEl.textContent=draft[tab]!==saved[tab]?'Unsaved changes':'';
+  };
+  text.oninput=()=>{draft[tab]=text.value;draw()};
+  $$('[data-mem-tab]').forEach(b=>b.onclick=()=>{tab=b.dataset.memTab;draw();if(view==='edit')text.focus()});
+  $$('[data-mem-view]').forEach(b=>b.onclick=()=>{view=b.dataset.memView;draw()});
+  $('#memory-revert').onclick=()=>{draft[tab]=saved[tab];draw()};
+  $('#memory-save').onclick=safe(async()=>{
+   if(tab==='project'&&!data.project.exists&&!draft.project){draft.project=PROJECT_TEMPLATE;view='edit';draw();text.focus();return}
+   const b=$('#memory-save');b.disabled=true;
+   try{
+    if(tab==='me')await api('/memory','PUT',{content:draft.me});else await api('/memory/project','PUT',{content:draft.project});
+    data=await api('/memory');saved={me:data.content,project:data.project.content||''};draft={...draft,[tab]:saved[tab]};
+    draw();toast(tab==='me'?'Memory saved':'Project notes saved');await refresh();
+   }catch(error){stateEl.textContent=error.message}finally{b.disabled=false}
+  });
+  text.addEventListener('keydown',e=>{if((e.ctrlKey||e.metaKey)&&e.key.toLowerCase()==='s'){e.preventDefault();$('#memory-save').click()}});
+  // Don't lose edits when the panel is closed.
+  const closer=$('#close-panel');
+  if(closer){
+   if(memoryGuard)closer.removeEventListener('click',memoryGuard,true);
+   memoryGuard=e=>{if(text.isConnected&&dirty()&&!confirm('Close without saving your memory changes?')){e.preventDefault();e.stopImmediatePropagation()}};
+   closer.addEventListener('click',memoryGuard,true);
+  }
+  draw();
  }
  function decorate(){
   const panel=$('#panel-content');if(!panel)return;

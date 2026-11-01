@@ -129,7 +129,7 @@ async def bootstrap(): return {'token':TOKEN,'version':CONFIG['version'],'name':
 @app.get('/api/state')
 async def state(chat:str=''):
     if chat: require_chat(chat)
-    return {'cloud_sync_updated':store.setting('cloud_sync_updated',0),'chats':store.chats(),'chat':chat,'messages':store.messages(chat) if chat else [],'actions':store.actions(chat) if chat else [],'summary':store.summary(chat) if chat else None,'summaries':store.rows('SELECT id,through_id,created FROM summaries WHERE chat=? ORDER BY id',(chat,)) if chat else [],'run':engine.public_run(chat),'context':store.setting('context:'+chat,{}),'plan':store.setting('plan:'+chat,None) if chat else None,'brief':brief_summary(chat) if chat else None,'orchestration':{'router':CONFIG.get('orchestrator_model',''),'enabled':bool(CONFIG.get('orchestrator_model')) and CONFIG.get('orchestration_enabled',True)},'memories':store.memory(),'schedules':store.rows('SELECT * FROM schedules ORDER BY next_run'),'workspace':CONFIG['workspace'],'model':CONFIG['model'],'context_limit':CONFIG['context'],'connectors':{n:{'status':c.status,'tools':len(c.tools)} for n,c in connectors.items()},'tool_count':len(engine.tools.catalog()),'active_runs':[{'chat':k,'phase':v['phase']} for k,v in engine.runs.items() if not v.get('finished')]}
+    return {'cloud_sync_updated':store.setting('cloud_sync_updated',0),'chats':store.chats(),'chat':chat,'messages':store.messages(chat) if chat else [],'actions':store.actions(chat) if chat else [],'summary':store.summary(chat) if chat else None,'summaries':store.rows('SELECT id,through_id,created FROM summaries WHERE chat=? ORDER BY id',(chat,)) if chat else [],'run':engine.public_run(chat),'context':store.setting('context:'+chat,{}),'plan':store.setting('plan:'+chat,None) if chat else None,'brief':brief_summary(chat) if chat else None,'orchestration':{'router':CONFIG.get('orchestrator_model',''),'enabled':bool(CONFIG.get('orchestrator_model')) and CONFIG.get('orchestration_enabled',True)},'memories':memory_entries(),'schedules':store.rows('SELECT * FROM schedules ORDER BY next_run'),'workspace':CONFIG['workspace'],'model':CONFIG['model'],'context_limit':CONFIG['context'],'connectors':{n:{'status':c.status,'tools':len(c.tools)} for n,c in connectors.items()},'tool_count':len(engine.tools.catalog()),'active_runs':[{'chat':k,'phase':v['phase']} for k,v in engine.runs.items() if not v.get('finished')]}
 
 @app.get('/api/chats/{id}/work')
 async def work_events(id:str,runs:int=12):
@@ -353,16 +353,40 @@ async def output(id:str):
 @app.get('/api/tools')
 async def tool_list(): return engine.tools.catalog()
 
-@app.post('/api/memories')
-async def memory_save(request:Request):
-    b=await request.json(); title=str(b.get('title','')).strip(); content=str(b.get('content','')).strip()
-    if not title or not content: raise ValueError('Title and memory text are required')
-    if len(content)>6000: raise ValueError('Keep each memory below 6,000 characters')
-    if sum(len(m['content']) for m in store.memory() if m['id']!=b.get('id'))+len(content)>16000: raise ValueError('Pinned memory limit reached. Shorten existing notes to leave room for conversation.')
-    id=store.save_memory(title[:120],content,id=b.get('id')); broadcast({'type':'changed'}); return {'id':id}
+def memory_entries():
+    from .memory_file import read,entries
+    try: return entries(read(store))
+    except OSError: return []
 
-@app.delete('/api/memories/{id}')
-async def memory_delete(id:str): store.execute('DELETE FROM memories WHERE id=?',(id,)); broadcast({'type':'changed'}); return {'ok':True}
+@app.get('/api/memory')
+async def memory_get():
+    from .memory_file import read,entries,PATH,project_path,project_text,MAX_FILE
+    text=read(store); project=project_path()
+    return {'content':text,'path':str(PATH),'entries':len(entries(text)),'limit':MAX_FILE,
+            'project':{'path':str(project) if project else '','exists':bool(project and project.is_file()),'content':project_text()}}
+
+@app.put('/api/memory')
+async def memory_put(request:Request):
+    from .memory_file import write,entries
+    b=await request.json(); text=write(store,b.get('content'))
+    broadcast({'type':'changed'}); return {'ok':True,'entries':len(entries(text))}
+
+@app.put('/api/memory/project')
+async def memory_project_put(request:Request):
+    """LUMINARIA.md in the working folder: notes about this project, like CLAUDE.md in a code repository."""
+    from .memory_file import project_path
+    b=await request.json(); content=b.get('content')
+    if not isinstance(content,str) or len(content)>200_000: raise ValueError('Project notes must be text under 200,000 characters')
+    p=project_path()
+    if not p: raise ValueError('Choose a working folder first')
+    p.write_text(content.replace('\r\n','\n'),encoding='utf-8'); broadcast({'type':'changed'}); return {'ok':True,'path':str(p)}
+
+@app.post('/api/memories')
+async def memory_add(request:Request):
+    """Kept for older screens: adds one note to MEMORY.md."""
+    from .memory_file import remember
+    b=await request.json(); result=remember(store,str(b.get('title','')),str(b.get('content','')))
+    broadcast({'type':'changed'}); return result
 
 @app.post('/api/schedules')
 async def schedule_create(request:Request):

@@ -154,6 +154,8 @@ class CloudSync:
             else:
                 if not isinstance(data.get('title'),str) or not isinstance(data.get('content'),str):raise ValueError('Invalid cloud memory')
                 self.store.execute('INSERT OR REPLACE INTO memories VALUES(?,?,?,?,?)',(id,data['title'],data['content'],str(data.get('source','synced')),float(data['updated'])))
+                from .memory_file import ROW,from_sync
+                if id==ROW: from_sync(data['content'])  # MEMORY.md travels as one record and is written back to disk
         elif kind=='file':
             roots=self.roots()
             if data.get('scope') not in roots or excluded(data.get('path','')):raise ValueError('Cloud file is outside the permitted sync folders')
