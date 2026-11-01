@@ -119,6 +119,7 @@ class RecoveryTests(unittest.IsolatedAsyncioTestCase):
   calls=[]
   with patch.dict(CONFIG,llama_executable='',model_file=''),patch.object(runtime,'manager_state',lambda:{'owned':False,'running':False}),patch.object(runtime,'start_swap',lambda:calls.append(1)):
    with self.assertRaises(RuntimeError) as caught:await read(Fake(handler))
-  self.assertEqual(calls,[]);self.assertIn('Cannot reach the model server',str(caught.exception))
+  # Never restarted; with no model configured the user is told how to get one.
+  self.assertEqual(calls,[]);self.assertIn('No model is installed yet',str(caught.exception))
 
 if __name__=='__main__':unittest.main()

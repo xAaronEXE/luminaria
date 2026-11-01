@@ -181,7 +181,7 @@ class ModelLibraryTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, '100 GB'):
                 model_library.enqueue(quant['id'])
         self.assertFalse((self.root / 'models' / '.partial').exists())
-    def test_remove_requires_confirmation_and_protects_the_active_file(self):
+    def test_remove_requires_confirmation_and_stops_the_active_model_first(self):
         payload = b'remove-me'
         digest = hashlib.sha256(payload).hexdigest()
         entry, quant = self.quant(digest, len(payload))
@@ -191,15 +191,18 @@ class ModelLibraryTests(unittest.TestCase):
         target.write_bytes(payload)
         with patch.object(model_library, 'quant_by_id', lambda ident: (entry, quant) if ident == quant['id'] else (None, None)):
             model_library._register(entry, quant, target)
+            stopped = []
             with patch.dict(model_library.CONFIG, model=quant['id'], model_file=str(target)):
                 with self.assertRaisesRegex(ValueError, 'Confirm removal'):
                     model_library.remove(quant['id'], False)
                 self.assertTrue(target.exists())
-                with self.assertRaisesRegex(ValueError, 'active'):
-                    model_library.remove(quant['id'], True)
-                self.assertTrue(target.exists())
-            with patch.dict(model_library.CONFIG, model='other', model_file=''):
-                result = model_library.remove(quant['id'], True)
+                # The model in use can be removed: its server is stopped first and the selection cleared.
+                with patch('backend.runtime.stop_owned', lambda: stopped.append(1)), \
+                     patch('backend.config.save_config', lambda changes: model_library.CONFIG.update(changes)):
+                    result = model_library.remove(quant['id'], True)
+                self.assertEqual(stopped, [1])
+                self.assertEqual((model_library.CONFIG['model'], model_library.CONFIG['model_file']), ('', ''))
+                self.assertIn('No model is installed now', result['message'])
         self.assertTrue(result['deleted'])
         self.assertFalse(target.exists())
         self.assertEqual(models.registry(), [])
