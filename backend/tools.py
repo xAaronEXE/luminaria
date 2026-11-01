@@ -66,9 +66,16 @@ class Toolbox:
         return [{'type':'function','function':{k:t[k] for k in ['name','description','parameters']}} for t in self.catalog() if t['group'] not in self.connectors or t['group'] in enabled]
     def get(self,name):
         return next((t for t in self.catalog() if t['name']==name),None)
-    async def process(self,argv,timeout=60):
+    @staticmethod
+    def skill_paths(run):
+        out=[]
+        for folder in run.get('skill_folders',[]) if isinstance(run,dict) else []:
+            for p in (Path(folder),Path(folder)/'scripts'):
+                if p.is_dir(): out.append(str(p))
+        return out
+    async def process(self,argv,timeout=60,extra_path=()):
         flags=subprocess.CREATE_NO_WINDOW if os.name=='nt' else 0
-        proc=await asyncio.create_subprocess_exec(*argv,cwd=CONFIG['workspace'],stdout=asyncio.subprocess.PIPE,stderr=asyncio.subprocess.PIPE,creationflags=flags,env={**os.environ,'PATH':os.pathsep.join(runtime_path_dirs()+[os.environ.get('PATH','')]),'PYTHONIOENCODING':'utf-8'})
+        proc=await asyncio.create_subprocess_exec(*argv,cwd=CONFIG['workspace'],stdout=asyncio.subprocess.PIPE,stderr=asyncio.subprocess.PIPE,creationflags=flags,env={**os.environ,'PATH':os.pathsep.join(runtime_path_dirs()+[os.environ.get('PATH','')]),'PYTHONIOENCODING':'utf-8',**({'PYTHONPATH':os.pathsep.join([*extra_path,os.environ.get('PYTHONPATH','')]).rstrip(os.pathsep)} if extra_path else {})})
         try:
             out,err=await asyncio.wait_for(proc.communicate(),min(max(timeout,1),180))
             return {'exit_code':proc.returncode,'stdout':out.decode('utf-8','replace'),'stderr':err.decode('utf-8','replace')}
@@ -139,7 +146,16 @@ class Toolbox:
                 return {'status':'error','category':'needs_setup',**check}
             instructions=load_skill(a['name'])
             if run.get('id'):set_state(self.store,a['name'],'Running','Instructions loaded; workflow outputs have not been verified.',run)
-            return {**instructions,'state':'Running','completion':'Use finish_skill after producing output files and collecting evidence action IDs. Loading instructions alone is not completion.'}
+            folder=instructions.get('folder')
+            if folder:
+                # Scripts that ship with the skill can be imported by run_code and found by run_command.
+                run.setdefault('skill_folders',[])
+                if folder not in run['skill_folders']: run['skill_folders'].append(folder)
+            files=instructions.get('files') or []
+            how=(f"This skill's own files are in {folder} ({', '.join(files[:12])}{', …' if len(files)>12 else ''}). Run its scripts by full path, "
+                 f"for example python \"{folder}\\scripts\\name.py\"; Python code you run can also import them directly. Outputs go in the working folder. ") if folder and files else ''
+            return {**instructions,'state':'Running','how_to_use':how+'Do the steps yourself with tools (write files, run scripts); do not ask the user to do them.',
+                    'completion':'Use finish_skill after producing output files and collecting evidence action IDs. Loading instructions alone is not completion.'}
         if name=='finish_skill':
             from .skill_runs import complete
             return complete(self.store,a['name'],a['outputs'],a['evidence_actions'],run)
@@ -179,7 +195,7 @@ class Toolbox:
         if name=='search_files':
             from .sources import search_workspace
             return await search_workspace(workspace_path(),a['query'])
-        if name=='run_command': return await self.process(['powershell.exe','-NoProfile','-NonInteractive','-Command',a['command']],a.get('timeout',60))
+        if name=='run_command': return await self.process(['powershell.exe','-NoProfile','-NonInteractive','-Command',a['command']],a.get('timeout',60),extra_path=self.skill_paths(run))
         if name=='run_code':
             folder=workspace_path('.studio-scripts'); folder.mkdir(exist_ok=True)
             p=folder/(run['id']+'-'+str(__import__('time').time_ns())+('.py' if a['language']=='python' else '.js'))
@@ -187,7 +203,7 @@ class Toolbox:
             kind='python' if a['language']=='python' else 'node'
             exe=find_runtime(kind)
             if not exe: return {'status':'error','category':'needs_setup','message':runtime_missing_message(kind)}
-            return await self.process([exe,str(p)],a.get('timeout',60))
+            return await self.process([exe,str(p)],a.get('timeout',60),extra_path=self.skill_paths(run))
         if name=='web_search':
             from .retrieval import search
             return await search(a['query'])

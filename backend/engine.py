@@ -167,7 +167,7 @@ class Engine:
         'File tools are workspace-scoped; shell and Windows tools can access the PC under the active permission mode. '
         'You have persistent history and durable memory tools across sessions. Describe actual available tools and results instead of claiming generic lack of internet, execution, computer access or memory. Missing connectors and operating-system permissions still limit capabilities. '
         'Document packages in the bundled Python: python-docx, python-pptx, openpyxl, xlsxwriter, reportlab, pypdf, PyMuPDF, matplotlib, pandas, Pillow. '
-        'Use list_skills and load_skill for reusable workflows. If nothing installed fits, call find_capability: a catalog of thousands of real skills and connectors is built in, and install_capability adds one with the user\'s approval. '
+        'Do the work yourself with your tools: write the files, run the scripts and check the results. Never ask the user to save, copy or run something you can do. Use list_skills and load_skill for reusable workflows. If nothing installed fits, call find_capability: a catalog of thousands of real skills and connectors is built in, and install_capability adds one with the user\'s approval. '
         'Loading a skill starts its workflow; use finish_skill with successful source-evidence actions and output paths to verify file outputs. Never call loading alone completion. '
         'For a bounded multi-step file run, propose create_file_workflow with the user objective, allowed workspace locations and completion criteria; tell the user to review and execute it under Tools → File workflows. '
         'For tasks with several steps, call update_plan with your plan and keep step status current; skip it for simple questions. '
@@ -415,8 +415,8 @@ class Engine:
 
     # A promise to act right now: "I'll create…", "Let me check…", "Next, I will run…". Offers ("I can…",
     # "if you want, I'll…"), "let me know" and replies that end with a question are not promises.
-    INTENT=re.compile(r"(?:\bi(?:'ll| will|'m going to| am going to)(?: now)?|\blet me|\bnext,? i(?:'ll| will)|\bnow i(?:'ll| will))\s+(?:go ahead and\s+)?"
-                      r"(?:create|write|run|open|search|install|download|check|read|list|look|fetch|make|build|edit|save|delete|move|copy|update|generate|start|execute|scan|find|add|apply|draft)\b",re.I)
+    INTENT=re.compile(r"(?:\bi(?:'ll| will|'m going to| am going to)(?: now)?|\blet me|\blet's|\blet us|\bnext,? i(?:'ll| will)|\bnow i(?:'ll| will))\s+(?:go ahead and\s+)?"
+                      r"(?:try to\s+)?(?:create|write|run|open|search|install|download|check|read|list|look|fetch|make|build|edit|save|delete|move|copy|update|generate|start|execute|scan|find|add|apply|draft|locate|load|use|prepare)\b",re.I)
     OFFER=re.compile(r"\b(?:if you(?:'d| would)? (?:like|want)|would you like|do you want|shall i|should i|let me know|feel free)\b",re.I)
     @classmethod
     def announces(cls,text):
@@ -425,8 +425,9 @@ class Engine:
         tail=' '.join(re.split(r'(?<=[.!])\s+',text)[-2:])
         return any(cls.INTENT.search(s) and not cls.OFFER.search(s) for s in re.split(r'(?<=[.!])\s+',tail))
     def should_nudge(self,run):
-        # A hands-free run that announces an action but calls no tool would otherwise just end and repeat itself next turn.
-        return bool(full_access() and run.get('announced') and run.get('nudges',0)<2 and not run.get('denied') and not run.get('plan_only'))
+        # A reply that promises an action but calls no tool would otherwise just end there. Any approvals the
+        # follow-up needs are still asked for, so this is safe in Ask me first as well as Hands-free.
+        return bool(run.get('announced') and run.get('nudges',0)<2 and not run.get('denied') and not run.get('plan_only'))
     async def nudge_node(self,state):
         run=state['run']; run['nudges']=run.get('nudges',0)+1; run['nudge_pending']=True; run.pop('announced',None)
         return {'run':run,'calls':[],'steps':state['steps']}

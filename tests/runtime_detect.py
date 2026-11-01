@@ -49,4 +49,11 @@ class Bundled(unittest.TestCase):
         self.assertEqual(w['command'],str(self.tmp/'python'/'python.exe'))
         self.assertEqual(w['env'],{'ANONYMIZED_TELEMETRY':'false'})
 
+class SkillScripts(unittest.TestCase):
+    def test_loaded_skill_scripts_are_importable(self):
+        from backend.tools import Toolbox
+        folder=Path(tempfile.mkdtemp()); (folder/'scripts').mkdir()
+        self.assertEqual(Toolbox.skill_paths({'skill_folders':[str(folder)]}),[str(folder),str(folder/'scripts')])
+        self.assertEqual(Toolbox.skill_paths({}),[]); self.assertEqual(Toolbox.skill_paths(None),[])
+
 if __name__=='__main__': unittest.main()

@@ -19,19 +19,20 @@ class HandsFree(unittest.TestCase):
  def setUp(self):config.CONFIG['access_mode']='full'
  def tearDown(self):config.CONFIG['access_mode']='review'
  def test_intent_detection(self):
-  for text in ("I'll create the file now.","Let me run that for you","I will now search the folder","I'm going to open it","Found it. Next, I'll write the report."):self.assertTrue(e.Engine.announces(text),text)
+  for text in ("I'll create the file now.","Let me run that for you","I will now search the folder","I'm going to open it","Found it. Next, I'll write the report.","Let's try to locate the generate_timeline.py file and run it again.","Let's install it."):self.assertTrue(e.Engine.announces(text),text)
   for text in ("Here is the summary.","The file was created.","Done.",
                "The folder contains 8 items. If you need to work with any specific files or directories, please let me know!",
                "Let me know if you want changes.","I can also make a chart if you'd like.","If you want, I'll create a summary next.",
                "Should I run it again?","I'll run the tests now?","Results:\n```\nI'll create the file\n```\nAll done."):self.assertFalse(e.Engine.announces(text),text)
- def test_nudge_only_when_hands_free_and_bounded(self):
+ def test_nudge_is_bounded_and_respects_denials(self):
   eng=e.Engine.__new__(e.Engine)
   self.assertTrue(eng.should_nudge({'announced':True}))
   self.assertFalse(eng.should_nudge({'announced':True,'nudges':2}))
   self.assertFalse(eng.should_nudge({'announced':True,'denied':True}))
   self.assertFalse(eng.should_nudge({'announced':True,'plan_only':True}))
   config.CONFIG['access_mode']='review'
-  self.assertFalse(eng.should_nudge({'announced':True}))
+  self.assertTrue(eng.should_nudge({'announced':True}),'Ask me first also follows through; tools still ask for approval')
+  self.assertFalse(eng.should_nudge({'announced':False}))
  def test_nudge_is_a_trailing_user_message(self):
   base=[{'role':'system','content':'s'},{'role':'user','content':'u'},{'role':'assistant','content':"I'll do it"}]
   out=e.with_nudge(base,{'nudge_pending':True})
