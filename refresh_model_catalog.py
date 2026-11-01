@@ -1,7 +1,11 @@
 """Regenerate backend/model_catalog_data.py from Hugging Face.
 
 Run deliberately when adding or updating catalog entries:
-    python refresh_model_catalog.py
+    python refresh_model_catalog.py              # refresh pinned facts for every entry
+    python refresh_model_catalog.py --discover   # also find new local models on Hugging Face first
+
+Hand-picked entries live in backend/model_sources.py. --discover writes backend/model_sources_discovered.py:
+chat-ready, single-file GGUF models from official publishers and well-known quantizers, one entry per model.
 
 Each repository is pinned to its current commit. File sizes and SHA256 values come
 from the LFS records at that commit. Context and attention facts come from the GGUF
@@ -12,6 +16,8 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from backend.model_sources import SOURCES
+try: from backend.model_sources_discovered import DISCOVERED
+except ImportError: DISCOVERED = []
 
 API = 'https://huggingface.co/api/models/'
 SIZES = {0: 1, 1: 1, 2: 2, 3: 2, 4: 4, 5: 4, 6: 4, 7: 1, 10: 8, 11: 8, 12: 8}
@@ -71,28 +77,135 @@ def facts(repo, revision, filename):
             'kv_heads': kv, 'key_length': key, 'value_length': value,
             'sliding_window': get('attention.sliding_window') or 0}
 
+# --- Discovery -------------------------------------------------------------------------------------------
+import re, urllib.parse
+OFFICIAL = ['ggml-org', 'Qwen', 'google', 'mistralai', 'microsoft', 'ibm-granite', 'HuggingFaceTB', 'LiquidAI', 'nvidia',
+            'allenai', 'openai', 'meta-llama', 'deepseek-ai', 'CohereLabs', 'tiiuae', 'zai-org', 'THUDM', 'moonshotai',
+            'baidu', 'tencent', 'internlm', 'swiss-ai', 'ServiceNow-AI', 'NousResearch', 'arcee-ai']
+QUANTIZERS = ['unsloth', 'bartowski', 'lmstudio-community']
+QUANT_ORDER = ['Q4_K_M', 'Q5_K_M', 'Q6_K', 'Q8_0']
+SKIP_WORDS = re.compile(r'embed|rerank|reward|draft|-base(?:-|$)|whisper|tts|speech|audio|ocr|-mtp|eagle|lora|clip|siglip|retriev|classif|guard', re.I)
+MAX_BYTES = 100 * 1024 ** 3
+MIN_DOWNLOADS = 2000
+LIMIT = 400
+
+def base_key(name):
+    name = name.split('/')[-1].lower()
+    name = re.sub(r'[-_.](gguf|i1|imat|imatrix)$', '', name)
+    name = re.sub(r'-gguf$', '', name)
+    return re.sub(r'[^a-z0-9]+', '', name)
+
+def listing(author):
+    query = urllib.parse.urlencode({'author': author, 'library': 'gguf', 'sort': 'downloads', 'direction': -1, 'limit': 150, 'full': 'false'})
+    try: return json.loads(fetch('https://huggingface.co/api/models?' + query))
+    except Exception as e: print('skip', author, e, file=sys.stderr); return []
+
+def pick_quants(tree):
+    files = {item['path']: item for item in tree if item.get('lfs') and item['path'].lower().endswith('.gguf') and '/' not in item['path']}
+    out = []
+    for label in QUANT_ORDER:
+        match = [p for p in files if re.search(r'[-_.]' + label + r'\.gguf$', p, re.I) and not re.search(r'-\d{5}-of-\d{5}', p) and not p.lower().startswith('mmproj')]
+        if match and files[match[0]]['lfs']['size'] <= MAX_BYTES: out.append((label, match[0]))
+    projectors = sorted((p for p in files if p.lower().startswith('mmproj')), key=lambda p: (0 if 'f16' in p.lower() and 'bf16' not in p.lower() else 1 if 'bf16' in p.lower() else 2, p))
+    return out[:3], (projectors[0] if projectors else None)
+
+def describe_model(name, repo, card, tags, vision):
+    low = (name + ' ' + repo).lower()
+    strengths, purpose = [], 'General chat model'
+    if 'coder' in low or 'code' in low or 'devstral' in low: strengths += ['Coding', 'Tools']; purpose = 'Coding model'
+    if vision or 'vl' in re.split(r'[^a-z]+', low) or 'vision' in low: strengths.append('Vision'); purpose = 'Vision and language model' if purpose == 'General chat model' else purpose
+    if re.search(r'\br1\b|reason|think|qwq|magistral', low): strengths.append('Reasoning'); purpose = 'Reasoning model' if purpose == 'General chat model' else purpose
+    for extra in ('Writing', 'Reasoning'):
+        if len(strengths) < 2 and extra not in strengths: strengths.append(extra)
+    return purpose, strengths
+
+def discover():
+    curated = {base_key(e['repo']) for e in SOURCES} | {base_key(e['name'].replace(' ', '-')) for e in SOURCES}
+    seen, out = set(curated), []
+    for author in OFFICIAL + QUANTIZERS:
+        for item in listing(author):
+            repo = item.get('id') or item.get('modelId') or ''
+            tags = set(item.get('tags') or [])
+            if item.get('downloads', 0) < MIN_DOWNLOADS or SKIP_WORDS.search(repo): continue
+            if not ('conversational' in tags or item.get('pipeline_tag') in ('text-generation', 'image-text-to-text')): continue
+            key = base_key(repo)
+            if key in seen: continue
+            try:
+                info = json.loads(fetch(API + repo))
+                if info.get('gated') or info.get('private') or info.get('disabled'): continue
+                card = info.get('cardData') or {}
+                bases = card.get('base_model') or []
+                bases = [bases] if isinstance(bases, str) else bases
+                keys = {key} | {base_key(b) for b in bases if isinstance(b, str)}
+                if keys & seen: continue
+                tree = json.loads(fetch(f"{API}{repo}/tree/{info['sha']}?recursive=1"))
+                quants, projector_file = pick_quants(tree)
+                if not quants: continue
+                meta = header(f"https://huggingface.co/{repo}/resolve/{info['sha']}/{quants[0][1]}")
+            except Exception as e:
+                print('skip', repo, type(e).__name__, file=sys.stderr); continue
+            arch = meta.get('general.architecture')
+            if not arch or not meta.get(f'{arch}.context_length'): continue
+            name = str(meta.get('general.name') or repo.split('/')[-1].replace('-GGUF', '').replace('-', ' '))[:60].strip()
+            size_label = str(meta.get('general.size_label') or '')
+            low = repo.lower()
+            variant = 'abliterated' if ('abliterat' in low or 'uncensored' in low) else 'standard'
+            purpose, strengths = describe_model(name, repo, card, tags, bool(projector_file))
+            licence = card.get('license') or 'See the model card'
+            if isinstance(licence, list): licence = ', '.join(map(str, licence))
+            official = repo.split('/')[0] in OFFICIAL
+            slug = re.sub(r'[^a-z0-9]+', '-', repo.split('/')[-1].lower().replace('-gguf', '')).strip('-')[:44]
+            ident = slug; n = 2
+            while any(e['id'] == ident for e in out): ident = f'{slug[:40]}-{n}'; n += 1
+            out.append({'id': ident, 'name': name, 'variant': variant, 'parameters': size_label, 'purpose': purpose,
+                        'description': f"{name}, published on Hugging Face by {repo.split('/')[0]}. Added automatically: read the model card for what it is best at and how it was trained.",
+                        'strengths': strengths, 'repo': repo, 'license': str(licence)[:120] + (', per the model card' if licence != 'See the model card' else ''),
+                        'provenance': f"{repo.split('/')[0]}, {'official GGUF' if official else 'GGUF quantization'}", 'quants': quants,
+                        'caveat': 'Abliteration is a third-party weight edit intended to reduce refusals. It does not guarantee unrestricted answers.' if variant == 'abliterated' else '',
+                        'projector': {'repo': repo, 'filename': projector_file, 'note': 'Vision projector from the same repository.'} if projector_file else None,
+                        'family': name.split(' ')[0], 'active_parameters': '', 'discovered': True})
+            seen |= keys
+            print('added', repo, size_label, [q for q, _ in quants], file=sys.stderr)
+            if len(out) >= LIMIT: break
+        if len(out) >= LIMIT: break
+    target = Path(__file__).resolve().parent / 'backend' / 'model_sources_discovered.py'
+    target.write_text('"""Generated by refresh_model_catalog.py --discover. Do not edit by hand; curate in model_sources.py instead."""\n\n'
+                      f'DISCOVERED = {pprint.pformat(out, width=140, sort_dicts=False)}\n', encoding='utf-8')
+    print(f'Discovered {len(out)} models', file=sys.stderr)
+    return out
+
 def main():
+    discovered = discover() if '--discover' in sys.argv else DISCOVERED
     repos, files = {}, {}
-    wanted = {}
-    for entry in SOURCES:
+    wanted, optional = {}, set()
+    for entry in SOURCES + discovered:
+        if entry in discovered: optional.add(entry['repo'])
         wanted.setdefault(entry['repo'], set()).update(name for _, name in entry['quants'])
         if entry['projector']: wanted.setdefault(entry['projector']['repo'], set()).add(entry['projector']['filename'])
     for repo, names in sorted(wanted.items()):
-        info = json.loads(fetch(API + repo))
-        if info.get('gated'): raise ValueError(f'{repo} is gated; Luminaria cannot download it without an account')
-        revision = info['sha']
-        tree = json.loads(fetch(f'{API}{repo}/tree/{revision}?recursive=1'))
-        records = {item['path']: item for item in tree}
-        for name in sorted(names):
-            item = records.get(name)
-            if not item or not item.get('lfs'): raise ValueError(f'{repo}/{name} is missing or not an LFS file')
-            files[f'{repo}/{name}'] = (item['lfs']['size'], item['lfs']['oid'])
-        repos[repo] = {'revision': revision}
+        try:
+            info = json.loads(fetch(API + repo))
+            if info.get('gated'): raise ValueError(f'{repo} is gated; Luminaria cannot download it without an account')
+            revision = info['sha']
+            tree = json.loads(fetch(f'{API}{repo}/tree/{revision}?recursive=1'))
+            records = {item['path']: item for item in tree}
+            found = {}
+            for name in sorted(names):
+                item = records.get(name)
+                if not item or not item.get('lfs'): raise ValueError(f'{repo}/{name} is missing or not an LFS file')
+                found[f'{repo}/{name}'] = (item['lfs']['size'], item['lfs']['oid'])
+        except Exception:
+            if repo in optional: print('skip', repo, file=sys.stderr); continue  # a discovered model that changed or vanished
+            raise
+        files.update(found); repos[repo] = {'revision': revision}
         print(repo, revision[:10], file=sys.stderr)
-    for entry in SOURCES:
+    for entry in SOURCES + discovered:
         repo = entry['repo']
-        if 'context' not in repos[repo]:
-            repos[repo].update(facts(repo, repos[repo]['revision'], entry['quants'][0][1]))
+        if repo in repos and 'context' not in repos[repo]:
+            try: repos[repo].update(facts(repo, repos[repo]['revision'], entry['quants'][0][1]))
+            except Exception:
+                if repo in optional: repos.pop(repo); print('skip', repo, file=sys.stderr); continue
+                raise
     target = Path(__file__).resolve().parent / 'backend' / 'model_catalog_data.py'
     target.write_text('"""Generated by refresh_model_catalog.py. Do not edit by hand."""\n\n'
                       f'REPOS = {pprint.pformat(repos, width=120, sort_dicts=True)}\n\n'

@@ -7,6 +7,8 @@ Abliteration is labeled as a third-party weight edit, not a quality claim.
 import re
 from .model_catalog_data import FILES, REPOS
 from .model_sources import ABLITERATED, SOURCES
+try: from .model_sources_discovered import DISCOVERED
+except ImportError: DISCOVERED = []
 
 BUDGET = 100 * 1024 ** 3
 HEADROOM = 1024 ** 3
@@ -33,7 +35,10 @@ def slug(label):
 
 def build():
     catalog = []
-    for item in SOURCES:
+    for item in SOURCES + DISCOVERED:
+        # Discovered entries whose files could not be verified at the last refresh are left out.
+        if item['repo'] not in REPOS or any(f"{item['repo']}/{f}" not in FILES for _, f in item['quants']): continue
+        if item.get('projector') and f"{item['projector']['repo']}/{item['projector']['filename']}" not in FILES: item = {**item, 'projector': None}
         facts = REPOS[item['repo']]
         supported = facts['context']
         configured = min(CONTEXT_LIMIT, supported)
