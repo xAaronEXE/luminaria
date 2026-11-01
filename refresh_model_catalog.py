@@ -188,7 +188,8 @@ def discover():
             if not plausible(repo, str(meta.get('general.size_label') or '')): print('skip', repo, 'size mismatch', file=sys.stderr); continue
             try: model_facts = facts_from(meta)
             except (KeyError, TypeError, ZeroDivisionError): print('skip', repo, 'incomplete header', file=sys.stderr); continue
-            name = str(meta.get('general.name') or repo.split('/')[-1].replace('-GGUF', '').replace('-', ' '))[:60].strip()
+            from backend.model_catalog import display_name
+            name = display_name(repo)  # the name inside a GGUF file is often a hash or a training path
             size_label = str(meta.get('general.size_label') or '')
             low = repo.lower()
             variant = 'abliterated' if ('abliterat' in low or 'uncensored' in low) else 'standard'
