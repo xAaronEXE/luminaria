@@ -95,7 +95,7 @@ def build():
                         'repo': item['repo'], 'revision': facts['revision'], 'architecture': facts['architecture'],
                         'license': item['license'], 'provenance': item['provenance'],
                         'hardware': 'Estimate from file size and context cache. It is not a fit guarantee; benchmark on this PC to confirm.',
-                        'caveat': item['caveat'], 'quants': quants})
+                        'caveat': item['caveat'], 'quants': quants, 'discovered': bool(item.get('discovered'))})
     return catalog
 
 CATALOG = build()

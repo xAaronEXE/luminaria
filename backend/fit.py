@@ -75,7 +75,9 @@ def machine(info, override=None):
 
 def _vram_budget(hw, ubatch):
     if not hw['vram_total']: return 0
-    usable = hw['vram_free'] if hw['vram_free'] is not None else hw['vram_total'] - DESKTOP_VRAM
+    # Plan around the card itself, not whatever happened to be free when it was checked: a loaded model,
+    # a game or a browser would otherwise make every rating swing. Only Windows' usual share is set aside.
+    usable = hw['vram_total'] - DESKTOP_VRAM
     return max(0, usable - FIT_MARGIN - compute_buffer(ubatch))
 
 
@@ -172,6 +174,7 @@ def estimate(model, hw, cache_bytes, ubatch=512):
         return {'rating': 'too_large', 'placement': None, 'context': None, 'gpu_layers': None, 'cpu_moe': None,
                 'vram_used': None, 'ram_used': None, 'speed': None, 'detail': f'Needs about {_gb(weights + cache_bytes(8192))} at 8k context.'}
 
+    plan['supported'] = supported
     plan['rating'] = _rate(plan, hw, model)
     plan['detail'] = _describe(plan, layers)
     plan['ubatch'] = ubatch if plan['placement'] in ('gpu', 'moe') else 128
@@ -181,13 +184,17 @@ def estimate(model, hw, cache_bytes, ubatch=512):
 def _rate(plan, hw, model):
     if not hw['vram_total'] and not hw['integrated'] and hw['source'] is None: unknown = True
     else: unknown = False
-    tight_context = plan['context'] < min(16384, model.get('context_supported') or 16384)
+    supported = model.get('context_supported') or 16384
+    tight_context = plan['context'] < min(16384, supported)
+    # A short context is a hardware warning only when this PC is what cuts it short. A model built for
+    # 4k tokens is not unstable at 4k; that limit is disclosed separately (see public()).
+    pc_limited = plan['context'] < min(8192, supported)
     if plan['placement'] == 'gpu':
-        if plan['context'] < 8192 or plan['spare'] < 0.03: return 'unstable'
+        if pc_limited or plan['spare'] < 0.03: return 'unstable'
         if not tight_context and plan['spare'] >= 0.10: return 'recommended'
         return 'good'
     if plan['placement'] == 'moe':
-        if plan['context'] < 8192: return 'unstable'
+        if pc_limited: return 'unstable'
         return 'good' if plan['speed'] >= 0.3 else 'slow'
     if plan['placement'] == 'split':
         if plan['speed'] < 0.18: return 'unstable' if plan['ram_used'] > _ram_budget(hw) * 0.85 else 'slow'
@@ -230,4 +237,11 @@ def public(plan, measured=None):
             'vram_used': plan.get('vram_used'), 'ram_used': plan.get('ram_used'),
             'speed': round(plan['speed'], 2) if plan.get('speed') is not None else None,
             'measured': bool(measured and measured.get('tps')),
-            'note': 'Measured on this PC.' if measured and measured.get('tps') else 'Estimate for this PC. Results vary; benchmark to confirm.'}
+            'note': 'Measured on this PC.' if measured and measured.get('tps') else 'Estimate for this PC. Results vary; benchmark to confirm.',
+            'model_limit': model_limit(plan.get('supported'))}
+
+def model_limit(supported):
+    """Plain-English warning when the model itself, not the PC, can only follow a short conversation."""
+    if not supported or supported >= 16384: return ''
+    return (f'This model can only follow about {_tokens(supported)} tokens of conversation (a few pages). '
+            'That is a limit of the model itself, not your PC: long chats are summarized more often and long documents won\'t fit.')

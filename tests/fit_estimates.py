@@ -59,3 +59,19 @@ class FitEstimateTests(unittest.TestCase):
   self.assertEqual(c['cpu_moe'],[0]);self.assertEqual(len(c['gpu_layers']),3)
 
 if __name__=='__main__':unittest.main()
+
+class ModelLimitTests(unittest.TestCase):
+    GB=1024**3
+    def hw(self,free=None): return {'gpu':'card','vram_total':16*self.GB,'vram_free':free,'integrated':False,'ram_total':32*self.GB,'cores':8,'source':'llama.cpp'}
+    def model(self,size_gb,supported): return {'bytes':int(size_gb*self.GB),'layers':32,'architecture':'llama','context_supported':supported,'active_ratio':None}
+    def cache(self,ctx): return int(ctx*0.0001*self.GB)
+    def test_short_context_model_is_not_unstable_and_is_disclosed(self):
+        out=fit.public(fit.estimate(self.model(4,4096),self.hw(),self.cache))
+        self.assertEqual(out['rating'],'recommended');self.assertIn('limit of the model itself, not your PC',out['model_limit'])
+    def test_pc_cutting_context_short_is_still_unstable(self):
+        big=lambda ctx:int(ctx*0.0012*self.GB)  # heavy context cache: only a sliver fits next to the weights
+        out=fit.public(fit.estimate(self.model(13.4,131072),self.hw(),big))
+        self.assertIn(out['rating'],('unstable','slow','good'));self.assertEqual(out['model_limit'],'')
+    def test_rating_does_not_swing_with_free_memory(self):
+        a=fit.estimate(self.model(9,32768),self.hw(None),self.cache)['rating'];b=fit.estimate(self.model(9,32768),self.hw(4*self.GB),self.cache)['rating']
+        self.assertEqual(a,b)

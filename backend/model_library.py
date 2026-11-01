@@ -326,7 +326,7 @@ def library(store):
             projector = {k: spec[k] for k in ('id', 'label', 'filename', 'bytes', 'note')} | {
                 'installed': installed, 'verified': installed and _verified(path, spec), 'active': installed and _projector_active(path),
                 'source': f"{spec['repo']}@{spec['revision'][:10]}", 'job': downloads.get(spec['id'])}
-        entries.append({k: entry[k] for k in ('id', 'name', 'variant', 'family', 'parameters', 'active_parameters', 'purpose', 'description', 'strengths', 'context', 'context_supported', 'cache_bytes', 'vision', 'license', 'provenance', 'hardware', 'caveat', 'repo', 'architecture')} |
+        entries.append({k: entry[k] for k in ('id', 'name', 'variant', 'family', 'parameters', 'active_parameters', 'purpose', 'description', 'strengths', 'context', 'context_supported', 'cache_bytes', 'vision', 'license', 'provenance', 'hardware', 'caveat', 'repo', 'architecture')} | {'discovered': bool(entry.get('discovered'))} |
                        {'key': 'catalog:' + entry['id'], 'local': False, 'quants': quants, 'projector': projector,
                         'source': f"{entry['repo']}@{entry['revision'][:10]}", 'source_url': f"https://huggingface.co/{entry['repo']}/tree/{entry['revision']}"})
     for item in registry:

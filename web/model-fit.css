@@ -137,3 +137,7 @@ body.motion-off .model-option.abliterated::after,body.motion-off #model-detail.a
 .best-fit{white-space:nowrap}
 .quant-choices label{grid-template-columns:16px 64px 70px minmax(0,1fr) auto auto auto auto}
 .model-bulk{display:flex;gap:8px;flex-wrap:wrap;margin-top:10px}
+.fit-model-limit{margin:8px 0 0;padding:8px 10px;border-radius:8px;background:color-mix(in srgb,var(--fit-slow) 14%,transparent);font-size:12.5px}
+.option-flag.limit{color:var(--fit-slow)}
+.model-sort{flex:none;min-width:190px}
+.model-sort{appearance:none;-webkit-appearance:none;background:var(--bg) url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6'%3E%3Cpath d='M1 1l4 4 4-4' fill='none' stroke='%23888' stroke-width='1.5'/%3E%3C/svg%3E") no-repeat right 12px center;border:1px solid var(--control-line,var(--line));padding:8px 32px 8px 12px;border-radius:8px;color:var(--text);font-size:12px;cursor:pointer}

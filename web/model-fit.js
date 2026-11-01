@@ -63,6 +63,7 @@
       <div class="fit-head">${badge(fit)}<span class="fit-source">${html(fit.note)}</span>${custom ? '<span class="fit-custom-flag">Custom settings</span>' : ''}</div>
       <p class="fit-meaning">${html(fit.meaning)}</p>
       ${fit.detail ? `<p class="fit-detail">${html(fit.detail)}</p>` : ''}
+      ${fit.model_limit ? `<p class="fit-model-limit" role="note">${html(fit.model_limit)}</p>` : ''}
       <div class="fit-meters">${meter('Graphics memory', fit.vram_used, machine.vram_total)}${fit.ram_used ? meter('System memory', fit.ram_used, machine.ram_total) : ''}</div>
       ${recommended ? `<p class="fit-suggested"><span>Recommended for this PC</span>${html(recommended)}</p>` : ''}
       ${actions}${form}
