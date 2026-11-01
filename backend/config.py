@@ -133,13 +133,27 @@ def protected_roots():
         if os.environ.get(name): roots+= [Path(os.environ[name])/'Microsoft'/'Credentials',Path(os.environ[name])/'Microsoft'/'Protect']
     return [r.resolve() for r in roots]
 
-def workspace_path(path='.',roam=False):
+def skill_folders():
+    """Where skills live. The assistant may read these (a skill's scripts and references) but never change them."""
+    return [(ROOT/'skills').resolve(),(DATA/'skills').resolve()]
+
+def _inside(target,folder): return target==folder or target.is_relative_to(folder)
+
+def workspace_path(path='.',roam=False,write=False):
     root=Path(CONFIG['workspace']).resolve()
     target=(root/path).resolve()
-    if not target.is_relative_to(root):
-        if roam and whole_pc():
-            if any(target==r or target.is_relative_to(r) for r in protected_roots()):
-                raise PermissionError('That location is protected: Luminaria\'s own data, program files, Windows and credential folders are never available to the assistant.')
+    for folder in skill_folders():
+        if _inside(target,folder):
+            if write: raise PermissionError('Skill folders are read-only. Save outputs in the working folder.')
             return target
-        raise ValueError('Path is outside the selected workspace. Turn on "Whole PC" in Settings › Permissions to let the assistant use other folders and drives.')
+    for protected in protected_roots():
+        if _inside(target,protected):
+            # A protected area that contains the working folder (the default folder sits inside Luminaria's own
+            # folder) does not block the working folder's own contents. Anything else inside it stays off limits,
+            # even when the working folder is a whole drive that happens to contain Luminaria's data.
+            if _inside(root,protected) and _inside(target,root): continue
+            raise PermissionError('That location is protected: Luminaria\'s own settings and history, program files, Windows and credential folders are never available to the assistant.')
+    if not _inside(target,root):
+        if roam and whole_pc(): return target
+        raise ValueError('Path is outside the working folder. Turn on "Whole PC" in Settings › Permissions to let the assistant use other folders and drives.')
     return target

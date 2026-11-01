@@ -6,7 +6,7 @@ import httpx
 from contextvars import ContextVar
 from langgraph.graph import StateGraph, START, END
 from langgraph.types import interrupt, Command
-from .config import CONFIG, DATA, full_access, find_runtime
+from .config import CONFIG, DATA, full_access, find_runtime, whole_pc, APP_HOME, BASE_DATA, skill_folders
 from .store import uid,now
 from .work import WorkLog,region_for,plan_steps
 from .orchestration import NoEligibleModel
@@ -152,6 +152,16 @@ class Engine:
     def measure(self,method,*args,**fields):
         try: return getattr(self.usage,method)(*args,**fields)
         except Exception: return None
+    @staticmethod
+    def environment():
+        """Where Luminaria and its files are on this PC, so the assistant never has to guess."""
+        built_in,installed=skill_folders()
+        reach=('Whole PC is on: you may also create, read and change files in any other folder or drive, except protected ones. '
+               if whole_pc() else 'Whole PC is off: file tools work only inside the working folder; the user can turn on Whole PC in Settings › Permissions. ')
+        return (f"Luminaria is installed in {APP_HOME}. Working folder (default place for files you create): {CONFIG['workspace']}. "
+                f"Skills: built-in in {built_in}, installed in {installed}; you can read them but not change them. "
+                f"Models: {BASE_DATA.parent/'models'}. {reach}"
+                f"Luminaria's settings, history and sign-in data ({BASE_DATA}) are private and never available to file tools. ")
     def system(self):
         memories=self.store.memory()
         memory='\n'.join(f"[{m['id']}] {m['title']}: {m['content']}" for m in memories)
@@ -163,7 +173,8 @@ class Engine:
         'Use discover_tools before browser or Windows tools. Windows USER_CONTROL means the user is using the computer; pause and explain. '
         'Use memory_search/history_read to recover details omitted by summaries. '
         'Use remember for durable facts requested by the user. Images may be supplied by the user or desktop tools. '
-        f"Working folder: {CONFIG['workspace']}. When the user asks about your files, folder or environment, start with the working folder (path '.'). Call tools through the tool interface, never by writing tool JSON in your reply.  Python runtime: {find_runtime('python') or 'not installed on this PC'}. Node runtime: {find_runtime('node') or 'not installed on this PC'}. "
+        + self.environment() +
+        f"When the user asks about your files, folder or environment, start with the working folder (path '.'). Call tools through the tool interface, never by writing tool JSON in your reply.  Python runtime: {find_runtime('python') or 'not installed on this PC'}. Node runtime: {find_runtime('node') or 'not installed on this PC'}. "
         'File tools are workspace-scoped; shell and Windows tools can access the PC under the active permission mode. '
         'You have persistent history and durable memory tools across sessions. Describe actual available tools and results instead of claiming generic lack of internet, execution, computer access or memory. Missing connectors and operating-system permissions still limit capabilities. '
         'Document packages in the bundled Python: python-docx, python-pptx, openpyxl, xlsxwriter, reportlab, pypdf, PyMuPDF, matplotlib, pandas, Pillow. '

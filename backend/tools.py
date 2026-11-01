@@ -1,7 +1,7 @@
 import asyncio, base64, json, os, re, subprocess
 from pathlib import Path
 from .config import CONFIG, DATA, workspace_path as _wp, full_access, external_tools_enabled, find_runtime, runtime_missing_message, runtime_path_dirs
-def workspace_path(path='.'): return _wp(path,roam=True)
+def workspace_path(path='.',write=False): return _wp(path,roam=True,write=write)
 
 def schema(name,description,properties,required=(),tier='auto',group='workspace'):
     return {'name':name,'description':description,'parameters':{'type':'object','properties':properties,'required':list(required),'additionalProperties':False},'tier':tier,'group':group}
@@ -167,8 +167,9 @@ class Toolbox:
             group,tool=name.split('__',1)
             return await self.connectors[group].call(tool,a)
         if name=='list_files':
-            p=workspace_path(a.get('path','.'))
-            return [{'name':f.name,'path':str(f.relative_to(Path(CONFIG['workspace']).resolve())),'directory':f.is_dir(),'bytes':f.stat().st_size if f.is_file() else 0} for f in sorted(p.iterdir(),key=lambda f:(not f.is_dir(),f.name.lower()))][:300]
+            p=workspace_path(a.get('path','.')); root=Path(CONFIG['workspace']).resolve()
+            show=lambda f:str(f.relative_to(root)) if f.is_relative_to(root) else str(f)
+            return [{'name':f.name,'path':show(f),'directory':f.is_dir(),'bytes':f.stat().st_size if f.is_file() else 0} for f in sorted(p.iterdir(),key=lambda f:(not f.is_dir(),f.name.lower()))][:300]
         if name=='read_file':
             p=workspace_path(a['path'])
             if p.stat().st_size>8_000_000: raise ValueError('File is larger than 8 MB; use a targeted script')
@@ -176,18 +177,18 @@ class Toolbox:
             from .sources import document
             return {'path':a['path'],**document(text,'workspace:'+a['path'],offset,limit)}
         if name=='write_file':
-            p=workspace_path(a['path']); p.parent.mkdir(parents=True,exist_ok=True)
+            p=workspace_path(a['path'],write=True); p.parent.mkdir(parents=True,exist_ok=True)
             if len(a['content'])>2_000_000: raise ValueError('Write limit is 2 MB')
             if p.exists():
                 backup=DATA/'backups'/run['id']; backup.mkdir(parents=True,exist_ok=True)
                 import shutil; shutil.copy2(p,backup/(str(__import__('time').time_ns())+'-'+p.name))
             p.write_text(a['content'],encoding='utf-8'); return {'saved':str(p),'bytes':p.stat().st_size}
         if name=='edit_file':
-            p=workspace_path(a['path']); text=p.read_text('utf-8')
+            p=workspace_path(a['path'],write=True); text=p.read_text('utf-8')
             if not a['old_text'] or text.count(a['old_text'])!=1: raise ValueError('old_text must match exactly once; read the file and retry')
             return await self.call('write_file',{'path':a['path'],'content':text.replace(a['old_text'],a['new_text'],1)},run)
         if name=='delete_file':
-            p=workspace_path(a['path'])
+            p=workspace_path(a['path'],write=True)
             if not p.is_file(): raise ValueError('Only individual files may be deleted')
             import shutil,time
             backup=DATA/'backups'/run['id']; backup.mkdir(parents=True,exist_ok=True)
