@@ -278,7 +278,9 @@ class Engine:
                 if state['owned'] and not state['running']:
                     problem=runtime.diagnose()
                     raise RuntimeError('The model manager stopped'+(f' (exit code {state["exit_code"]})' if state.get('exit_code') is not None else '')+'. '+(problem or 'Restart it from the Model library.'))
-                raise RuntimeError('Cannot reach the model server at '+CONFIG['endpoint']+'. Start the model manager from the Model library, or check the endpoint in Settings.')
+                if local_endpoint and not configured:
+                    raise RuntimeError('No model is installed yet. Open Settings › Model library to download one, then send your message again.')
+                raise RuntimeError('Cannot reach the model server. Open Settings › Model library and start or choose a model.')
         async with stack:
             yield response
 

@@ -101,3 +101,5 @@ body[data-voice=conversation]:not(.voice-review) .inspector-content,body[data-vo
 .session-meter,.tool-state,.activity-item>small{font-size:12px}
 .workflow-step{margin:16px 0;padding:16px;border:1px solid var(--line);border-radius:var(--radius)}
 .skill-runtime-detail{margin-top:8px;font-size:12px}
+.model-nudge{top:auto;bottom:24px;right:24px}
+.model-nudge .btn{white-space:nowrap}

@@ -551,8 +551,8 @@ def remove(ident, confirm):
         if not registered: raise ValueError('Model not found')
         path = Path(registered.get('model_file', ''))
         active_id = registered['id']
-    if path and _active(active_id, path if path else Path()):
-        raise ValueError('This model is active. Select another model before removing its file.')
+    was_active = bool(path and _active(active_id, path if path else Path()))
+    if was_active: _release_active()
     deleted = False
     if path and path.is_file():
         if not _inside_models(path):
@@ -571,4 +571,78 @@ def remove(ident, confirm):
         if path and _same_file(Path(item.get('model_file', '')), path): continue
         keep.append(item)
     models.save(keep)
-    return {'deleted': deleted, 'unregistered': True, 'message': 'Model uninstalled.' if deleted else 'Model removed from the library.'}
+    switched = _choose_replacement(keep) if was_active else None
+    note = f' Switched to {switched}.' if switched else (' No model is installed now. Download one to keep chatting.' if was_active else '')
+    return {'deleted': deleted, 'unregistered': True, 'switched': switched,
+            'message': ('Model uninstalled.' if deleted else 'Model removed from the library.') + note}
+
+def _release_active():
+    """Stop the model server and clear the selection, so the active model's file can be deleted (Windows keeps open files locked)."""
+    from . import runtime
+    runtime.stop_owned()
+    from .config import save_config
+    save_config({'model': '', 'model_file': '', 'projector_file': ''})
+
+def _choose_replacement(registry):
+    for item in registry:
+        if Path(item.get('model_file', '')).is_file():
+            try: models.select(item['id']); return item.get('name') or item['id']
+            except ValueError: continue
+    return None
+
+def remove_all(confirm):
+    """Delete every model downloaded into the models folder and cancel downloads. Models you added from elsewhere stay on disk."""
+    load_state()
+    if confirm is not True: raise ValueError('Confirm removal before deleting model files.')
+    with _lock: active = [k for k, j in _jobs.items() if j.get('status') in ('queued', 'downloading')]
+    for k in active:
+        try: cancel(k)
+        except ValueError: pass
+    for _ in range(40):  # give a running download a moment to let go of its file
+        with _lock:
+            if not any(j.get('status') in ('downloading', 'cancelling') for j in _jobs.values()): break
+        time.sleep(.25)
+    _release_active()
+    folder = models_folder(); removed = 0; freed = 0
+    if folder.is_dir():
+        for f in folder.iterdir():
+            if f.is_file() and (f.suffix.lower() == '.gguf' or f.name.endswith('.gguf.sha256')):
+                try: freed += f.stat().st_size; f.unlink(); removed += f.suffix.lower() == '.gguf'
+                except OSError: pass
+        partials = folder / '.partial'
+        if partials.is_dir():
+            for f in partials.iterdir():
+                try: freed += f.stat().st_size; f.unlink()
+                except OSError: pass
+    keep = [item for item in models.registry() if not _inside_models(Path(item.get('model_file', '')))]
+    models.save(keep)
+    with _lock:
+        _jobs.clear(); _persist_locked()
+    return {'removed': removed, 'freed': freed, 'message': f'Removed {removed} model{"s" if removed != 1 else ""} and freed {format_bytes(freed)}.'}
+
+GOOD_FITS = ('recommended', 'good', 'slow')
+
+def download_all(store, confirm=False):
+    """Queue the best-fit size of every model that runs on this PC. Without confirm, only reports what would happen."""
+    lib = library(store)
+    picks = []
+    for entry in lib['models']:
+        quant = next((q for q in entry.get('quants', []) if q.get('best_fit')), None)
+        if not quant or quant.get('installed') or is_projector(quant) or not quant.get('downloadable', True): continue
+        if (quant.get('fit') or {}).get('rating') not in GOOD_FITS: continue
+        if (quant.get('job') or {}).get('status') in ('queued', 'downloading'): continue
+        picks.append((GOOD_FITS.index(quant['fit']['rating']), quant.get('bytes') or 0, entry.get('name', ''), quant))
+    picks.sort(key=lambda p: (p[0], p[1]))
+    free = shutil.disk_usage(models_folder() if models_folder().exists() else models.BASE_DATA).free
+    room = min(lib['budget']['remaining'], max(0, free - 1024**3))
+    fits, skipped, total = [], [], 0
+    for _, size, name, quant in picks:
+        if total + size <= room: fits.append(quant); total += size
+        else: skipped.append(name)
+    summary = {'count': len(fits), 'bytes': total, 'skipped': len(skipped), 'available': room, 'total_models': len(picks)}
+    if not confirm: return summary
+    queued = 0
+    for quant in fits:
+        try: enqueue(quant['id']); queued += 1
+        except ValueError: pass
+    return {**summary, 'queued': queued}

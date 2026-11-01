@@ -928,6 +928,20 @@ async def model_use(id:str):
     engine.client.headers['Authorization']='Bearer '+CONFIG.get('model_api_key','local-only')
     broadcast({'type':'changed'}); return result
 
+@app.post('/api/model-library/remove-all')
+async def model_remove_all(request:Request):
+    if benchmarking: raise ValueError('Wait for the model benchmark to finish')
+    if any(not r.get('finished') for r in engine.runs.values()): raise ValueError('Finish or stop active tasks before removing models')
+    from .model_library import remove_all
+    result=await asyncio.to_thread(remove_all,(await request.json()).get('confirm'))
+    broadcast({'type':'changed'}); return result
+
+@app.post('/api/model-library/download-all')
+async def model_download_all(request:Request):
+    from .model_library import download_all
+    result=await asyncio.to_thread(download_all,store,(await request.json()).get('confirm') is True)
+    broadcast({'type':'changed'}); return result
+
 @app.post('/api/model-library/{id}/remove')
 async def model_remove(id:str, request:Request):
     if benchmarking: raise ValueError('Wait for the model benchmark to finish')
