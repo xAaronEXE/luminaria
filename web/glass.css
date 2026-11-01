@@ -301,4 +301,26 @@ body.effects-low .library-menu{background:var(--panel);backdrop-filter:none;-web
 @media (prefers-reduced-motion:reduce){.steps>summary::after,.step>summary::after{transition:none}}
 .steps.single .step>summary{display:none}
 .steps.single .step-detail{padding-top:10px}
-.model-toolbar .model-sort{background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6'%3E%3Cpath d='M1 1l4 4 4-4' fill='none' stroke='%23888' stroke-width='1.5'/%3E%3C/svg%3E")!important;background-repeat:no-repeat!important;background-position:right 12px center!important;padding-right:32px!important}
+
+/* Themed dropdowns (web/select.js). The native select stays in the page, hidden, as the source of truth. */
+.lum-select{position:relative;display:inline-flex;vertical-align:middle;max-width:100%}
+.lum-select.full{display:flex;width:100%}
+.lum-select[hidden]{display:none!important}
+.lum-select-native{position:absolute!important;inset:0;width:100%!important;height:100%!important;opacity:0!important;pointer-events:none!important}
+.lum-select-button{flex:1;min-width:0;display:flex;align-items:center;gap:10px;justify-content:space-between;min-height:36px;padding:7px 12px;border-radius:12px;border:1px solid var(--glass-line);background:color-mix(in srgb,var(--text) 5%,transparent);color:var(--text);font:inherit;font-size:13px;text-align:left;cursor:pointer;transition:border-color .15s,background .15s}
+.lum-select-button:hover{background:color-mix(in srgb,var(--text) 8%,transparent)}
+.lum-select-button:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+.lum-select-button.open{border-color:color-mix(in srgb,var(--accent) 60%,var(--glass-line))}
+.lum-select-button:disabled{opacity:.5;cursor:default}
+.lum-select-value{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.lum-select-button::after{content:"";flex:none;width:8px;height:8px;margin-top:-4px;border-right:1.5px solid var(--muted);border-bottom:1.5px solid var(--muted);transform:rotate(45deg);transition:transform .15s}
+.lum-select-button.open::after{transform:rotate(225deg);margin-top:4px}
+.lum-select-list{position:fixed;z-index:1000;overflow:auto;padding:5px;border-radius:12px;border:1px solid var(--glass-line);background:linear-gradient(color-mix(in srgb,var(--panel) 94%,transparent),color-mix(in srgb,var(--panel) 94%,transparent)),var(--bg);backdrop-filter:blur(var(--glass-blur,18px)) saturate(1.2);-webkit-backdrop-filter:blur(var(--glass-blur,18px)) saturate(1.2);box-shadow:var(--glass-shadow,0 12px 32px rgba(0,0,0,.25));opacity:0;transform:translateY(-4px);transition:opacity .12s,transform .12s;outline:none}
+.lum-select-list.up{transform:translateY(4px)}
+.lum-select-list.shown{opacity:1;transform:none}
+.lum-select-option{position:relative;padding:8px 12px 8px 30px;border-radius:8px;font-size:13px;color:var(--text);cursor:pointer;white-space:nowrap}
+.lum-select-option.active{background:color-mix(in srgb,var(--accent) 16%,transparent)}
+.lum-select-option[aria-selected="true"]{font-weight:600}
+.lum-select-option[aria-selected="true"]::before{content:"";position:absolute;left:12px;top:50%;width:5px;height:9px;margin-top:-6px;border-right:2px solid var(--accent);border-bottom:2px solid var(--accent);transform:rotate(45deg)}
+.lum-select-option[aria-disabled="true"]{opacity:.45;cursor:default}
+@media (prefers-reduced-motion:reduce){.lum-select-list,.lum-select-button::after{transition:none}}
