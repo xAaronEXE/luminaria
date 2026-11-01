@@ -15,7 +15,11 @@ class Connector:
         from .config import runtime_path_dirs
         # Put Luminaria's built-in Python and Node first, so connectors that start other tools find them.
         # uvx gets its own Python for each connector instead of borrowing the built-in one.
-        return {**os.environ,'PATH':os.pathsep.join(runtime_path_dirs()+[os.environ.get('PATH','')]),'UV_PYTHON_PREFERENCE':'only-managed',**self.config.get('env',{})}
+        from .config import BASE_DATA
+        cache=BASE_DATA/'connector-cache'  # npx and uv downloads stay inside Luminaria's folder
+        return {**os.environ,'PATH':os.pathsep.join(runtime_path_dirs()+[os.environ.get('PATH','')]),'UV_PYTHON_PREFERENCE':'only-managed',
+                'npm_config_cache':str(cache/'npm'),'UV_CACHE_DIR':str(cache/'uv'),'UV_PYTHON_INSTALL_DIR':str(cache/'uv-python'),'UV_TOOL_DIR':str(cache/'uv-tools'),
+                **self.config.get('env',{})}
     def transport(self):
         if self.config.get('url'):
             from .integrations import transport

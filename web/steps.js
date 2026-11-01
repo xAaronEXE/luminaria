@@ -83,6 +83,9 @@
       },
       refresh() {
         el.querySelector('.steps-title').textContent = summary(rows);
+        // A single step needs no inner list: opening the group shows its details directly.
+        const single = rows.length === 1; el.classList.toggle('single', single);
+        el.querySelectorAll('.step').forEach((row) => { if (single) row.open = true; });
         const waiting = rows.filter((r) => r.status === 'waiting' || r.status === 'requested').length;
         const failed = rows.filter((r) => r.status === 'failed' || r.status === 'error').length, running = rows.some((r) => r.status === 'running');
         const note = waiting ? 'Waiting for your approval' : running ? 'Working…' : failed ? `${failed} failed` : '';

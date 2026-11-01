@@ -11,8 +11,8 @@ BUILTINS=[
  schema('find_capability','Search Luminaria\'s built-in catalog of thousands of real skills (workflows) and connectors (tools for other apps and services) when no installed skill or tool fits the task. Returns IDs to pass to install_capability.',{'query':S,'kind':{'type':'string','enum':['any','skills','connectors']}},['query'],'auto','skills'),
  schema('install_capability','Install a skill or connector from find_capability by its ID so you can use it in this task. Skills are downloaded at a pinned commit; connectors run third-party code. Requires user approval.',{'id':S},['id'],'approve','skills'),
  schema('load_skill','Read a named workflow skill before using it.',{'name':S},['name'],'auto','skills'),
- schema('finish_skill','Verify output files and finish a loaded skill. Supply successful evidence action IDs from this run. File readback/hashes establish existence, not semantic correctness.',{'name':S,'outputs':{'type':'array','items':S,'minItems':1,'maxItems':10},'evidence_actions':{'type':'array','items':S,'minItems':1,'maxItems':30}},['name','outputs','evidence_actions'],'auto','skills'),
- schema('create_file_workflow','Propose a bounded file workflow for user review in Tools → File workflows. Does not execute file steps. Declare the user objective, allowed workspace locations, completion criteria, and read/create/edit/trash steps. No shell, permanent deletion, or application control.',{'objective':S,'completion_criteria':S,'allowed_locations':{'type':'array','items':S,'minItems':1,'maxItems':10},'steps':{'type':'array','minItems':1,'maxItems':50,'items':{'type':'object','properties':{'action':{'type':'string','enum':['read','create','edit','trash']},'path':S,'content':S,'old_text':S,'new_text':S},'required':['action','path'],'additionalProperties':False}}},['objective','completion_criteria','allowed_locations','steps'],'approve','planning'),
+ schema('finish_skill','Finish a loaded skill by checking its output files exist. Optionally list the action IDs of sources you used.',{'name':S,'outputs':{'type':'array','items':S,'minItems':1,'maxItems':10},'evidence_actions':{'type':'array','items':S,'maxItems':30}},['name','outputs'],'auto','skills'),
+ schema('create_file_workflow','Only when the user explicitly asks for a reviewable plan of changes to many existing files: saves a plan for review in Tools → File workflows and does not execute it. Never use this to create documents; make those with run_code. Declare the user objective, allowed workspace locations, completion criteria, and read/create/edit/trash steps. No shell, permanent deletion, or application control.',{'objective':S,'completion_criteria':S,'allowed_locations':{'type':'array','items':S,'minItems':1,'maxItems':10},'steps':{'type':'array','minItems':1,'maxItems':50,'items':{'type':'object','properties':{'action':{'type':'string','enum':['read','create','edit','trash']},'path':S,'content':S,'old_text':S,'new_text':S},'required':['action','path'],'additionalProperties':False}}},['objective','completion_criteria','allowed_locations','steps'],'approve','planning'),
  schema('list_files','List a workspace directory.',{'path':S}),
  schema('read_file','Read a UTF-8 workspace file, with optional offset and limit in characters.',{'path':S,'offset':I,'limit':I},['path']),
  schema('write_file','Create or replace a UTF-8 workspace file. Requires user approval.',{'path':S,'content':S},['path','content'],'approve'),
@@ -158,7 +158,7 @@ class Toolbox:
                     'completion':'Use finish_skill after producing output files and collecting evidence action IDs. Loading instructions alone is not completion.'}
         if name=='finish_skill':
             from .skill_runs import complete
-            return complete(self.store,a['name'],a['outputs'],a['evidence_actions'],run)
+            return complete(self.store,a['name'],a['outputs'],a.get('evidence_actions') or [],run)
         if name=='create_file_workflow':
             from .file_workflows import create
             plan=create(self.store,a)
@@ -198,7 +198,7 @@ class Toolbox:
             return await search_workspace(workspace_path(),a['query'])
         if name=='run_command': return await self.process(['powershell.exe','-NoProfile','-NonInteractive','-Command',a['command']],a.get('timeout',60),extra_path=self.skill_paths(run))
         if name=='run_code':
-            folder=workspace_path('.studio-scripts'); folder.mkdir(exist_ok=True)
+            folder=DATA/'scripts'; folder.mkdir(parents=True,exist_ok=True)  # scratch scripts stay in Luminaria's folder, not the user's
             p=folder/(run['id']+'-'+str(__import__('time').time_ns())+('.py' if a['language']=='python' else '.js'))
             p.write_text(a['code'],encoding='utf-8')
             kind='python' if a['language']=='python' else 'node'

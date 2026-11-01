@@ -299,3 +299,5 @@ body.effects-low .library-menu{background:var(--panel);backdrop-filter:none;-web
 .step-tool{font:12px var(--mono);color:var(--muted);margin-bottom:4px}
 .step-detail pre{max-height:240px;overflow:auto;margin:4px 0;font-size:12px;white-space:pre-wrap;word-break:break-word}
 @media (prefers-reduced-motion:reduce){.steps>summary::after,.step>summary::after{transition:none}}
+.steps.single .step>summary{display:none}
+.steps.single .step-detail{padding-top:10px}

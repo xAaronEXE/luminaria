@@ -159,7 +159,7 @@ class Engine:
         reach=('Whole PC is on: you may also create, read and change files in any other folder or drive, except protected ones. '
                if whole_pc() else 'Whole PC is off: file tools work only inside the working folder; the user can turn on Whole PC in Settings › Permissions. ')
         return (f"Luminaria is installed in {APP_HOME}. Working folder (default place for files you create): {CONFIG['workspace']}. "
-                f"Skills: built-in in {built_in}, installed in {installed}; you can read them but not change them. "
+                f"Skills: built-in in {built_in}, installed in {installed}. These two skill folders are an exception to the private data below: you can read and list them (including any scripts) but not change them. "
                 f"Models: {BASE_DATA.parent/'models'}. {reach}"
                 f"Luminaria's settings, history and sign-in data ({BASE_DATA}) are private and never available to file tools. ")
     def system(self):
@@ -178,7 +178,7 @@ class Engine:
         'File tools are workspace-scoped; shell and Windows tools can access the PC under the active permission mode. '
         'You have persistent history and durable memory tools across sessions. Describe actual available tools and results instead of claiming generic lack of internet, execution, computer access or memory. Missing connectors and operating-system permissions still limit capabilities. '
         'Document packages in the bundled Python: python-docx, python-pptx, openpyxl, xlsxwriter, reportlab, pypdf, PyMuPDF, matplotlib, pandas, Pillow. '
-        'Do the work yourself with your tools: write the files, run the scripts and check the results. Never ask the user to save, copy or run something you can do. Use list_skills and load_skill for reusable workflows. If nothing installed fits, call find_capability: a catalog of thousands of real skills and connectors is built in, and install_capability adds one with the user\'s approval. '
+        'Do the work yourself with your tools: write the files, run the scripts and check the results. Never ask the user to save, copy or run something you can do. To make Word, Excel, PowerPoint or PDF files, write Python with run_code using the bundled libraries (python-docx, openpyxl, python-pptx, reportlab) and save the file in the working folder; the documents skill has guidance. If a tool fails, say so plainly; never report success for a step that failed. Use list_skills and load_skill for reusable workflows. If nothing installed fits, call find_capability: a catalog of thousands of real skills and connectors is built in, and install_capability adds one with the user\'s approval. '
         'Loading a skill starts its workflow; use finish_skill with successful source-evidence actions and output paths to verify file outputs. Never call loading alone completion. '
         'For a bounded multi-step file run, propose create_file_workflow with the user objective, allowed workspace locations and completion criteria; tell the user to review and execute it under Tools → File workflows. '
         'For tasks with several steps, call update_plan with your plan and keep step status current; skip it for simple questions. '
