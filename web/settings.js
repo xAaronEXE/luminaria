@@ -1,6 +1,6 @@
 /* Categorized settings backed by the local API. */
 (()=>{
- const groups=[['Account',['Profile','Sign-in & devices','Cloud sync','Insights']],['Workspace',['Default folder','Tools & permissions','Memory & context','Integrations','Marketplace']],['Models & voice',['Models','Orchestration','Hardware & tuning','Voice']],['App',['Appearance','Updates']]];
+ const groups=[['Account',['Profile','Sign-in & devices','Cloud sync','Insights']],['Workspace',['Default folder','Tools & permissions','Memory & context','Extensions']],['Models & voice',['Models','Orchestration','Hardware & tuning','Voice']],['App',['Appearance','Updates']]];
  const labels={Models:'Model library',Orchestration:'Auto mode','Tools & permissions':'Permissions'};
  const sections=groups.flatMap(([,pages])=>pages);
  const aliases={Inference:'Default folder','Working folder':'Default folder','Model library':'Models',Account:'Profile',Accounts:'Profile','Sign-in methods':'Sign-in & devices','Devices & security':'Sign-in & devices','Auto mode':'Orchestration',Permissions:'Tools & permissions'};
@@ -10,7 +10,9 @@
  const row=(title,description,value)=>`<div class="setting-row"><div><h3>${title}</h3><p>${description}</p></div><span class="badge">${value}</span></div>`;
  function stopLibraryPoll(){clearTimeout(libraryTimer);libraryGeneration++}
  async function settingsView(section){
-  section=aliases[section]||section;if(!sections.includes(section))section='Profile';
+  section=aliases[section]||section;
+  if(['Extensions','Integrations','Marketplace'].includes(section))return window.openExtensions(section==='Integrations'?'connectors':section==='Marketplace'?'browse':'installed');
+  if(!sections.includes(section))section='Profile';
   stopLibraryPoll();
   const generation=libraryGeneration;
   const oldNav=$('.settings-navigation'),navScroll=oldNav?.scrollTop||0,search=$('#settings-search')?.value||'';
@@ -24,7 +26,6 @@
   try{
   if(section==='Cloud sync'){await renderCloudSync(body);return}
   if(['Profile','Sign-in & devices'].includes(section)){await renderAccounts(body);return}
-  if(section==='Marketplace'){await renderMarketplace(body);return}
   if(section==='Integrations'){body.innerHTML='<h3 class="settings-page-title">Integrations</h3><p class="settings-intro">Connect outside services. Each one adds its own tools once you sign in to it.</p><div id="tools-body"></div>';await renderIntegrations(body.querySelector('#tools-body'));return}
   if(section==='Default folder'){await studioSettingsSection('Inference',body);await renderAccountProfiles(body);return}
   if(section==='Models'){

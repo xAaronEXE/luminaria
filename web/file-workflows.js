@@ -6,6 +6,7 @@
   const button=document.createElement('button');button.className='btn';button.textContent='File workflows';button.onclick=safe(()=>view());body.prepend(button);
  }};
  let chosen='',timer;
+ window.openFileWorkflows=()=>view();
  async function view(){
   clearTimeout(timer);const data=await api('/file-workflows');
   showPanel('File workflows','Bounded file tasks with observations, recovery copies, and verified results.',`<p class="note">Declare the objective and allowed locations before running. Review mode approves one step at a time. Full Access can run the remaining file steps. No shell, permanent deletion, or application control is included.</p>
