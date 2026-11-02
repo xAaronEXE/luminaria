@@ -1,86 +1,308 @@
 # Luminaria
 
-![Luminaria — Intelligence, on your terms.](web/brand/social-cover.svg)
+![Luminaria: Intelligence, on your terms.](web/brand/social-cover.svg)
 
-**Luminaria is a private AI workspace for Windows that runs on your own PC.** Chat with local language models, let an assistant read and write files, run code, research the web and use your other apps, and keep your history, memory and files on your own machine. No subscription, no cloud model required.
+**Luminaria is a private AI workspace for Windows that runs entirely on your own PC.** It chats with AI models that run on your own graphics card, and it does real work: it reads, writes and organizes files anywhere on your computer, makes Word, Excel, PowerPoint and PDF documents, runs code, researches the web, and uses your other apps. Your conversations, memory and files stay on your machine. There's no subscription and no cloud AI service.
 
-> **Development build, not a public stable release.** Installers are not code-signed yet, so Windows SmartScreen may warn on first run. See [VERIFICATION.md](VERIFICATION.md) for what has been checked, and the [master specification](docs/specifications/MASTER-SPEC.md) for the intended product. A feature being visible in the interface does not mean it has been verified.
+> **Early release.** Luminaria is under active development. The installer isn't code-signed yet, so Windows SmartScreen shows a warning the first time you run it (see [Install](#install) for what to click).
 
-## Who it is for
+---
 
-- People who want a capable AI assistant without sending their files and conversations to someone else's servers.
-- Builders and tinkerers who run models locally and want a proper desktop app around them instead of a terminal.
-- Anyone who wants an assistant that can actually do work (edit files, run commands, research, draft documents) under controls they set.
+## Contents
 
-You need a Windows 10 or 11 PC. Everything else, including Python, Node.js and the model runtime, is included. A graphics card with 8 GB or more of memory makes local models far more pleasant, but Luminaria rates every model against your own hardware so you can see what will and will not run well before you download it.
+1. [Why Luminaria](#why-luminaria)
+2. [What you need](#what-you-need)
+3. [Install](#install)
+4. [First launch](#first-launch)
+5. [Choosing a model](#choosing-a-model)
+6. [Working with Luminaria](#working-with-luminaria)
+7. [Your whole PC, with a default folder](#your-whole-pc-with-a-default-folder)
+8. [Permissions: how much it may do on its own](#permissions-how-much-it-may-do-on-its-own)
+9. [Memory](#memory)
+10. [Extensions: skills, connectors and workflows](#extensions-skills-connectors-and-workflows)
+11. [Auto mode, hardware and tuning](#auto-mode-hardware-and-tuning)
+12. [Voice](#voice)
+13. [Appearance](#appearance)
+14. [Profiles, sign-in and cloud sync](#profiles-sign-in-and-cloud-sync)
+15. [Updates](#updates)
+16. [Where everything lives](#where-everything-lives)
+17. [Privacy and security](#privacy-and-security)
+18. [Uninstall](#uninstall)
+19. [Troubleshooting](#troubleshooting)
+20. [FAQ](#faq)
+21. [What's new](#whats-new)
 
-## What it does
+---
 
-### Chat and get work done
-- **A real assistant, not just a chat box.** It can read, search, create and edit files in your working folder, run PowerShell and Python or JavaScript code, fetch and read web pages and PDFs, and search the web.
-- **Plans and progress.** For multi-step jobs the assistant shows its plan, keeps it current as it works, and records every action it takes so you can see exactly what happened.
-- **Pinned working brief.** Goals, constraints and decisions for each task stay in view and survive long conversations.
-- **Long conversations that stay usable.** When a chat grows, older turns are summarised for the model while the full original history stays on disk and can be searched and recalled.
-- **Attach what you are working on.** Images, PDFs, Word documents, text and code, or a whole folder.
-- **Scheduled prompts** that run on a timer while Luminaria is open.
+## Why Luminaria
 
-### You choose how much it may do
-- **Ask me first** (default): reads and searches run on their own, while changes, commands and network use wait for your approval.
-- **Hands-free**: everything runs without asking, using your Windows permissions.
-- **Whole PC**: lets the assistant's file tools reach any drive, not just the working folder. One button, **Grant full access**, turns on all of it.
-- Even in the widest mode, Luminaria's own settings and credentials, program files, Windows and credential folders (such as `.ssh`) stay off limits to the assistant, and web fetch never opens private or local network addresses.
-- This is **not an operating-system sandbox**. Anything it is allowed to do runs with your Windows account permissions.
+- **Private by design.** The AI runs on your hardware. Chats, memory, files and history are stored on your PC, not on someone else's servers.
+- **An assistant that does the work.** Luminaria doesn't stop at telling you how to do something. It writes the file, runs the script, checks the result and tells you plainly whether it worked.
+- **Plug and play.** One installer. Python, Node.js, the model runtime, the browser and Windows connectors, and the WebView2 runtime are all included. You don't install anything else.
+- **Matched to your PC.** Every model in the library is rated against your own graphics card and memory before you download it, so you know what will run well.
+- **You're in control.** Choose whether it asks before making changes or works hands-free. Its private data, Windows and Program Files are always off limits to it.
+- **Thousands of extensions.** Thousands of free skills (step-by-step workflows) and connectors (tools for other apps) are built in. Luminaria can find and add the right one when a task needs it, with your approval.
 
-### Local models, matched to your PC
-- **Model library** with a curated catalogue plus any GGUF model you add yourself, in multiple quantizations.
-- **Per-PC fit ratings**, from green (runs well) through yellow and orange to red (too large), based on your graphics memory and system memory, with a recommended context size and load settings.
-- **Benchmark each quantization** on your own machine. Speed, first-token time and a quality check are saved and shown next to every quantization.
-- **Auto mode** can route each request to the most suitable installed model, and you can restrict which models it may choose from.
-- **Hardware and tuning** controls for expert users, with automatic detection by default.
-- Vision models, an abliterated ("unbound") model section clearly labelled, and disk-space checks before large downloads.
+## What you need
 
-### Memory, skills and connectors
-- **Persistent memory** you control: facts and preferences the assistant may carry between tasks, each with its source.
-- **Skills**: reusable workflows (documents, research, code review, planning and more) that the assistant loads when a task calls for them.
-- **Thousands of skills and connectors built in.** A searchable catalog of openly licensed skills from public GitHub repositories and connectors from the official MCP Registry ships with the app, with about 100 vetted skills pre-installed. When a task needs something new, the assistant finds it with `find_capability` and adds it with your approval. Settings › Marketplace searches the same catalog. Connectors run third-party code on your PC, so each install asks first.
-- **Integrations** for services such as GitHub, Gmail, Google Drive and Calendar and Slack, each added with its own sign-in. Their tools follow your permission settings.
-- **Browser and Windows desktop tools** the assistant can discover and use when you allow them.
+| | Minimum | Recommended |
+|---|---|---|
+| Windows | Windows 10 or 11, 64-bit | Windows 11 |
+| Graphics card | Any; small models also run on the processor | A graphics card with 8 GB or more of video memory; 12–16 GB runs the best models comfortably |
+| Memory (RAM) | 16 GB | 32 GB |
+| Disk space | About 3 GB for the app, plus 2–20 GB per model | An SSD with 50 GB or more free |
+| Internet | To download the app and models | Optional after that, except for web research and connectors |
 
-### Voice and look
-- Voice input and spoken replies, with a safe-graphics mode for older machines.
-- A glass interface with a living orb, light and dark themes, colour palettes and adjustable motion.
+Luminaria installs for your Windows user only and doesn't need administrator rights.
 
-### Accounts, profiles and sync
-- **Local profiles** keep separate chats, memory, settings and files for each person using the PC.
-- Optional **sign-in** (Google, GitHub, Discord) opens in your default browser, and **cloud sync** can carry your account data between devices while the AI itself keeps running on your desktop.
-- **Insights** shows how you use tools, skills and models, on this PC.
+## Install
+
+1. Open the [**Releases**](../../releases/latest) page and download `Luminaria-<version>-Setup.exe`.
+2. Double-click the installer.
+3. Windows may show **"Windows protected your PC."** This happens because the installer isn't code-signed yet. Click **More info**, then **Run anyway**.
+4. Follow the steps. By default Luminaria installs to `Desktop\Luminaria\App` and adds Start menu and desktop shortcuts.
+5. When setup finishes, leave **Open Luminaria** ticked and click **Finish**.
+
+The installer removes its temporary files when it's done and keeps only what Luminaria needs to run and update.
+
+## First launch
+
+1. **Sign in.** Luminaria opens a sign-in screen. Choose **Google**, **GitHub** or **Discord**; sign-in completes in your default web browser. Signing in doesn't give Luminaria access to your email, repositories or messages; it only identifies your account so your profile can sync between your devices. Your chats and files stay on this PC.
+2. **Make yourself at home.** Name your workspace and choose light, dark, or follow Windows.
+3. **Choose a default folder.** This is where new files go when you don't say where. Luminaria can still work anywhere on your PC. You can change the folder any time.
+4. **Get a model.** If no model is installed yet, Luminaria shows a small prompt that takes you to the **Model library**. Pick one rated **Recommended** or **Runs well** for your PC and click **Download**. See [Choosing a model](#choosing-a-model).
+
+You're ready. Type a message, or pick a starter such as *Explore a codebase*, *Research an idea* or *Create something useful*.
+
+## Choosing a model
+
+Open **Library › Models** (also in **Settings › Model library**).
+
+### The library
+- **Hundreds of local models** from trusted publishers, each in several sizes ("quantizations"). Smaller sizes use less memory and run faster; larger sizes are a little smarter.
+- **Vision models** can look at images you attach. They're marked with a vision badge.
+- **Search and filter** (All, Installed, Standard, Abliterated, and by capability), and **sort** by best fit for this PC, name, size, parameters or recently added.
+- **Download all** and **Remove all** buttons make bulk changes easy. You can remove any model, including the one that's currently active.
+
+### Fit ratings
+Every size of every model is rated against **your** graphics card and memory before you download it:
+
+| Rating | Meaning |
+|---|---|
+| **Recommended** | Runs fully in graphics memory with room for long context. |
+| **Runs well** | Fits with good speed. Context or headroom is somewhat limited. |
+| **Runs slowly** | Fits, but part of the model runs from system memory, so replies come slowly. |
+| **May be unstable** | Only just fits. Expect out-of-memory errors or freezes under load, or with other apps open. |
+| **Too large** | Needs more memory than this PC has. |
+| **Not rated** | Graphics memory couldn't be read. Set it in Settings › Hardware & tuning, or run a benchmark. |
+
+If a model's own design limits it (for example, it only supports a short context), the card says so. That way you can tell a limit of the model from a limit of your PC.
+
+### Benchmarks
+Click **Benchmark** on any installed size to measure it on your PC. Speed (tokens per second), time to the first word and a quick quality check are saved and shown next to that size.
+
+### Abliterated models
+Some publishers release "abliterated" versions with their refusal training removed. They're kept under their own **Abliterated** filter and clearly labelled. Use them responsibly.
+
+## Working with Luminaria
+
+### The composer
+- **Enter** sends; **Shift+Enter** adds a new line.
+- **+** attaches images, PDFs, Word documents, text and code, or a whole folder.
+- **Model** picks which model answers, or **Auto** (see [Auto mode](#auto-mode-hardware-and-tuning)).
+- **Think harder** gives the model more time to reason before it answers.
+- **Plan only** has Luminaria look around and write a plan without changing anything. Approve the plan to carry it out.
+- **Microphone** dictates; **voice mode** holds a spoken conversation. See [Voice](#voice).
+- You can keep typing while Luminaria works. New messages wait in a queue and send in order.
+
+### Slash commands
+| Command | What it does |
+|---|---|
+| `/new` | Start a new task |
+| `/stop` | Stop the current reply |
+| `/compact` | Summarize older messages now to free up room |
+| `/plan` | Show the current plan |
+| `/brief` | Open the pinned working brief |
+| `/memory` | Open Memory |
+| `/tools` | Open Tools |
+| `/skills` | Open Extensions on the Skills tab |
+| `/models` | Open the Model library |
+| `/skill name` | Use a specific skill for this message |
+| `/help` | List the commands |
+
+### Seeing what it does
+- **Steps.** Every action appears in the chat in plain English and is grouped and collapsed, for example *"Read 3 files, ran a command and changed a file ▸"*. Click to see the exact inputs and results.
+- **Plan.** For multi-step jobs, Luminaria shows its plan and keeps each step's status current as it works.
+- **Working brief.** Goals, constraints and decisions for the task stay pinned and survive long conversations. You can edit it; Luminaria can propose changes.
+- **Approvals.** In *Ask me first* mode, changes wait for your **Allow** or **Deny**. Approvals are highlighted and never hidden.
+- **Checks its own work.** After making a document, spreadsheet, slide deck, PDF, web page or image, Luminaria opens the file to confirm it's real and complete before saying it's done. If a step fails, it says so.
+- **Files & activity.** The right-hand panel shows your default folder, a log of every action, and how much of the model's context the chat is using.
+
+### Long conversations
+When a chat gets long, Luminaria summarizes older turns for the model and keeps recent turns word for word. The full original history is never deleted; Luminaria can search it and recall exact earlier messages. You can choose when this starts and how many recent turns to keep in **Settings › Memory & context**.
+
+### Documents
+Ask for a Word document, Excel spreadsheet, PowerPoint deck or PDF and Luminaria builds the real file with its built-in libraries, saves it where you asked (or in your default folder), checks it, and tells you where it is.
+
+## Your whole PC, with a default folder
+
+Luminaria isn't confined to one folder. **Name any folder, drive or file in your message** and it works there:
+
+- *"Tidy up D:\Photos into folders by year."*
+- *"Summarize the PDF on my Desktop."*
+- *"Find every TODO in C:\Projects\website."*
+
+It knows where your Desktop, Documents, Downloads and drives are, so you don't have to type full paths.
+
+The **default folder** (Settings › Default folder) is simply where new files go when you don't say where, and what "this folder" means. If a folder has a `LUMINARIA.md` file, Luminaria reads it before working there (see [Memory](#memory)).
+
+**Always off limits:** Windows, Program Files, credential folders such as `.ssh`, and Luminaria's own private settings, history and sign-in data. Skill folders can be read but not changed.
+
+## Permissions: how much it may do on its own
+
+Open **Settings › Permissions**, or click the mode chip at the top of the window.
+
+| Mode | Reads and searches | Changes, commands, network |
+|---|---|---|
+| **Ask me first** (default) | Run on their own | Wait for your approval |
+| **Hands-free** | Run on their own | Run on their own |
+
+- **Grant full access** turns on Hands-free and every tool in one click.
+- **Computer and command tools** turns on PowerShell, code, the browser and Windows desktop tools. These act with your Windows permissions.
+- **Ask before reads too** makes *Ask me first* also ask before reading files and searching.
+- **Delete** always asks first and keeps a recovery copy.
+- **Reset remembered approvals** clears any "always allow" choices.
+
+Luminaria isn't an operating-system sandbox. Anything you allow it to do runs as your Windows user.
+
+## Memory
+
+Memory is plain Markdown that you can read and edit, like a notes file. Open **Library › Memory**.
+
+### My memory (`MEMORY.md`)
+- One page per profile, used in **every chat and every folder**, and synced with your account.
+- Sections: **About me**, **Preferences**, **Notes**. Edit, reorder or delete anything.
+- Say *"remember that I prefer short answers"* and Luminaria adds a dated line under **Notes**.
+- **Edit** and **Preview** views, **Save** or **Ctrl+S**, and a warning if you close with unsaved changes.
+
+### Project notes (`LUMINARIA.md`)
+- Any folder can have its own `LUMINARIA.md` with notes about that project: what it is, how it's organized, conventions to follow.
+- **This project** in Memory edits the notes for your default folder. **Start project notes** fills in a starter template.
+- Luminaria reads project notes at the start of every task in that folder and keeps them up to date when it learns lasting facts.
+
+Memory is loaded at the top of every request word for word, so the model can reuse its earlier work and replies start faster in long chats.
+
+## Extensions: skills, connectors and workflows
+
+Open **Library › Extensions**. Everything works the same way: each item shows what it is, whether it's ready, one main button, and setup as numbered steps.
+
+| Tab | What's there |
+|---|---|
+| **Installed** | Everything you have, grouped into skills, connectors and workflows |
+| **Browse** | The built-in catalog of thousands of free skills and connectors. **Install** is one click; you confirm first. |
+| **Skills** | Grouped by *Needs setup*, *Ready* and *Off*. **Use** sends `/skill name` to the composer. **Add your own skill** imports a Markdown file. |
+| **Connectors** | Services like **GitHub, Gmail, Google Drive, Google Calendar and Slack**, the built-in **Browser** and **Windows** connectors, and **Add your own connector** for any MCP server. |
+| **Workflows** | **Automations** (prompts that run on a schedule) and **File workflows** (reviewable plans for changing many files). |
+
+- **Skills** are step-by-step instructions Luminaria follows for a kind of task, such as documents, research, code review, planning or GitHub chores. They never add credentials or skip approvals.
+- **Connectors** give Luminaria tools for other apps. Each service is connected with its own sign-in or token, which is encrypted on your PC. Read-only access is on by default where the service supports it.
+- **When something needs setup**, its steps take you straight to the fix: *Set up GitHub*, *Open Permissions* and so on.
+- **Luminaria can find extensions for you.** If a task needs a skill or connector you don't have, it searches the catalog and asks before installing.
+- Connectors from the catalog run third-party code on your PC. Install only ones you trust.
+
+## Auto mode, hardware and tuning
+
+- **Auto mode** (Settings › Auto mode) picks the most suitable installed model for each message: a fast model for quick questions, a stronger one for hard work. You can limit which models it may choose.
+- **Hardware & tuning** shows the graphics card, memory and processor Luminaria detected. Settings are chosen automatically, and **tuning** can measure the fastest settings for your PC, such as processor threads and how much of the model goes on the graphics card. Context size and reply length are in **Settings › Memory & context**.
+- Only one model is loaded on your graphics card at a time. Switching models loads the new one on demand.
+
+## Voice
+
+- **Dictation** turns speech into text in the composer.
+- **Voice mode** holds a spoken back-and-forth conversation, with an audio-reactive orb.
+- Speech recognition and the spoken voice run **offline on your PC**; no audio is uploaded. Voice currently supports English.
+- Choose your microphone and voice settings in **Settings › Voice**.
+
+## Appearance
+
+**Settings › Appearance**: light, dark or follow Windows, color palettes, the living orb, motion level, and a reduced-graphics mode for older PCs. Luminaria also follows Windows' *reduce motion* setting.
+
+## Profiles, sign-in and cloud sync
+
+- **Profiles** keep separate chats, memory, settings and files for each person who uses the PC.
+- **Sign-in** with Google, GitHub or Discord happens in your browser. You can link several sign-in methods to one account in **Settings › Sign-in & devices**, and require sign-in when Luminaria opens.
+- **Cloud sync** (optional) carries your account data, such as chats, memory and settings, between your devices. The AI itself always runs on your desktop.
+- **Insights** shows how you use models, tools and skills on this PC.
+
+## Updates
+
+**Settings › Updates** checks for new versions. When one is available, Luminaria tells you, downloads the installer, checks its SHA-256 checksum against the published one, and installs only after you confirm. Your chats, memory, models and files are kept.
+
+## Where everything lives
+
+All of Luminaria's own things live in one folder, by default `Desktop\Luminaria\App`:
+
+| Folder | What's in it |
+|---|---|
+| `App\` | The program |
+| `App\data\` | Your settings, chats, history, memory (`MEMORY.md`), installed skills and connector settings. Private: the assistant can't read it. |
+| `App\models\` | Downloaded models |
+| `App\Files\` | The default folder for each profile, unless you choose another |
+
+The files Luminaria creates for you go wherever you ask, anywhere on your PC.
 
 ## Privacy and security
 
-- The backend listens on loopback only and checks the host, origin and a per-session token on every request.
-- Your history, memory and files stay in the app's `data` and `Files` folders on your PC.
-- Secrets such as integration tokens are encrypted for your Windows account.
-- Updates are checked against a published SHA-256 before the installer is opened, and only after you confirm.
-- Skills and connectors from outside sources are untrusted. Read what you install.
+- **Local AI.** Models run on your PC. Your messages aren't sent to an AI provider.
+- **Local app.** Luminaria's interface talks to its own backend on your computer only. Every request is checked for a per-session security token.
+- **Encrypted secrets.** Connector tokens and keys are encrypted for your Windows account.
+- **Protected places.** Windows, Program Files, credential folders and Luminaria's private data are never available to the assistant.
+- **Safe web reading.** Web fetch never opens private or local network addresses. Web pages and files are treated as information, never as instructions.
+- **Verified updates.** Installers are checked against a published checksum before they run.
+- **Untrusted extensions.** Skills and connectors from outside sources can steer what Luminaria does or run code. Read what you install.
 
-## Run from source
+## Uninstall
 
-Use Python 3.14 on Windows. In a virtual environment, install `requirements-build.txt`, run `scripts/fetch-agent-tools.ps1` once for the built-in tools, then run:
+Open **Windows Settings › Apps › Installed apps**, find **Luminaria**, and click **Uninstall**. To also remove your chats, memory and models, delete the `Desktop\Luminaria` folder afterwards.
 
-```
-python desktop.py
-```
+## Troubleshooting
 
-Model weights and inference executables are not included. Install a model from the Model library or point Settings at a compatible local endpoint.
+| Problem | What to do |
+|---|---|
+| "Windows protected your PC" when installing | Click **More info › Run anyway**. The installer isn't code-signed yet. |
+| "No model is installed yet" | Open **Settings › Model library** and download a model rated **Recommended** or **Runs well** for your PC. |
+| "Model server offline" | Open the Model library and load a model. If it persists, restart Luminaria. |
+| Replies are slow | Choose a smaller size rated **Recommended**, lower the context size in Hardware & tuning, or close other apps using your graphics card. |
+| A skill says **Needs setup** | Open it in Extensions and follow its steps. |
+| A connector says **Not working** | Open it in Extensions › Connectors and click **Fix**, or **Disconnect** and connect again. |
+| Browser or Windows tools don't run | Turn on **Computer and command tools** in Settings › Permissions. |
+| "That location is protected" | Luminaria can't use Windows, Program Files, credential folders or its own private data. Choose another folder. |
+| The default folder can't be opened (for example an unplugged drive) | Luminaria uses a fallback folder for now. Choose a new one in **Settings › Default folder**. |
 
-## Build and release
+## FAQ
 
-Run `build.ps1` from the configured Python environment. It produces the program with PyInstaller and the installer with Inno Setup, and `publish-release.ps1` publishes a GitHub release with checksums.
+**Does Luminaria need the internet?**
+Only to download the app and models, and for things that are online by nature: web research, connectors, sign-in, sync and updates. Chatting with a local model works offline.
 
-Required build inputs, excluded from Git on purpose: `runtime/llama-swap.exe`, the model runtime at `runtime/local-ai/runtime-vulkan/` (run `scripts/fetch-model-runtime.ps1` to fetch the checksum-pinned archive), the Inno Setup compiler at `runtime/inno/ISCC.exe`, and Python 3.14 on the build PC. `build.ps1` runs `scripts/fetch-agent-tools.ps1` when needed, which prepares the built-in Python, Node.js, browser and Windows connectors and the WebView2 installer from pinned, verified downloads.
+**Is it really free?**
+Yes. There's no subscription and no per-message cost. Models are free, openly licensed downloads.
 
-The installer's AppId stays stable so upgrades work. The installed app keeps its data in a `data/` folder inside its installation directory; see [FOLDER-GUIDE.md](FOLDER-GUIDE.md). Design notes are in [DESIGN.md](DESIGN.md) and [PRODUCT.md](PRODUCT.md), and each release has notes in [docs/release-notes](docs/release-notes).
+**Can it change or delete my files?**
+Only as your permission mode allows. In *Ask me first* it asks before every change. Deleting always asks and keeps a recovery copy.
 
-## Status
+**Can it see my whole PC?**
+It can work in any folder you name, except Windows, Program Files, credential folders and Luminaria's own private data.
 
-Luminaria is in active development by Desselle Solution Software. Google sign-in depends on publisher configuration that is not complete, public update distribution is not set up, and installers are not yet code-signed. The repository excludes local histories, credentials, model weights, generated installers and machine configuration.
+**What's the difference between a skill and a connector?**
+A skill teaches Luminaria *how* to do a kind of task. A connector gives it *tools* for another app or service.
+
+**Is there a mobile app?**
+Not yet. It's planned once the desktop app is fully polished.
+
+## What's new
+
+See the [Releases](../../releases) page for each version's notes.
+
+---
+
+<sub>Luminaria uses open-source components; their licenses are in the <code>licenses</code> folder. Models are provided by their publishers under their own licenses.</sub>
