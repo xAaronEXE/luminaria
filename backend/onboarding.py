@@ -23,7 +23,7 @@ async def complete(store,payload):
     mode=payload.get('mode')
     if mode not in ('light','dark','system'):raise ValueError('Choose light, dark or follow system')
     workspace=Path(str(payload.get('workspace',''))).expanduser().resolve()
-    if not workspace.is_dir():raise ValueError('Choose an existing working folder')
+    if not workspace.is_dir():raise ValueError('Choose an existing default folder')
     data=profiles.registry();profile=next(p for p in data['profiles'] if p['id']==config.PROFILE_ID)
     appearance=preferences.load_shared_appearance() or store.setting('preferences',{}).get('appearance',preferences.DEFAULTS['appearance'])
     appearance=preferences.appearance({**appearance,'mode':mode})

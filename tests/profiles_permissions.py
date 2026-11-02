@@ -10,9 +10,9 @@ class ProfileAndPermissionsTests(unittest.TestCase):
   # Access mode is read live: switching takes effect on the next message, with no restart.
   with tempfile.TemporaryDirectory() as tmp:
    a=self.run_config(tmp,"import json;from backend.config import save_config,access_status;save_config({'access_mode':'full'});print(json.dumps(access_status()))")
-   self.assertEqual(a,{'active':'full','selected':'full','restart_required':False,'whole_pc':False})
+   self.assertEqual(a,{'active':'full','selected':'full','restart_required':False})
    b=self.run_config(tmp,"import json;from backend.config import save_config,access_status;save_config({'access_mode':'review'});print(json.dumps(access_status()))")
-   self.assertEqual(b,{'active':'review','selected':'review','restart_required':False,'whole_pc':False})
+   self.assertEqual(b,{'active':'review','selected':'review','restart_required':False})
    c=self.run_config(tmp,"import json;from backend.config import access_status;print(json.dumps(access_status()))")
    self.assertEqual(c['active'],'review')
  def test_profiles_resolve_separate_history_memory_and_files(self):

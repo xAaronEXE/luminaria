@@ -1,4 +1,4 @@
-"""User-initiated native folder selection; never changes the working folder."""
+"""User-initiated native folder selection; never changes the default folder."""
 from pathlib import Path
 import threading
 
@@ -13,7 +13,7 @@ def pick(initial):
         from tkinter import filedialog
         root=tk.Tk();root.withdraw();root.attributes('-topmost',True)
         initial=Path(initial)
-        selected=filedialog.askdirectory(parent=root,title='Choose Luminaria working folder',
+        selected=filedialog.askdirectory(parent=root,title='Choose Luminaria's default folder',
             initialdir=str(initial) if initial.is_dir() else str(Path.home()),mustexist=True)
         if not selected:return {'cancelled':True}
         path=Path(selected).resolve()

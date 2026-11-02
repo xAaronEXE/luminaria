@@ -3,7 +3,7 @@
 (() => {
   const esc = (v) => String(v ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
   const base = (p) => String(p || '').split(/[\\/]/).filter(Boolean).pop() || String(p || '');
-  const where = (p) => (!p || p === '.' || p === './') ? 'your working folder' : base(p);
+  const where = (p) => (!p || p === '.' || p === './') ? 'the default folder' : base(p);
   const quote = (q) => { q = String(q || '').trim(); return q ? `“${q.length > 60 ? q.slice(0, 57) + '…' : q}”` : ''; };
   const host = (u) => { try { return new URL(u).hostname.replace(/^www\./, ''); } catch { return 'a web page'; } };
   const human = (name) => String(name).replace(/[_-]+/g, ' ').replace(/^\w/, (c) => c.toUpperCase());

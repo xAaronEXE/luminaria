@@ -329,12 +329,12 @@ async def files(path:str='.'):
 
 @app.get('/api/file')
 async def file(path:str):
-    workspace_path(path)  # previews never leave the working folder, even with Whole PC on
+    workspace_path(path,roam=True)  # any file on this PC except protected places
     return await engine.tools.call('read_file',{'path':path,'limit':32000},{})
 
 @app.get('/api/file/download')
 async def download(path:str):
-    p=workspace_path(path)
+    p=workspace_path(path,roam=True)
     if not p.is_file(): raise HTTPException(404)
     return FileResponse(p,filename=p.name)
 
@@ -373,12 +373,12 @@ async def memory_put(request:Request):
 
 @app.put('/api/memory/project')
 async def memory_project_put(request:Request):
-    """LUMINARIA.md in the working folder: notes about this project, like CLAUDE.md in a code repository."""
+    """LUMINARIA.md in the default folder: notes about this project, like CLAUDE.md in a code repository."""
     from .memory_file import project_path
     b=await request.json(); content=b.get('content')
     if not isinstance(content,str) or len(content)>200_000: raise ValueError('Project notes must be text under 200,000 characters')
     p=project_path()
-    if not p: raise ValueError('Choose a working folder first')
+    if not p: raise ValueError('Choose a default folder first')
     p.write_text(content.replace('\r\n','\n'),encoding='utf-8'); broadcast({'type':'changed'}); return {'ok':True,'path':str(p)}
 
 @app.post('/api/memories')
@@ -433,7 +433,7 @@ async def browse_workspace():
 @app.post('/api/settings')
 async def settings_save(request:Request):
     if any(not r.get('finished') for r in engine.runs.values()): raise ValueError('Finish or stop active tasks before changing settings')
-    b=await request.json(); allowed={'workspace','endpoint','tokenizer','model','context','output_tokens','compact_ratio','python','node','llama_executable','model_file','projector_file','external_tools','ask_reads','whole_pc'}
+    b=await request.json(); allowed={'workspace','endpoint','tokenizer','model','context','output_tokens','compact_ratio','python','node','llama_executable','model_file','projector_file','external_tools','ask_reads'}
     allowed.update({'access_mode','orchestrator_model','compact_keep_turns','orchestration_pool','orchestration_enabled'})
     if 'orchestration_pool' in b:
         from .orchestration import normalize_pool
@@ -444,7 +444,7 @@ async def settings_save(request:Request):
         if not any(m['id']==b['orchestrator_model'] and Path(m['model_file']).is_file() for m in registry()):raise ValueError('Choose an installed orchestration model')
     if 'access_mode' in b and b['access_mode'] not in ('review','full'): raise ValueError('Choose review or full access')
     changes={k:v for k,v in b.items() if k in allowed}
-    for key in ('external_tools','ask_reads','whole_pc'):
+    for key in ('external_tools','ask_reads'):
         if key in changes and not isinstance(changes[key],bool): raise ValueError('Boolean setting required')
     for key in ['endpoint','tokenizer']:
         if key in changes and not re.match(r'^https?://',changes[key]): raise ValueError('HTTP(S) endpoint required')
@@ -455,6 +455,7 @@ async def settings_save(request:Request):
         value=changes['compact_keep_turns']
         if isinstance(value,bool) or not isinstance(value,int) or not 1<=value<=12:raise ValueError('Keep between 1 and 12 recent turns')
     if 'workspace' in changes:
+        if any(not r.get('finished') for r in engine.runs.values()): raise ValueError('Finish or stop the running task before changing the default folder.')
         target=Path(changes['workspace']).expanduser()
         if target.exists() and not target.is_dir(): raise ValueError(f'{target} is a file, not a folder. Choose a folder.')
         target.mkdir(parents=True,exist_ok=True)

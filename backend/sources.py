@@ -35,12 +35,21 @@ def saved_object(raw,source,key,offset=0,limit=6000):
     else:result['guidance']='This is a verbatim JSON excerpt. Use history_read with offset and limit to retrieve another part; originals remain on disk.'
     return result
 
+def off_limits(folder):
+    from .config import protected_roots
+    try: folder=folder.resolve()
+    except OSError: return True
+    return any(folder==p or folder.is_relative_to(p) for p in protected_roots())
+
 def scan(root,query,cancelled):
     if not isinstance(query,str) or not query.strip() or len(query)>500:raise ValueError('Provide a non-empty literal query of at most 500 characters')
     found=[];count=0;unreadable=[];skipped=0;limited=False
+    from .config import CONFIG
+    try: default_root=Path(CONFIG['workspace']).resolve()
+    except OSError: default_root=None
     def error(failure):unreadable.append(type(failure).__name__)
     for current,dirs,files in os.walk(root,followlinks=False,onerror=error):
-        dirs[:]=[d for d in dirs if d not in ('node_modules','.git','.venv','venv') and not (Path(current)/d).is_symlink()]
+        dirs[:]=[d for d in dirs if d not in ('node_modules','.git','.venv','venv','$Recycle.Bin','System Volume Information') and not (Path(current)/d).is_symlink() and not off_limits(Path(current)/d)]
         for name in files:
             if cancelled.is_set():return {'status':'cancelled','source':'workspace files','matches':found}
             count+=1
@@ -49,7 +58,7 @@ def scan(root,query,cancelled):
             try:
                 if not path.resolve().is_relative_to(root):skipped+=1;continue
                 if path.stat().st_size>1_000_000:skipped+=1;continue
-                relative=str(path.relative_to(root))
+                relative=str(path.relative_to(root)) if root==default_root else str(path)
                 found.extend({'path':relative,**m} for m in matches(path.read_bytes().decode('utf-8'),'workspace:'+relative,query,80-len(found)))
                 if len(found)>=80:limited=True;break
             except UnicodeError:skipped+=1

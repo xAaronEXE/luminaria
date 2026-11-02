@@ -48,11 +48,11 @@ class CloudSync:
         if self.pause_requested:state['enabled']=False
         self.store.set_setting('cloud_sync:'+account,state)
     def check_scope(self,root):
-        # A working folder that is a drive root, the home folder, or contains Luminaria's own data or credential folders
+        # A default folder that is a drive root, the home folder, or contains Luminaria's own data or credential folders
         # must never be uploaded wholesale.
         resolved=Path(root).resolve()
         if resolved.parent==resolved or resolved==Path.home().resolve() or any(p==resolved or p.is_relative_to(resolved) for p in config.protected_roots() if p!=resolved and not resolved.is_relative_to(p)):
-            raise ValueError('Your working folder is too broad to sync: '+str(resolved)+'. Choose a smaller folder in Settings › Working folder, or leave sync off.')
+            raise ValueError('Your default folder is too broad to sync: '+str(resolved)+'. Choose a smaller folder in Settings › Default folder, or leave sync off.')
     def roots(self):return {'workspace':Path(config.CONFIG['workspace']),'attachments':config.DATA/'attachments','tool-outputs':config.DATA/'tool-outputs'}
     def export(self):
         records={};blobs={};excluded_count=0;cache=config.DATA/'cloud-sync-cache';cache.mkdir(exist_ok=True)
@@ -79,7 +79,7 @@ class CloudSync:
         records['profile:workspace']={'name':entry.get('name','My workspace')}
         for scope,root in self.roots().items():
             if not root.exists():continue
-            if root.is_symlink() or getattr(root,'is_junction',lambda:False)():raise ValueError('Choose a real working folder; linked folders are not synced')
+            if root.is_symlink() or getattr(root,'is_junction',lambda:False)():raise ValueError('Choose a real default folder; linked folders are not synced')
             if scope=='workspace':self.check_scope(root)
             for directory,dirs,files in os.walk(root,followlinks=False):
                 dirs[:]=[d for d in dirs if not excluded((Path(directory)/d).relative_to(root).as_posix()) and not (Path(directory)/d).is_symlink() and not getattr(Path(directory)/d,'is_junction',lambda:False)()]

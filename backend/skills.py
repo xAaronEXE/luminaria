@@ -48,7 +48,7 @@ def preflight(name,connectors=None):
     from pathlib import Path
     try:next(Path(CONFIG['workspace']).iterdir(),None)
     except (OSError,ValueError):
-        row={**row,'available':False,'state':'Needs setup','missing':[*row['missing'],'Readable working folder'],'reason':'The configured working folder is missing or cannot be read. Choose an accessible folder in Settings.'}
+        row={**row,'available':False,'state':'Needs setup','missing':[*row['missing'],'Readable default folder'],'reason':'The configured default folder is missing or cannot be read. Choose an accessible folder in Settings.'}
     return row
 
 def load_skill(name):

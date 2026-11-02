@@ -30,13 +30,13 @@ Log PASS 'app reachable' "version $($boot.version)"
 $r=Http GET "$base/api/settings"
 if($r.status -eq 403){Log PASS 'token required' 'request without token refused'}else{Log FAIL 'token required' "status $($r.status)"}
 $s=Json (Http GET "$base/api/settings" $h)
-if($s){ Log PASS 'settings load' "access=$($s.access_status.active) whole_pc=$($s.access_status.whole_pc) workspace_problem=[$($s.workspace_problem)]" } else { Log FAIL 'settings load' '' }
+if($s){ Log PASS 'settings load' "access=$($s.access_status.active) workspace_problem=[$($s.workspace_problem)]" } else { Log FAIL 'settings load' '' }
 $r=Http POST "$base/api/open-external" $h @{url='http://127.0.0.1:3210/'}
 if($r.status -eq 400){Log PASS 'open-external refuses loopback'}else{Log FAIL 'open-external refuses loopback' "status $($r.status)"}
 $r=Http POST "$base/api/open-external" $h @{url='file:///C:/Windows/win.ini'}
 if($r.status -eq 400){Log PASS 'open-external refuses file://'}else{Log FAIL 'open-external refuses file://' "status $($r.status)"}
 $r=Http GET "$base/api/file?path=C%3A%5CWindows%5Cwin.ini" $h
-if($r.status -ne 200 -or $r.text -notmatch 'fonts|extensions|files'){Log PASS 'file preview stays in working folder'}else{Log FAIL 'file preview stays in working folder' 'read win.ini'}
+if($r.status -ne 200 -or $r.text -notmatch 'fonts|extensions|files'){Log PASS 'file preview refuses Windows folder'}else{Log FAIL 'file preview refuses Windows folder' 'read win.ini'}
 $r=Http POST "$base/api/marketplace/mcp/install" $h @{id='io.github.example/none'}
 if($r.status -eq 400){Log PASS 'connector install needs confirmation'}else{Log FAIL 'connector install needs confirmation' "status $($r.status)"}
 

@@ -1,7 +1,7 @@
 """Memory as plain Markdown, like CLAUDE.md.
 
 MEMORY.md (in Luminaria's data folder) holds what to remember about the user across every task.
-LUMINARIA.md (optional, in the root of a working folder) holds notes about that project.
+LUMINARIA.md (optional, in the root of a default folder) holds notes about that project.
 
 The file on disk is the real copy. A mirror row in the database lets the existing cloud sync carry it to
 other devices unchanged. Both files are loaded word for word near the top of each request and only change
@@ -111,6 +111,6 @@ def prompt(store):
                      + _budget(mine, PROMPT_BUDGET, 'MEMORY.md'))
     project = project_text()
     if project.strip():
-        parts.append(f'Project notes for this working folder ({PROJECT_NAME}; keep it current with edit_file when you learn lasting facts about the project):\n'
+        parts.append(f'Project notes for this default folder ({PROJECT_NAME}; keep it current with edit_file when you learn lasting facts about the project):\n'
                      + _budget(project, PROJECT_BUDGET, PROJECT_NAME))
     return '\n\n'.join(parts)

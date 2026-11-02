@@ -16,7 +16,7 @@ def observe(path):
 
 def target(plan,step):
     root=Path(plan['root']).resolve();path=(root/step['path']).resolve()
-    if str(Path(CONFIG['workspace']).resolve())!=str(root):raise ValueError('Working folder changed. Restore it or create a new workflow.')
+    if str(Path(CONFIG['workspace']).resolve())!=str(root):raise ValueError('Default folder changed. Restore it or create a new workflow.')
     allowed=[(root/p).resolve() for p in plan['allowed_locations']]
     if not path.is_relative_to(root) or not any(path.is_relative_to(p) and p.is_relative_to(root) for p in allowed):raise ValueError('Target is outside the explicitly allowed locations.')
     if step.get('resolved') and str(path)!=step['resolved']:raise ValueError('The target location changed since planning; review symlinks and create a fresh plan.')

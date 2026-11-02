@@ -6,7 +6,7 @@ import httpx
 from contextvars import ContextVar
 from langgraph.graph import StateGraph, START, END
 from langgraph.types import interrupt, Command
-from .config import CONFIG, DATA, full_access, find_runtime, whole_pc, APP_HOME, BASE_DATA, skill_folders
+from .config import CONFIG, DATA, full_access, find_runtime, whole_pc, APP_HOME, BASE_DATA, skill_folders, pc_places
 from .store import uid,now
 from .work import WorkLog,region_for,plan_steps
 from .orchestration import NoEligibleModel
@@ -154,14 +154,17 @@ class Engine:
         except Exception: return None
     @staticmethod
     def environment():
-        """Where Luminaria and its files are on this PC, so the assistant never has to guess."""
+        """Where Luminaria and the user's files are on this PC, so the assistant never has to guess."""
         built_in,installed=skill_folders()
-        reach=('Whole PC is on: you may also create, read and change files in any other folder or drive, except protected ones. '
-               if whole_pc() else 'Whole PC is off: file tools work only inside the working folder; the user can turn on Whole PC in Settings › Permissions. ')
-        return (f"Luminaria is installed in {APP_HOME}. Working folder (default place for files you create): {CONFIG['workspace']}. "
-                f"Skills: built-in in {built_in}, installed in {installed}. These two skill folders are an exception to the private data below: you can read and list them (including any scripts) but not change them. "
-                f"Models: {BASE_DATA.parent/'models'}. {reach}"
-                f"Luminaria's settings, history and sign-in data ({BASE_DATA}) are private and never available to file tools. ")
+        pc=pc_places()
+        folders=', '.join(f'{k} {v}' for k,v in pc['folders'].items())
+        return (f"You can work anywhere on this PC: any folder on any drive ({', '.join(pc['drives']) or 'all drives'}), using full paths. "
+                f"The default folder is {CONFIG['workspace']}: relative paths start there, and new files go there when the user does not say where. "
+                f"When the user names a folder, drive, file or project, work there with full paths; if that folder has a LUMINARIA.md, read it first. "
+                f"User's home: {pc['home']}" + (f"; {folders}" if folders else '') + ". "
+                f"Luminaria is installed in {APP_HOME}. Skills: built-in in {built_in}, installed in {installed}; you can read and list them (including scripts) but not change them. "
+                f"Models: {BASE_DATA.parent/'models'}. "
+                f"Off limits to file tools: Luminaria's settings, history and sign-in data ({BASE_DATA}), Windows, Program Files and credential folders. ")
     def system(self):
         """Ordered for the prompt cache: fixed instructions first, then this PC's layout, then the memory files.
         Everything here changes only when a setting or a memory file changes, so cached work is reused between messages."""
@@ -174,7 +177,7 @@ class Engine:
         'Call tools through the tool interface, never by writing tool JSON in your reply. '
         'Do the work yourself with your tools: write the files, run the scripts and check the results. Never ask the user to save, copy or run something you can do. '
         'To make Word, Excel, PowerPoint or PDF files, write Python with run_code using the bundled libraries '
-        '(python-docx, python-pptx, openpyxl, xlsxwriter, reportlab, pypdf, PyMuPDF, matplotlib, pandas, Pillow) and save them in the working folder. '
+        '(python-docx, python-pptx, openpyxl, xlsxwriter, reportlab, pypdf, PyMuPDF, matplotlib, pandas, Pillow) and save them where the user asked, or in the default folder. '
         'Before saying a file is done, check it with inspect_file; if the check fails, fix it or say plainly that it failed. Never report success for a step that failed. '
         'Use list_skills and load_skill for reusable workflows, and finish_skill once their output files exist. If nothing installed fits, call find_capability: '
         'thousands of real skills and connectors are built in, and install_capability adds one with the user\'s approval. '
@@ -185,9 +188,9 @@ class Engine:
         'Use memory_search to look things up in memory and in earlier conversations; use remember only for lasting facts or preferences the user wants kept. '
         'Describe the tools and results you actually have instead of claiming a generic lack of internet, execution, computer access or memory. ')
         place=(self.environment()
-        + f"When the user asks about your files, folder or environment, start with the working folder (path '.'). "
+        + f"When the user asks about \"your files\" or \"this folder\" without naming one, start with the default folder (path '.'). "
         + f"Python runtime: {find_runtime('python') or 'not installed on this PC'}. Node runtime: {find_runtime('node') or 'not installed on this PC'}. "
-        'File tools stay in the working folder unless Whole PC is on; shell and Windows tools act with the user\'s Windows permissions under the active permission mode. ')
+        'Shell and Windows tools act with the user\'s Windows permissions under the active permission mode. ')
         memory=memory_prompt(self.store)
         return rules+'\n\n'+place+('\n\n'+memory if memory else '')
 

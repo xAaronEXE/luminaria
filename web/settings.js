@@ -1,9 +1,9 @@
 /* Categorized settings backed by the local API. */
 (()=>{
- const groups=[['Account',['Profile','Sign-in & devices','Cloud sync','Insights']],['Workspace',['Working folder','Tools & permissions','Memory & context','Integrations','Marketplace']],['Models & voice',['Models','Orchestration','Hardware & tuning','Voice']],['App',['Appearance','Updates']]];
+ const groups=[['Account',['Profile','Sign-in & devices','Cloud sync','Insights']],['Workspace',['Default folder','Tools & permissions','Memory & context','Integrations','Marketplace']],['Models & voice',['Models','Orchestration','Hardware & tuning','Voice']],['App',['Appearance','Updates']]];
  const labels={Models:'Model library',Orchestration:'Auto mode','Tools & permissions':'Permissions'};
  const sections=groups.flatMap(([,pages])=>pages);
- const aliases={Inference:'Working folder','Model library':'Models',Account:'Profile',Accounts:'Profile','Sign-in methods':'Sign-in & devices','Devices & security':'Sign-in & devices','Auto mode':'Orchestration',Permissions:'Tools & permissions'};
+ const aliases={Inference:'Default folder','Working folder':'Default folder','Model library':'Models',Account:'Profile',Accounts:'Profile','Sign-in methods':'Sign-in & devices','Devices & security':'Sign-in & devices','Auto mode':'Orchestration',Permissions:'Tools & permissions'};
  let library,selectedKey,selectedQuant,modelFilter='all',capabilityFilter='',benchmarkOpen=false,libraryGeneration=0,libraryTimer;
  const original=openPanel;
  openPanel=async function(name){if(['settings','models'].includes(name))return settingsView(name==='models'?'Models':({Account:'Profile',Accounts:'Profile'}[window.studioSettingsCategory]||window.studioSettingsCategory||'Profile'));$('.sheet').classList.remove('settings-sheet');return original(name)};
@@ -26,7 +26,7 @@
   if(['Profile','Sign-in & devices'].includes(section)){await renderAccounts(body);return}
   if(section==='Marketplace'){await renderMarketplace(body);return}
   if(section==='Integrations'){body.innerHTML='<h3 class="settings-page-title">Integrations</h3><p class="settings-intro">Connect outside services. Each one adds its own tools once you sign in to it.</p><div id="tools-body"></div>';await renderIntegrations(body.querySelector('#tools-body'));return}
-  if(section==='Working folder'){await studioSettingsSection('Inference',body);await renderAccountProfiles(body);return}
+  if(section==='Default folder'){await studioSettingsSection('Inference',body);await renderAccountProfiles(body);return}
   if(section==='Models'){
    library=await api('/model-library'); if(generation!==libraryGeneration)return; window.studioMachine=library.machine||null;
    const active=library.models.flatMap(m=>m.quants.map(q=>({key:m.key,quant:q}))).find(item=>item.quant.active);

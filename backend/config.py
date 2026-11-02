@@ -94,12 +94,28 @@ def full_access():
     return CONFIG.get('access_mode','review')=='full'
 
 def whole_pc():
-    # Hands-free plus "whole PC": file tools may reach any drive, not only the working folder.
-    return full_access() and bool(CONFIG.get('whole_pc',False))
+    # The whole PC is always in reach: file tools take full paths on any drive. Relative paths start in the
+    # default folder (CONFIG['workspace']). Protected places below stay off limits. Approvals still follow the mode.
+    return True
+
+def pc_places():
+    """Drives and the user's usual folders, so the assistant knows where things are without guessing."""
+    home=Path.home();places={}
+    for name in ('Desktop','Documents','Downloads','Pictures','Music','Videos'):
+        for base in (home/'OneDrive',home):   # Windows often moves these into OneDrive
+            if (base/name).is_dir(): places[name]=str(base/name);break
+    drives=[]
+    if os.name=='nt':
+        try:
+            import ctypes;mask=ctypes.windll.kernel32.GetLogicalDrives()
+            drives=[f'{chr(65+i)}:\\' for i in range(26) if mask>>i&1]
+        except Exception: drives=[]
+    else: drives=['/']
+    return {'home':str(home),'drives':drives,'folders':places}
 
 def access_status():
     mode='full' if full_access() else 'review'
-    return {'active':mode,'selected':mode,'restart_required':False,'whole_pc':whole_pc()}
+    return {'active':mode,'selected':mode,'restart_required':False}
 
 def external_tools_enabled():
     return full_access() or CONFIG.get('external_tools',False)
@@ -115,14 +131,14 @@ except OSError as error:
     CONFIG['workspace']=DEFAULT['workspace']
     try: Path(CONFIG['workspace']).mkdir(parents=True,exist_ok=True)
     except OSError: CONFIG['workspace']=str(DATA/'Files');Path(CONFIG['workspace']).mkdir(parents=True,exist_ok=True)
-    WORKSPACE_PROBLEM=f'Your working folder {chosen} could not be opened ({type(error).__name__}), so Luminaria is using {CONFIG["workspace"]} for now. Choose a folder in Settings › Working folder.'
+    WORKSPACE_PROBLEM=f'Your default folder {chosen} could not be opened ({type(error).__name__}), so Luminaria is using {CONFIG["workspace"]} for now. Choose a folder in Settings › Default folder.'
 
 def save_config(changes):
     CONFIG.update(changes)
     CONFIG_PATH.write_text(json.dumps(CONFIG,indent=2),encoding='utf-8')
 
 def protected_roots():
-    # Places the assistant never reads or writes through file tools, even with Whole PC on:
+    # Places the assistant never reads or writes through file tools, anywhere on the PC:
     # Luminaria's own data (settings, tokens, history), the program itself, Windows, and credential folders.
     home=Path.home()
     roots=[DATA,BASE_DATA,APP_HOME,home/'.ssh',home/'.aws',home/'.gnupg',home/'.azure',home/'.config'/'gcloud',home/'.kube']
@@ -141,19 +157,22 @@ def _inside(target,folder): return target==folder or target.is_relative_to(folde
 
 def workspace_path(path='.',roam=False,write=False):
     root=Path(CONFIG['workspace']).resolve()
+    path=str(path or '.').strip()
+    if path.startswith('~'): path=str(Path(path).expanduser())
+    if os.name=='nt' and '%' in path: path=os.path.expandvars(path)
     target=(root/path).resolve()
     for folder in skill_folders():
         if _inside(target,folder):
-            if write: raise PermissionError('Skill folders are read-only. Save outputs in the working folder.')
+            if write: raise PermissionError('Skill folders are read-only. Save outputs in the default folder.')
             return target
     for protected in protected_roots():
         if _inside(target,protected):
-            # A protected area that contains the working folder (the default folder sits inside Luminaria's own
-            # folder) does not block the working folder's own contents. Anything else inside it stays off limits,
-            # even when the working folder is a whole drive that happens to contain Luminaria's data.
+            # A protected area that contains the default folder (the default folder sits inside Luminaria's own
+            # folder) does not block the default folder's own contents. Anything else inside it stays off limits,
+            # even when the default folder is a whole drive that happens to contain Luminaria's data.
             if _inside(root,protected) and _inside(target,root): continue
             raise PermissionError('That location is protected: Luminaria\'s own settings and history, program files, Windows and credential folders are never available to the assistant.')
     if not _inside(target,root):
-        if roam and whole_pc(): return target
-        raise ValueError('Path is outside the working folder. Turn on "Whole PC" in Settings › Permissions to let the assistant use other folders and drives.')
+        if roam: return target
+        raise ValueError('Path is outside the default folder.')
     return target

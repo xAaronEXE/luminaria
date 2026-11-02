@@ -7,7 +7,7 @@
  };
  let memoryGuard=null;
  async function memoryLibrary(){
-  // Memory is two Markdown files, like CLAUDE.md: MEMORY.md about the user, LUMINARIA.md about the working folder.
+  // Memory is two Markdown files, like CLAUDE.md: MEMORY.md for the whole profile, LUMINARIA.md for the default folder.
   showPanel('Memory','What Luminaria remembers, in plain Markdown you can edit.',`<div class="memory-bar"><div class="segmented" role="tablist" aria-label="Memory file"><button type="button" role="tab" data-mem-tab="me" aria-selected="true">My memory</button><button type="button" role="tab" data-mem-tab="project" aria-selected="false">This project</button></div><div class="segmented" role="group" aria-label="View"><button type="button" data-mem-view="edit" aria-pressed="true">Edit</button><button type="button" data-mem-view="preview" aria-pressed="false">Preview</button></div></div>
    <p class="small-note" id="memory-about"></p>
    <div id="memory-body"><textarea id="memory-text" class="memory-text" spellcheck="true" aria-label="Memory file"></textarea><div id="memory-preview" class="memory-preview markdown" hidden></div></div>
@@ -21,8 +21,8 @@
    $$('[data-mem-view]').forEach(b=>b.setAttribute('aria-pressed',String(b.dataset.memView===view)));
    const missing=tab==='project'&&!data.project.exists&&!draft.project;
    about.innerHTML=tab==='me'
-    ?`Used in every task. Saved on this PC in <code>${esc(data.path)}</code>. Ask Luminaria to “remember” something and it adds a line under Notes.`
-    :(data.project.path?`Loaded only when you work in this folder: <code>${esc(data.project.path)}</code>.`:'Choose a working folder in Settings to keep project notes.')+(missing?' This folder has no project notes yet.':'');
+    ?`Your profile’s memory: used in every chat, in every folder, and synced with your account. Saved in <code>${esc(data.path)}</code>. Ask Luminaria to “remember” something and it adds a line under Notes.`
+    :(data.project.path?`Notes for your default folder, read in every task: <code>${esc(data.project.path)}</code>. Other project folders can have their own LUMINARIA.md; Luminaria reads it when you work there.`:'Choose a default folder in Settings to keep project notes.')+(missing?' This folder has no project notes yet.':'');
    text.value=draft[tab];text.placeholder=tab==='project'?'Click “Start project notes” or type here…':'';
    text.hidden=view!=='edit';preview.hidden=view!=='preview';
    if(view==='preview')preview.innerHTML=draft[tab].trim()?markdown(draft[tab]):'<p class="note">Nothing here yet.</p>';

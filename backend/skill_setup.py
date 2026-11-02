@@ -23,11 +23,11 @@ def checklist(name,connectors):
    steps.append({'id':need,'title':'Connect the browser' if need=='browser' else 'Connect Windows desktop tools','ready':ready,'action':'connector',
     'configured':configured,'status':connector.status if connector else 'Not configured',
     'description':'Start or reconnect this local connector, then check that its tools load. This does not grant website sign-ins or Windows permissions. Browser profiles may open a separate browser; desktop actions use your Windows account.'})
- if 'Readable working folder' in row['missing']:
-  steps.append({'id':'workspace','title':'Choose an accessible working folder','ready':False,'action':'workspace',
+ if 'Readable default folder' in row['missing']:
+  steps.append({'id':'workspace','title':'Choose an accessible default folder','ready':False,'action':'workspace',
    'description':'Browse to a folder you can read and write, then save it. Existing files are not moved.'})
  return {'name':name,'ready':row['available'],'state':row['state'],'reason':row['reason'],'steps':steps,
-  'note':'Readiness checks declared dependencies and the working folder. It does not guarantee that every workflow will succeed. No software is downloaded and no permissions change when you open this guide.'}
+  'note':'Readiness checks declared dependencies and the default folder. It does not guarantee that every workflow will succeed. No software is downloaded and no permissions change when you open this guide.'}
 
 def connector_config(name):
  if name not in ('browser','windows'):raise ValueError('Unsupported skill connector')

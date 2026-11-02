@@ -6,6 +6,7 @@ def workspace_path(path='.',write=False): return _wp(path,roam=True,write=write)
 def schema(name,description,properties,required=(),tier='auto',group='workspace'):
     return {'name':name,'description':description,'parameters':{'type':'object','properties':properties,'required':list(required),'additionalProperties':False},'tier':tier,'group':group}
 S={'type':'string'}; I={'type':'integer'}
+PATH_NOTE='path: a full path anywhere on this PC (C:\\..., D:\\..., ~\\Desktop\\...), or relative to the default folder.'
 BUILTINS=[
  schema('list_skills','List installed reusable workflow skills.',{},[],'auto','skills'),
  schema('find_capability','Search Luminaria\'s built-in catalog of thousands of real skills (workflows) and connectors (tools for other apps and services) when no installed skill or tool fits the task. Returns IDs to pass to install_capability.',{'query':S,'kind':{'type':'string','enum':['any','skills','connectors']}},['query'],'auto','skills'),
@@ -13,14 +14,14 @@ BUILTINS=[
  schema('load_skill','Read a named workflow skill before using it.',{'name':S},['name'],'auto','skills'),
  schema('finish_skill','Finish a loaded skill by checking its output files exist. Optionally list the action IDs of sources you used.',{'name':S,'outputs':{'type':'array','items':S,'minItems':1,'maxItems':10},'evidence_actions':{'type':'array','items':S,'maxItems':30}},['name','outputs'],'auto','skills'),
  schema('create_file_workflow','Only when the user explicitly asks for a reviewable plan of changes to many existing files: saves a plan for review in Tools → File workflows and does not execute it. Never use this to create documents; make those with run_code. Declare the user objective, allowed workspace locations, completion criteria, and read/create/edit/trash steps. No shell, permanent deletion, or application control.',{'objective':S,'completion_criteria':S,'allowed_locations':{'type':'array','items':S,'minItems':1,'maxItems':10},'steps':{'type':'array','minItems':1,'maxItems':50,'items':{'type':'object','properties':{'action':{'type':'string','enum':['read','create','edit','trash']},'path':S,'content':S,'old_text':S,'new_text':S},'required':['action','path'],'additionalProperties':False}}},['objective','completion_criteria','allowed_locations','steps'],'approve','planning'),
- schema('list_files','List a workspace directory.',{'path':S}),
- schema('read_file','Read a UTF-8 workspace file, with optional offset and limit in characters.',{'path':S,'offset':I,'limit':I},['path']),
- schema('write_file','Create or replace a UTF-8 workspace file. Requires user approval.',{'path':S,'content':S},['path','content'],'approve'),
- schema('edit_file','Replace exactly one occurrence of old_text in a workspace file.',{'path':S,'old_text':S,'new_text':S},['path','old_text','new_text'],'approve'),
- schema('delete_file','Delete one workspace file (never directories). Always asks.',{'path':S},['path'],'always'),
- schema('search_files','Search text files in the workspace for a literal string.',{'query':S},['query']),
- schema('run_command','Run a PowerShell command in the workspace. Full PC access after approval; not a sandbox. python, pip, node and npx are available.',{'command':S,'timeout':I},['command'],'always','execution'),
- schema('run_code','Execute a Python or JavaScript script in the workspace. Saved as a file; no hidden REPL state.',{'language':{'type':'string','enum':['python','javascript']},'code':S,'timeout':I},['language','code'],'always','execution'),
+ schema('list_files','List a folder. '+PATH_NOTE,{'path':S}),
+ schema('read_file','Read a UTF-8 text file, with optional offset and limit in characters. '+PATH_NOTE,{'path':S,'offset':I,'limit':I},['path']),
+ schema('write_file','Create or replace a UTF-8 text file. '+PATH_NOTE+' Requires user approval.',{'path':S,'content':S},['path','content'],'approve'),
+ schema('edit_file','Replace exactly one occurrence of old_text in a file. '+PATH_NOTE,{'path':S,'old_text':S,'new_text':S},['path','old_text','new_text'],'approve'),
+ schema('delete_file','Delete one file (never folders). '+PATH_NOTE+' Always asks.',{'path':S},['path'],'always'),
+ schema('search_files','Search text files for a literal string, in the default folder or in path (a folder anywhere on this PC).',{'query':S,'path':S},['query']),
+ schema('run_command','Run a PowerShell command (starts in the default folder; use full paths or cd for other places). Full PC access after approval; not a sandbox. python, pip, node and npx are available.',{'command':S,'timeout':I},['command'],'always','execution'),
+ schema('run_code','Execute a Python or JavaScript script (starts in the default folder; use full paths for other places). Saved as a file; no hidden REPL state.',{'language':{'type':'string','enum':['python','javascript']},'code':S,'timeout':I},['language','code'],'always','execution'),
  schema('web_search','Search the public web. Returns status, titles, snippets and source URLs. An empty result means no matches for these words, not that the information does not exist.',{'query':S},['query'],'auto','research'),
  schema('web_fetch','Fetch a public HTTP(S) page or PDF. Network request requires approval. browser_fallback explicitly authorizes navigation and snapshot in the connected browser if JavaScript or sign-in is needed; never completes login dialogs or bypasses blocks. Public cache is bypassed for sensitive responses.',{'url':S,'refresh':{'type':'boolean'},'browser_fallback':{'type':'boolean'}},['url'],'approve','research'),
  schema('discover_tools','Load more tools. more: delete files, schedules, the working brief, conversation history, file workflows. browser or windows: those connectors. all: every connected app.',{'category':{'type':'string','enum':['more','browser','windows','all']}},['category'],'auto','system'),
@@ -163,7 +164,7 @@ class Toolbox:
                 if folder not in run['skill_folders']: run['skill_folders'].append(folder)
             files=instructions.get('files') or []
             how=(f"This skill's own files are in {folder} ({', '.join(files[:12])}{', …' if len(files)>12 else ''}). Run its scripts by full path, "
-                 f"for example python \"{folder}\\scripts\\name.py\"; Python code you run can also import them directly. Outputs go in the working folder. ") if folder and files else ''
+                 f"for example python \"{folder}\\scripts\\name.py\"; Python code you run can also import them directly. Outputs go in the default folder. ") if folder and files else ''
             return {**instructions,'state':'Running','how_to_use':how+'Do the steps yourself with tools (write files, run scripts); do not ask the user to do them.',
                     'completion':'Use finish_skill after producing output files and collecting evidence action IDs. Loading instructions alone is not completion.'}
         if name=='finish_skill':
@@ -208,7 +209,7 @@ class Toolbox:
             shutil.copy2(p,backup/(str(time.time_ns())+'-'+p.name)); p.unlink(); return {'deleted':str(p),'backup':str(backup)}
         if name=='search_files':
             from .sources import search_workspace
-            return await search_workspace(workspace_path(),a['query'])
+            return await search_workspace(workspace_path(a.get('path') or '.'),a['query'])
         if name=='run_command': return await self.process(['powershell.exe','-NoProfile','-NonInteractive','-Command',a['command']],a.get('timeout',60),extra_path=self.skill_paths(run))
         if name=='run_code':
             folder=DATA/'scripts'; folder.mkdir(parents=True,exist_ok=True)  # scratch scripts stay in Luminaria's folder, not the user's
