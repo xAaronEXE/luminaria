@@ -2,6 +2,10 @@ import asyncio, base64, json, os, re, subprocess
 from pathlib import Path
 from .config import CONFIG, DATA, workspace_path as _wp, full_access, external_tools_enabled, find_runtime, runtime_missing_message, runtime_path_dirs
 def workspace_path(path='.',write=False): return _wp(path,roam=True,write=write)
+def luminaria_api_env():
+    # Lets programs the assistant writes use the user's installed models through the local model manager.
+    if CONFIG.get('endpoint','').rstrip('/')!='http://127.0.0.1:8098/v1': return {}
+    return {'LUMINARIA_API_BASE':CONFIG['endpoint'],'LUMINARIA_API_KEY':CONFIG.get('model_api_key',''),'LUMINARIA_MODEL':CONFIG.get('model','')}
 
 def schema(name,description,properties,required=(),tier='auto',group='workspace'):
     return {'name':name,'description':description,'parameters':{'type':'object','properties':properties,'required':list(required),'additionalProperties':False},'tier':tier,'group':group}
@@ -85,7 +89,7 @@ class Toolbox:
         return out
     async def process(self,argv,timeout=60,extra_path=()):
         flags=subprocess.CREATE_NO_WINDOW if os.name=='nt' else 0
-        proc=await asyncio.create_subprocess_exec(*argv,cwd=CONFIG['workspace'],stdout=asyncio.subprocess.PIPE,stderr=asyncio.subprocess.PIPE,creationflags=flags,env={**os.environ,'PATH':os.pathsep.join(runtime_path_dirs()+[os.environ.get('PATH','')]),'PYTHONIOENCODING':'utf-8',**({'PYTHONPATH':os.pathsep.join([*extra_path,os.environ.get('PYTHONPATH','')]).rstrip(os.pathsep)} if extra_path else {})})
+        proc=await asyncio.create_subprocess_exec(*argv,cwd=CONFIG['workspace'],stdout=asyncio.subprocess.PIPE,stderr=asyncio.subprocess.PIPE,creationflags=flags,env={**os.environ,**luminaria_api_env(),'PATH':os.pathsep.join(runtime_path_dirs()+[os.environ.get('PATH','')]),'PYTHONIOENCODING':'utf-8',**({'PYTHONPATH':os.pathsep.join([*extra_path,os.environ.get('PYTHONPATH','')]).rstrip(os.pathsep)} if extra_path else {})})
         try:
             out,err=await asyncio.wait_for(proc.communicate(),min(max(timeout,1),180))
             return {'exit_code':proc.returncode,'stdout':out.decode('utf-8','replace'),'stderr':err.decode('utf-8','replace')}

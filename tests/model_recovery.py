@@ -13,6 +13,7 @@ class Fake:
  def __init__(self,handler):
   self.client=httpx.AsyncClient(transport=httpx.MockTransport(handler));self.events=[]
  def broadcast(self,event):self.events.append(event)
+ async def refresh_models(self,model_id):return None
 
 async def instant(seconds):return None
 
@@ -69,6 +70,37 @@ class DiagnoseTests(unittest.TestCase):
    self.assertEqual(runtime.manager_state(),{'owned':True,'running':False,'exit_code':3})
    runtime.stop_owned()
   self.assertIsNone(runtime.swap_process)
+
+class StaleModelTests(unittest.TestCase):
+ def test_missing_saved_model_falls_back_to_an_installed_one(self):
+  from backend import models
+  with tempfile.TemporaryDirectory() as folder:
+   model=Path(folder)/'qwen.gguf';model.touch()
+   entry={'id':'qwen','model_file':str(model),'context':8192}
+   with patch.object(models,'registry',lambda:[entry]),patch.dict(CONFIG,model='gone',model_file=str(Path(folder)/'gone.gguf')),patch('backend.config.save_config') as save:
+    self.assertEqual(runtime.ensure_model_file(),str(model))
+    self.assertEqual(save.call_args.args[0]['model'],'qwen')
+   with patch.object(models,'registry',lambda:[]),patch.dict(CONFIG,model_file=''):
+    self.assertIsNone(runtime.ensure_model_file())
+ def test_swap_model_ids_reads_the_running_config(self):
+  with tempfile.TemporaryDirectory() as folder:
+   (Path(folder)/'llama-swap.yaml').write_text('{"models":{"a":{},"b":{}}}',encoding='utf-8')
+   with patch.object(runtime,'DATA',Path(folder)):self.assertEqual(runtime.swap_model_ids(),{'a','b'})
+
+class RefreshTests(unittest.IsolatedAsyncioTestCase):
+ async def test_model_downloaded_after_start_restarts_the_manager(self):
+  from backend import models
+  calls=[]
+  class F:
+   def broadcast(self,e):pass
+  with tempfile.TemporaryDirectory() as folder:
+   model=Path(folder)/'new.gguf';model.touch()
+   with patch.object(models,'registry',lambda:[{'id':'new','model_file':str(model)}]),patch.dict(CONFIG,endpoint='http://127.0.0.1:8098/v1'),\
+        patch.object(runtime,'manager_state',lambda:{'owned':True,'running':True}),patch.object(runtime,'swap_model_ids',lambda:{'old'}),\
+        patch.object(runtime,'stop_owned',lambda:calls.append('stop')),patch.object(runtime,'start_swap',lambda:calls.append('start')),patch.object(runtime,'listening',lambda p:True):
+    await Engine.refresh_models(F(),'new')
+    self.assertEqual(calls,['stop','start'])
+    calls.clear();await Engine.refresh_models(F(),'old');self.assertEqual(calls,[])
 
 class RecoveryTests(unittest.IsolatedAsyncioTestCase):
  async def test_first_question_starts_manager_after_models_were_installed(self):

@@ -30,6 +30,12 @@ PLAN_FINALIZE=('Investigation budget for this plan is used up. Do not call more 
 PLAN_ROUND_LIMIT=4
 NUDGE_TEXT=('[Automatic reminder, not from the user] You described an action but called no tool, so nothing happened. '
  'Call the tool that does it now. If something truly blocks you, say exactly what and stop. Do not repeat your earlier reply.')
+NUDGES={'announced':NUDGE_TEXT,
+ 'code':('[Automatic reminder, not from the user] You put code in your reply instead of doing the work. Save it with write_file '
+         '(where the user asked, or the default folder), install anything it needs with run_command, run it, fix any errors, '
+         'and then tell the user what you made, where it is and what happened when it ran. Do not paste the code again.'),
+ 'handoff':('[Automatic reminder, not from the user] You told the user to run commands or install things themselves. Do it yourself '
+            'with run_command or run_code, check the result, and report what happened. Ask the user only for things you truly cannot do.')}
 def _json_objects(text):
     """Yield (start,end,obj) for each top-level JSON object in text."""
     dec=json.JSONDecoder(); i=0
@@ -67,7 +73,17 @@ def text_tool_calls(text,names):
     return calls,rest
 
 def with_nudge(messages,run):
-    return messages+[{'role':'user','content':NUDGE_TEXT}] if run.get('nudge_pending') else messages
+    return messages+[{'role':'user','content':NUDGES.get(run.get('nudge_kind'),NUDGE_TEXT)}] if run.get('nudge_pending') else messages
+
+SKILL_COMMAND=re.compile(r'^\s*/skill\s+([A-Za-z0-9][\w.:-]{0,80})',re.I)
+WANTS_WORK=re.compile(r"\b(?:build|code|make|create|write|implement|put (?:it|this|everything|it all) together|do (?:it|this|that|the whole|it all)|set (?:it|this) up|fix|run (?:it|this)|how do i run)\b",re.I)
+HANDOFF=re.compile(r"\b(?:open (?:a |the )?(?:command prompt|terminal|powershell)|run the following command|type the following|execute the (?:script|following)|save the file (?:with|as)|save (?:it|this|the code) as|install it using|you can install|pip install)\b",re.I)
+def last_user_text(messages):
+    last=next((m for m in reversed(messages) if m.get('role')=='user'),{})
+    content=last.get('content','')
+    return '\n'.join(p.get('text','') for p in content if isinstance(p,dict) and p.get('type')=='text') if isinstance(content,list) else str(content or '')
+def code_lines(text):
+    return max((block.count('\n') for block in re.findall(r'```.*?```',str(text or ''),flags=re.S)),default=0)
 
 def routing_evidence(model_id):
     """Latest measured speed and quality check on this PC, if any."""
@@ -153,6 +169,19 @@ class Engine:
         try: return getattr(self.usage,method)(*args,**fields)
         except Exception: return None
     @staticmethod
+    def model_note():
+        try:
+            from .models import registry
+            from pathlib import Path
+            ids=[m['id'] for m in registry() if Path(m['model_file']).is_file()]
+        except Exception: ids=[]
+        if not ids: return ''
+        return ("Installed local models (these are the only ones; never invent model names): " + ', '.join(ids[:20]) + '. '
+                "Programs you write can use them through Luminaria's local OpenAI-compatible API: base URL from the environment variable "
+                "LUMINARIA_API_BASE, key from LUMINARIA_API_KEY, model from LUMINARIA_MODEL (set when you run them with run_command or run_code). "
+                "Use plain HTTP (requests or the openai package) against that API; do not load these models with transformers or download other models. ")
+
+    @staticmethod
     def environment():
         """Where Luminaria and the user's files are on this PC, so the assistant never has to guess."""
         built_in,installed=skill_folders()
@@ -163,7 +192,7 @@ class Engine:
                 f"When the user names a folder, drive, file or project, work there with full paths; if that folder has a LUMINARIA.md, read it first. "
                 f"User's home: {pc['home']}" + (f"; {folders}" if folders else '') + ". "
                 f"Luminaria is installed in {APP_HOME}. Skills: built-in in {built_in}, installed in {installed}; you can read and list them (including scripts) but not change them. "
-                f"Models: {BASE_DATA.parent/'models'}. "
+                f"Models: {BASE_DATA.parent/'models'}. " + Engine.model_note() +
                 f"Off limits to file tools: Luminaria's settings, history and sign-in data ({BASE_DATA}), Windows, Program Files and credential folders. ")
     def system(self):
         """Ordered for the prompt cache: fixed instructions first, then this PC's layout, then the memory files.
@@ -261,10 +290,27 @@ class Engine:
             # UTF-8 byte count is a conservative fallback; never optimistic chars/4.
             return len(json.dumps(safe,ensure_ascii=False).encode())+len(json.dumps(definitions or []).encode())+images*1200+512,'conservative estimate'
 
+    async def refresh_models(self,model_id):
+        """A model downloaded after the model manager started is unknown to it (requests fail with 404).
+        Restart the manager we own with the current list. Nothing is generating at this point."""
+        from . import runtime
+        if CONFIG['endpoint'].rstrip('/')!='http://127.0.0.1:8098/v1' or not model_id: return
+        state=runtime.manager_state()
+        if not (state.get('owned') and state.get('running')) or model_id in runtime.swap_model_ids(): return
+        from .models import registry
+        from pathlib import Path
+        if not any(m['id']==model_id and Path(m['model_file']).is_file() for m in registry()): return
+        self.broadcast({'type':'model_recovering','exit_code':None})
+        await asyncio.to_thread(runtime.stop_owned); await asyncio.to_thread(runtime.start_swap)
+        for _ in range(40):
+            if runtime.listening(8098): break
+            await asyncio.sleep(.25)
+
     @asynccontextmanager
     async def model_stream(self,body):
         """Start a configured local manager on first use, or recover it once after exit."""
         from . import runtime
+        await self.refresh_models(body.get('model'))
         for attempt in (1,2):
             stack=AsyncExitStack()
             try:
@@ -276,7 +322,7 @@ class Engine:
                 from pathlib import Path
                 local_endpoint=CONFIG['endpoint'].rstrip('/')=='http://127.0.0.1:8098/v1'
                 executable=CONFIG.get('llama_executable') or str(runtime.ROOT/'runtime'/'local-ai'/'runtime-vulkan'/'llama-server.exe')
-                configured=Path(executable).is_file() and bool(CONFIG.get('model_file') and Path(CONFIG['model_file']).is_file())
+                configured=Path(executable).is_file() and bool(await asyncio.to_thread(runtime.ensure_model_file))
                 if attempt==1 and local_endpoint and not state['running'] and (state['owned'] or configured):
                     self.broadcast({'type':'model_recovering','exit_code':state.get('exit_code')})
                     await asyncio.to_thread(runtime.start_swap)
@@ -401,6 +447,14 @@ class Engine:
         if state['steps']>=ROUND_LIMIT or run.get('stalled'):
             self.checkpoint(run,'repeated' if run.get('stalled') else 'limit')
             return {'run':run,'calls':[],'steps':state['steps']}
+        if state['steps']==0 and not run.get('plan_only') and not run.get('skill_preloaded') and not run.get('continuing'):
+            wanted=SKILL_COMMAND.match(last_user_text(self.store.messages(chat)))
+            if wanted:
+                # "/skill name" loads the skill for real before the model answers, so a small model cannot skip it.
+                run['skill_preloaded']=True
+                msg={'role':'assistant','content':'','tool_calls':[{'id':'call_'+uid(),'type':'function','function':{'name':'load_skill','arguments':json.dumps({'name':wanted.group(1)})}}]}
+                self.store.add(chat,msg); self.store.save_run(run)
+                return {'run':run,'calls':msg['tool_calls'],'steps':state['steps']+1}
         run['phase']='Preparing context'; run['live']=''; run['reasoning_text']=''; self.emit('changed',chat=chat)
         defs=self.tools.definitions(run['enabled']|({'more'} if run.get('plan_only') else set()))
         if run.get('plan_only'):
@@ -433,6 +487,11 @@ class Engine:
         self.store.save_run(run); self.emit('changed',chat=chat)
         run.pop('nudge_pending',None)
         run['announced']=bool(not msg.get('tool_calls') and defs and self.announces(msg.get('content')))
+        run['nudge_kind']='announced'
+        if not msg.get('tool_calls') and defs and not run['announced'] and not run.get('plan_only'):
+            asked=last_user_text(self.store.messages(chat))
+            if WANTS_WORK.search(asked) and code_lines(msg.get('content'))>=12: run['announced']=True; run['nudge_kind']='code'
+            elif HANDOFF.search(str(msg.get('content') or '')) and WANTS_WORK.search(asked): run['announced']=True; run['nudge_kind']='handoff'
         self.work(run,'generation.completed',turn,node=node,status='done',region='generation',tool_calls=len(msg.get('tool_calls',[])),evidence={'message':message_id},metrics={k:run.get('metrics',{}).get(k) for k in ('completion_tokens','tokens_per_second','elapsed')})
         return {'run':run,'calls':msg.get('tool_calls',[]),'steps':state['steps']+1}
 

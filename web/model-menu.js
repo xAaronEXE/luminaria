@@ -1,5 +1,6 @@
 /* Composer model picker: Auto routing or one installed model. */
 (()=>{
+ const small=m=>{const n=parseFloat(String(m?.parameters||'').replace(/[^0-9.]/g,''));return n>0&&n<7&&/b/i.test(String(m.parameters))};
  const variantOf=m=>['standard','abliterated'].includes(m.variant)?m.variant:/abliterat|huihui/i.test((m.name||'')+' '+(m.description||'')+' '+m.id)?'abliterated':'standard';
  const poolText=(pool,count)=>pool?.mode==='standard'?'Standard models only':pool?.mode==='abliterated'?'Abliterated models only':pool?.mode==='custom'?`${count} chosen model${count===1?'':'s'}`:'All installed models';
  let menu=null,button=null;
@@ -12,7 +13,7 @@
    else{
     if(action.id!==state.model)await api('/models/'+encodeURIComponent(action.id)+'/select','POST');
     if(state.orchestration?.enabled)await api('/settings','POST',{orchestration_enabled:false});
-    toast('Using '+action.name+'. It loads on the next message.');
+    toast('Using '+action.name+'. It loads on the next message.'+(small(action)?' Models this small often can’t use tools, so for real tasks pick a 14B model or Auto.':''));
    }
    close();await refresh();
   }catch(e){toast(e.message,true)}
@@ -30,11 +31,11 @@
   const pool=settings.orchestration_pool||{mode:'all',models:[]};
   const poolCount=pool.mode==='custom'?models.filter(m=>pool.models.includes(m.id)).length:pool.mode==='all'?models.length:models.filter(m=>variantOf(m)===pool.mode).length;
   const item=(attrs,checked,title,sub,extra='')=>`<button type="button" role="menuitemradio" aria-checked="${checked}" class="model-menu-item ${checked?'checked':''} ${extra}" ${attrs}><span class="model-menu-check" aria-hidden="true">${checked?icon('check'):''}</span><span class="model-menu-text"><strong>${title}</strong>${sub?`<small>${sub}</small>`:''}</span></button>`;
-  const group=v=>{const list=models.filter(m=>variantOf(m)===v);return list.length?`<div class="model-menu-group ${v}" role="group" aria-label="${v==='standard'?'Standard':'Abliterated'} models"><h4>${v==='standard'?'Standard':'<span class="fractured-mark" aria-hidden="true"></span>Abliterated'}</h4>${list.map(m=>item(`data-pick="${esc(m.id)}"`,!auto&&m.id===data.active,esc(m.name),[(m.name||'').includes(m.quantization)?'':m.quantization,(m.strengths||[]).join(', '),m.bytes?formatBytes(m.bytes):'',m.vision?'Vision':''].filter(Boolean).map(esc).join(' · '),v)).join('')}</div>`:''};
+  const group=v=>{const list=models.filter(m=>variantOf(m)===v);return list.length?`<div class="model-menu-group ${v}" role="group" aria-label="${v==='standard'?'Standard':'Abliterated'} models"><h4>${v==='standard'?'Standard':'<span class="fractured-mark" aria-hidden="true"></span>Abliterated'}</h4>${list.map(m=>item(`data-pick="${esc(m.id)}"`,!auto&&m.id===data.active,esc(m.name),[small(m)?'Chat only: too small for tasks':'',(m.name||'').includes(m.quantization)?'':m.quantization,(m.strengths||[]).join(', '),m.bytes?formatBytes(m.bytes):'',m.vision?'Vision':''].filter(Boolean).map(esc).join(' · '),v)).join('')}</div>`:''};
   menu.innerHTML=`${router?item('data-auto',auto,'Auto',`Picks the best model for each message · ${esc(poolText(pool,poolCount))}`,'auto'):''}${models.length?group('standard')+group('abliterated'):'<p class="model-menu-note">No models are installed yet.</p>'}<div class="model-menu-footer">${router?'<button type="button" role="menuitem" data-go="Orchestration">Choose models for Auto…</button>':'<button type="button" role="menuitem" data-go="Orchestration">Set up Auto routing…</button>'}<button type="button" role="menuitem" data-go="Models">Model library…</button></div>`;
   fillIcons(menu);place();
   menu.querySelector('[data-auto]')?.addEventListener('click',()=>choose({auto:true}));
-  menu.querySelectorAll('[data-pick]').forEach(b=>b.onclick=()=>choose({id:b.dataset.pick,name:models.find(m=>m.id===b.dataset.pick)?.name||b.dataset.pick}));
+  menu.querySelectorAll('[data-pick]').forEach(b=>b.onclick=()=>choose({id:b.dataset.pick,name:models.find(m=>m.id===b.dataset.pick)?.name||b.dataset.pick,parameters:models.find(m=>m.id===b.dataset.pick)?.parameters}));
   menu.querySelectorAll('[data-go]').forEach(b=>b.onclick=()=>{close(false);window.studioSettingsCategory=b.dataset.go;openPanel(b.dataset.go==='Models'?'models':'settings').catch(e=>toast(e.message,true))});
   (menu.querySelector('[aria-checked="true"]')||menu.querySelector('button'))?.focus();
  }

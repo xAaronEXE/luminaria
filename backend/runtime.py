@@ -55,10 +55,29 @@ def listening(port):
         with socket.create_connection(('127.0.0.1',port),timeout=1): return True
     except OSError: return False
 
+def ensure_model_file():
+    """Keep the selected model pointing at a file that exists. After models are removed and downloaded again,
+    the saved file can be gone while the same or other models are installed."""
+    from pathlib import Path
+    from .models import registry
+    current=CONFIG.get('model_file')
+    if current and Path(current).is_file(): return current
+    installed=[m for m in registry() if Path(m['model_file']).is_file()]
+    if not installed: return None
+    chosen=next((m for m in installed if m['id']==CONFIG.get('model')),installed[0])
+    from .config import save_config
+    save_config({'model':chosen['id'],'model_file':chosen['model_file'],'projector_file':chosen.get('projector_file') or '','context':chosen.get('context') or CONFIG.get('context')})
+    return chosen['model_file']
+
+def swap_model_ids():
+    """Models the running model manager was started with."""
+    try: return set(json.loads((DATA/'llama-swap.yaml').read_text('utf-8')).get('models',{}))
+    except (OSError,ValueError): return set()
+
 def start_swap():
     global swap_process
     if listening(8098): return {'started':False,'message':'Model manager is already listening on 8098'}
-    exe=resolve_executable(); model=CONFIG.get('model_file')
+    exe=resolve_executable(); model=ensure_model_file()
     from pathlib import Path
     if not model or not Path(model).is_file(): raise ValueError('Choose an installed model using Use this model in the Model library.')
     if listening(8097): raise ValueError('Port 8097 is already occupied. Stop the old standalone model server before starting the model manager. No process was stopped.')
