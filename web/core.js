@@ -4,6 +4,8 @@
  const status=document.createElement('div');status.className='entity-status';status.setAttribute('aria-hidden','true');status.innerHTML='<i></i><span>Ready</span>';document.body.append(status);
  const reduce=matchMedia('(prefers-reduced-motion: reduce)'),gl=canvas.getContext('webgl',{alpha:true,antialias:true,powerPreference:'low-power'});
  const publish=detail=>{window.luminariaRenderStats=detail;window.dispatchEvent(new CustomEvent('studio-render-stats',{detail}))};
+ const runActive=()=>{try{return !!state?.run&&!state.run.finished}catch{return false}};
+ let calmSince=0;window.addEventListener?.('resize',()=>{dirty=true});
  let failed=false,dirty=true,paused=reduce.matches||window.studioPrefs?.motion===false,frameId=0;
  const resources={buffers:[],shaders:[],program:null};
  const dispose=()=>{if(!gl)return;for(const b of resources.buffers)gl.deleteBuffer(b);for(const s of resources.shaders)gl.deleteShader(s);if(resources.program)gl.deleteProgram(resources.program)};
@@ -89,8 +91,12 @@
   if(working){const key=activeNode.status==='waiting'?'waiting':'working';return {key,text:key==='waiting'?words.waiting+' · '+activeNode.label:activeNode.region==='generation'?'Writing a response':'Working · '+activeNode.label}}
   const key=mood in tones?mood:'idle';return {key,text:voice&&voiceText?voiceText:words[key]}
  }
- function frame(now){if(failed)return;frameId=requestAnimationFrame(frame);if(document.hidden||(!document.querySelector('#panel-backdrop')?.hidden&&document.body.dataset.voice!=='conversation'))return;voice=document.body.dataset.voice==='conversation';const interval=voice?1000/60:1000/30;if(now-last+.5<interval||paused&&!dirty)return;const elapsed=now-last,dt=Math.min(elapsed/1000,.05);last=now-elapsed%interval;dirty=false;if(!paused)time+=dt;
-  const activeNode=scene.nodes.find(n=>n.id===scene.focus),working=activeNode&&['running','waiting','requested','allowed'].includes(activeNode.status);if(working){const p=positions.get(activeNode.id);if(p)target=[p[0],p[1]-.5,p[2]]}else target=[0,0,0];if(!voice&&!working)target=resting;
+ function frame(now){if(failed)return;frameId=requestAnimationFrame(frame);if(document.hidden||(!document.querySelector('#panel-backdrop')?.hidden&&document.body.dataset.voice!=='conversation'))return;voice=document.body.dataset.voice==='conversation';const interval=voice?1000/60:1000/30;if(now-last+.5<interval||paused&&!dirty)return;const elapsed=now-last,dt=Math.min(elapsed/1000,.05);last=now-elapsed%interval;const wasDirty=dirty;dirty=false;
+  const activeNode=scene.nodes.find(n=>n.id===scene.focus),working=activeNode&&['running','waiting','requested','allowed'].includes(activeNode.status)&&runActive();
+  // Idle means idle: once nothing is running, draw a still frame and stop until something changes.
+  const calm=!working&&!voice&&!runActive()&&!['listening','speaking','generating'].includes(mood);if(!calm)calmSince=0;else if(!calmSince)calmSince=now;
+  if(calm&&now-calmSince>1500&&!wasDirty)return;
+  if(!paused)time+=dt;if(working){const p=positions.get(activeNode.id);if(p)target=[p[0],p[1]-.5,p[2]]}else target=[0,0,0];if(!voice&&!working)target=resting;
   for(let i=0;i<3;i++){entityAt[i]=paused?target[i]:entityAt[i]+(target[i]-entityAt[i])*(1-Math.exp(-dt*3));const destination=positions.get(selection)||[0,0,0],view=follow?(working?target[i]*.25:0):destination[i]*.65;camera[i]=paused?view+(pan[i]||0):camera[i]+(view+(pan[i]||0)-camera[i])*(1-Math.exp(-dt*2))}
   for(const k of ['rms','bass','mid','high']){const value=Math.min(1,Math.max(0,...Object.values(audioFrames).filter(a=>now-a.at<400).map(a=>a[k]||0)));audio[k]+= (value-audio[k])*(1-Math.exp(-dt*12))}
   const ratio=Math.min(devicePixelRatio||1,1.5)*quality,w=Math.min(3840,Math.round(innerWidth*ratio)),h=Math.round(w*innerHeight/innerWidth);if(canvas.width!==w||canvas.height!==h){canvas.width=w;canvas.height=h;gl.viewport(0,0,w,h)}

@@ -124,6 +124,7 @@ class Engine:
     def __init__(self,store,toolbox,broadcast,checkpointer=None):
         self.store=store; self.tools=toolbox; self.broadcast=broadcast
         self.runs={}; self.tasks={}; self.approvals={}; self.gpu=asyncio.Lock()
+        self.unload_timer=None; self.unload_at=None
         self.inference=ContextVar('inference',default=None)
         self.client=httpx.AsyncClient(timeout=httpx.Timeout(240,connect=10),trust_env=False,headers={'Authorization':'Bearer '+CONFIG.get('model_api_key','local-only')})
         graph=StateGraph(GraphState)
@@ -300,7 +301,7 @@ class Engine:
         from .models import registry
         from pathlib import Path
         if not any(m['id']==model_id and Path(m['model_file']).is_file() for m in registry()): return
-        self.broadcast({'type':'model_recovering','exit_code':None})
+        self.broadcast({'type':'model_state'})
         await asyncio.to_thread(runtime.stop_owned); await asyncio.to_thread(runtime.start_swap)
         for _ in range(40):
             if runtime.listening(8098): break
@@ -653,7 +654,37 @@ class Engine:
             goal=str(plan_args.get('goal') or '').strip()[:300] or saved.get('goal','')
             self.store.set_setting('plan:'+run['chat'],{'goal':goal,'steps':steps,'version':saved.get('version',0)+1,'run':run['id'],'planning_only':bool(run.get('plan_only')),'updated':now()})
 
+    # ---- Model lifecycle: once nothing is running, the model is unloaded from the graphics card. ----
+    @staticmethod
+    def keep_loaded():
+        try: return max(0,min(3600,int(CONFIG.get('keep_model_loaded',0))))
+        except (TypeError,ValueError): return 0
+    def busy(self):
+        return any(not r.get('finished') for r in self.runs.values()) or any(not t.done() for t in self.tasks.values() if t is not asyncio.current_task())
+    def cancel_unload(self):
+        if self.unload_timer and not self.unload_timer.done(): self.unload_timer.cancel()
+        self.unload_timer=None; self.unload_at=None
+    def schedule_unload(self):
+        self.cancel_unload()
+        if CONFIG['endpoint'].rstrip('/')!='http://127.0.0.1:8098/v1': return
+        delay=max(15,self.keep_loaded())   # a short grace so a quick follow-up does not reload the model
+        self.unload_at=time.time()+delay
+        try: self.unload_timer=asyncio.get_running_loop().create_task(self.unload_later(delay))
+        except RuntimeError: self.unload_at=None
+    async def unload_later(self,delay):
+        try: await asyncio.sleep(delay)
+        except asyncio.CancelledError: return
+        self.unload_timer=None
+        if self.busy(): self.unload_at=None; return
+        await self.unload_model(); self.unload_at=None; self.broadcast({'type':'model_state'})
+    async def unload_model(self):
+        from .runtime import manager_state
+        if not manager_state().get('running'): return False
+        try: r=await self.client.post('http://127.0.0.1:8098/models/unload',timeout=20); return r.status_code<400
+        except httpx.HTTPError: return False
+
     def start(self,chat,reasoning=False,compact_only=False,plan_only=False,continue_from=None):
+        self.cancel_unload()
         if chat in self.runs and not self.runs[chat].get('finished'): raise ValueError('Finish, resume or stop the existing run first')
         if chat in self.tasks and not self.tasks[chat].done(): raise ValueError('This task is already running')
         run={'id':uid(),'chat':chat,'phase':'Queued','live':'','reasoning_text':'','enabled':set(),'reasoning':reasoning,'started':now(),'context':self.store.setting('context:'+chat,{}),'compact_only':compact_only,'plan_only':bool(plan_only and not compact_only)}
@@ -736,6 +767,7 @@ class Engine:
                 self.finish_event(run)
             elif run['phase'].startswith('Interrupted'): self.work(run,'run.interrupted',str(time.time()),status='interrupted',label='Interrupted by app shutdown')
             run['live']=''; self.store.save_run(run); self.emit('changed',chat=chat)
+            if not self.busy(): self.schedule_unload()
     def finish_event(self,run):
         phase=run.get('phase','')
         from .skills import catalog

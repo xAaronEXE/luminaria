@@ -434,7 +434,7 @@ async def browse_workspace():
 async def settings_save(request:Request):
     if any(not r.get('finished') for r in engine.runs.values()): raise ValueError('Finish or stop active tasks before changing settings')
     b=await request.json(); allowed={'workspace','endpoint','tokenizer','model','context','output_tokens','compact_ratio','python','node','llama_executable','model_file','projector_file','external_tools','ask_reads'}
-    allowed.update({'access_mode','orchestrator_model','compact_keep_turns','orchestration_pool','orchestration_enabled'})
+    allowed.update({'keep_model_loaded','access_mode','orchestrator_model','compact_keep_turns','orchestration_pool','orchestration_enabled'})
     if 'orchestration_pool' in b:
         from .orchestration import normalize_pool
         b['orchestration_pool']=normalize_pool(b['orchestration_pool'])
@@ -443,6 +443,7 @@ async def settings_save(request:Request):
         from .models import registry
         if not any(m['id']==b['orchestrator_model'] and Path(m['model_file']).is_file() for m in registry()):raise ValueError('Choose an installed orchestration model')
     if 'access_mode' in b and b['access_mode'] not in ('review','full'): raise ValueError('Choose review or full access')
+    if 'keep_model_loaded' in b and b['keep_model_loaded'] not in (0,300,1800): raise ValueError('Choose how long to keep the model loaded')
     changes={k:v for k,v in b.items() if k in allowed}
     for key in ('external_tools','ask_reads'):
         if key in changes and not isinstance(changes[key],bool): raise ValueError('Boolean setting required')
@@ -473,10 +474,12 @@ async def model_status():
             loaded=False
             try: loaded=(await client.get(CONFIG['tokenizer']+'/health')).status_code==200
             except httpx.HTTPError: pass
-        return {'connected':True,'loaded':loaded,'models':r.json().get('data',[]),'model':CONFIG['model'],'manager':manager_state()}
+        busy=engine.busy()
+        return {'connected':True,'loaded':loaded,'models':r.json().get('data',[]),'model':CONFIG['model'],'manager':manager_state(),
+                'state':'working' if busy else 'loaded' if loaded else 'off','unload_at':None if busy else engine.unload_at,'keep_loaded':engine.keep_loaded()}
     except Exception as e:
         state=manager_state();problem=diagnose() if state['owned'] and not state['running'] else None
-        return {'connected':False,'loaded':False,'error':str(e),'model':CONFIG['model'],'manager':state,'problem':problem}
+        return {'connected':False,'loaded':False,'error':str(e),'model':CONFIG['model'],'manager':state,'problem':problem,'state':'off','unload_at':None,'keep_loaded':engine.keep_loaded()}
 
 @app.post('/api/model/restart')
 async def model_restart():
@@ -499,8 +502,9 @@ async def model_start():
 async def unload_model():
     if any(not t.done() for t in engine.tasks.values()): raise ValueError('Stop running tasks before unloading')
     # Fixed local llama-swap control endpoint; never a caller-supplied URL.
+    engine.cancel_unload()
     r=await engine.client.post('http://127.0.0.1:8098/models/unload',timeout=20)
-    r.raise_for_status(); return {'ok':True}
+    r.raise_for_status(); broadcast({'type':'model_state'}); return {'ok':True}
 
 @app.get('/api/updates')
 async def updates():

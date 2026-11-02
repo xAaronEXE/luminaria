@@ -389,3 +389,9 @@ body.effects-low .library-menu{background:var(--panel);backdrop-filter:none;-web
 .ext-browse-bar{display:flex;justify-content:space-between;align-items:center;gap:10px;margin-bottom:12px;flex-wrap:wrap}
 .ext-file{font-size:12px}
 @media (max-width:640px){.ext-head{flex-wrap:wrap}.ext-side{width:100%;justify-content:flex-end}.ext-body{padding-left:18px}}
+
+/* Clear model and activity states: nothing moves while Luminaria is idle. */
+.local-status[data-model-state=off] .status-dot{background:var(--muted)}
+.local-status[data-model-state=loaded] .status-dot{background:var(--accent)}
+.local-status[data-model-state=working] .status-dot{background:var(--accent);animation:pulse 1.5s ease-in-out infinite}
+.lumen[data-state=idle] i,.lumen[data-state=complete] i,.lumen[data-state=interrupted] i,.lumen[data-state=error] i,.lumen:not([data-state]) i{animation-play-state:paused!important}

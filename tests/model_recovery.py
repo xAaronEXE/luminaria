@@ -155,3 +155,27 @@ class RecoveryTests(unittest.IsolatedAsyncioTestCase):
   self.assertEqual(calls,[]);self.assertIn('No model is installed yet',str(caught.exception))
 
 if __name__=='__main__':unittest.main()
+
+class IdleUnloadTests(unittest.IsolatedAsyncioTestCase):
+ def engine(self):
+  e=Engine.__new__(Engine);e.runs={};e.tasks={};e.unload_timer=None;e.unload_at=None;e.events=[];e.broadcast=e.events.append;return e
+ async def test_model_unloads_after_the_last_run_finishes(self):
+  import time
+  e=self.engine();unloaded=[]
+  async def fake_unload():unloaded.append(1);return True
+  e.unload_model=fake_unload
+  with patch.dict(CONFIG,endpoint='http://127.0.0.1:8098/v1',keep_model_loaded=0):
+   e.schedule_unload();self.assertAlmostEqual(e.unload_at,time.time()+15,delta=2)
+   e.unload_timer.cancel();e.unload_timer=None
+   await e.unload_later(0);self.assertEqual(unloaded,[1]);self.assertIsNone(e.unload_at)
+ async def test_nothing_unloads_while_a_task_is_running_or_after_a_new_message(self):
+  e=self.engine();unloaded=[]
+  async def fake_unload():unloaded.append(1);return True
+  e.unload_model=fake_unload;e.runs={'c':{'finished':None}}
+  await e.unload_later(0);self.assertEqual(unloaded,[])
+  e.runs={}
+  with patch.dict(CONFIG,endpoint='http://127.0.0.1:8098/v1',keep_model_loaded=300):
+   e.schedule_unload();self.assertIsNotNone(e.unload_timer);e.cancel_unload();self.assertIsNone(e.unload_at)
+ def test_keep_loaded_is_bounded(self):
+  with patch.dict(CONFIG,keep_model_loaded='junk'):self.assertEqual(Engine.keep_loaded(),0)
+  with patch.dict(CONFIG,keep_model_loaded=99999):self.assertEqual(Engine.keep_loaded(),3600)

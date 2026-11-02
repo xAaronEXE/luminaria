@@ -215,6 +215,7 @@ Open **Library › Extensions**. Everything works the same way: each item shows 
 - **Auto mode** (Settings › Auto mode) picks the most suitable installed model for each message: a fast model for quick questions, a stronger one for hard work. You can limit which models it may choose.
 - **Hardware & tuning** shows the graphics card, memory and processor Luminaria detected. Settings are chosen automatically, and **tuning** can measure the fastest settings for your PC, such as processor threads and how much of the model goes on the graphics card. Context size and reply length are in **Settings › Memory & context**.
 - Only one model is loaded on your graphics card at a time. Switching models loads the new one on demand.
+- **Idle means idle.** When a reply or task is done, Luminaria stops and unloads the model from your graphics card. The bottom corner shows *Model off*, *Model loaded · unloads in…* or *Model working*. To keep the model loaded for 5 or 30 minutes so your next message starts faster, change **After it finishes** in Settings › Hardware & tuning.
 
 ## Voice
 

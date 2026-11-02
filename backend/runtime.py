@@ -117,7 +117,9 @@ def start_swap():
         if entry.get('projector_file') and Path(entry['projector_file']).is_file(): args+=['--mmproj',entry['projector_file'],'--no-mmproj-offload','--image-max-tokens','1024']
         command=' '.join('"'+str(a).replace('\\','/').replace('"','\\"')+'"' for a in args)
         configs[entry['id']]={'name':entry['name'],'cmd':command,'proxy':'http://127.0.0.1:8097','checkEndpoint':'/health'}
-    config={'healthCheckTimeout':180,'logLevel':'info','globalTTL':1800,'globalConcurrencyLimit':1,'captureBuffer':0,'apiKeys':[CONFIG['model_api_key']],'security':{'cors':{'allowedOrigins':['http://127.0.0.1:3210']}},'models':configs}
+    keep=int(CONFIG.get('keep_model_loaded',0) or 0)
+    # Luminaria unloads the model itself once work is done; this is only a backstop if the app closes unexpectedly.
+    config={'healthCheckTimeout':180,'logLevel':'info','globalTTL':max(300,keep),'globalConcurrencyLimit':1,'captureBuffer':0,'apiKeys':[CONFIG['model_api_key']],'security':{'cors':{'allowedOrigins':['http://127.0.0.1:3210']}},'models':configs}
     # JSON is a subset of YAML; use a generated file and no hand-escaped paths.
     path=DATA/'llama-swap.yaml'; path.write_text(json.dumps(config,indent=2),encoding='utf-8')
     runtime=ROOT/'runtime'/'llama-swap.exe'
