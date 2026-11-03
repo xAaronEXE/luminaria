@@ -78,7 +78,10 @@ async def lifespan(app):
         from .updates import cleanup
         await asyncio.to_thread(cleanup)
     task=asyncio.create_task(scheduler());sync_task=asyncio.create_task(sync_loop())
+    from . import sharing
+    await sharing.resume()
     yield
+    with contextlib.suppress(Exception): await sharing.shutdown()
     sync_task.cancel()
     with contextlib.suppress(asyncio.CancelledError):await sync_task
     task.cancel()
@@ -686,6 +689,37 @@ async def market_mcp_install(request:Request):
 
 @app.post('/api/permissions/reset')
 async def reset_permissions(): store.execute("DELETE FROM settings WHERE key LIKE 'permission:%'");return {'ok':True}
+
+@app.get('/api/sharing')
+async def sharing_status():
+    from .sharing import status
+    return status()
+
+@app.post('/api/sharing')
+async def sharing_change(request:Request):
+    from .sharing import apply
+    b=await request.json()
+    return await apply({k:b[k] for k in ('share_models','lend_gpu','rpc_peers') if k in b})
+
+@app.get('/api/services')
+async def list_services():
+    from .services import services
+    return {'services':[{k:v for k,v in x.items()} for x in services()]}
+
+@app.post('/api/services')
+async def add_service(request:Request):
+    from .services import add
+    result=await add(await request.json()); broadcast({'type':'changed'}); return result
+
+@app.post('/api/services/{sid}/files')
+async def service_files(sid:str,request:Request):
+    from .services import set_files
+    set_files(sid,bool((await request.json()).get('files'))); return {'ok':True}
+
+@app.delete('/api/services/{sid}')
+async def remove_service(sid:str):
+    from .services import remove
+    remove(sid); broadcast({'type':'changed'}); return {'ok':True}
 
 @app.get('/api/models')
 async def models():

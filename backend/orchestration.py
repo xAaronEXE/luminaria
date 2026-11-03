@@ -25,7 +25,7 @@ HARD = r'\b(architect|design a|from scratch|end-to-end|full (app|application|pro
 GREETING = r'^\s*(hi|hello|hey|thanks|thank you|ok|okay|cool|nice|yo|good (morning|evening|night))\b[\s!.?]*$'
 
 def installed(models):
-    return [m for m in models if Path(m.get('model_file', '')).is_file()]
+    return [m for m in models if m.get('remote') or Path(m.get('model_file', '')).is_file()]
 
 def variant(model):
     value = model.get('variant')

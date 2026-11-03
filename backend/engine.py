@@ -91,6 +91,18 @@ def clip_reply(text,message_id=None,limit=6000):
     if not isinstance(text,str) or len(text)<=limit: return text
     return text[:limit//2].rstrip()+f'\n[Long reply shortened here; the full text is saved{f" as message {message_id}" if message_id else ""}.]'
 
+TEXT_ONLY_TOOLS=frozenset({'research','web_search','web_fetch','update_plan'})
+def text_only(messages,full_system,private_system):
+    """What an outside service without file access receives: conversation text only, no tool results or file contents."""
+    out=[]
+    for m in messages:
+        if m.get('role')=='system': out.append({**m,'content':str(m.get('content','')).replace(full_system,private_system,1)})
+        elif m.get('role')=='tool': continue
+        elif m.get('role')=='assistant':
+            if m.get('content'): out.append({'role':'assistant','content':m['content']})
+        else: out.append(m)
+    return out
+
 def with_nudge(messages,run):
     return messages+[{'role':'user','content':NUDGES.get(run.get('nudge_kind'),NUDGE_TEXT)}] if run.get('nudge_pending') else messages
 
@@ -224,7 +236,7 @@ class Engine:
                 f"Skills: built-in in {built_in}, installed in {installed}; you can read and list them (including scripts) but not change them. "
                 f"Models: {BASE_DATA.parent/'models'}. " + Engine.model_note() +
                 f"Off limits to file tools: Luminaria's settings, history and sign-in data ({BASE_DATA}), Windows, Program Files and credential folders. ")
-    def system(self):
+    def system(self,private=False):
         """Ordered for the prompt cache: fixed instructions first, then this PC's layout, then the memory files.
         Everything here changes only when a setting or a memory file changes, so cached work is reused between messages."""
         from .memory_file import prompt as memory_prompt
@@ -263,6 +275,9 @@ class Engine:
         + f"When the user asks about \"your files\" or \"this folder\" without naming one, start with the default folder (path '.'). "
         + f"Python runtime: {find_runtime('python') or 'not installed on this PC'}. Node runtime: {find_runtime('node') or 'not installed on this PC'}. "
         'Shell and Windows tools act with the user\'s Windows permissions under the active permission mode. ')
+        if private:
+            # An outside service that may not see files gets no paths, settings or memory either.
+            return rules+'\n\nYou are running on an outside model service that may not see the user\'s files: you only have web research and planning tools.'
         memory=memory_prompt(self.store)
         return rules+'\n\n'+place+('\n\n'+memory if memory else '')
 
@@ -360,7 +375,14 @@ class Engine:
     @asynccontextmanager
     async def model_stream(self,body):
         """Start a configured local manager on first use, or recover it once after exit."""
-        from . import runtime
+        from . import runtime, services
+        if services.is_remote(body.get('model')):
+            # An outside model service: its own address and key, never the local manager's key.
+            url,headers,clean=services.request(body['model'],body)
+            async with httpx.AsyncClient(timeout=httpx.Timeout(240,connect=15),trust_env=False) as client:
+                async with client.stream('POST',url,json=clean,headers=headers) as response:
+                    yield response
+            return
         await self.refresh_models(body.get('model'))
         for attempt in (1,2):
             stack=AsyncExitStack()
@@ -525,6 +547,10 @@ class Engine:
             if run['plan_finalize'] and run.get('plan_version'): allowed=set()
             defs=[d for d in defs if d['function']['name'] in allowed]
         messages=with_nudge(self.context(chat,run),run)
+        from .services import may_see_files
+        if not may_see_files(self.model_id()):
+            defs=[d for d in defs if d['function']['name'] in TEXT_ONLY_TOOLS]
+            messages=text_only(messages,self.system(),self.system(private=True))
         tokens,method=await self.token_count(messages,defs)
         if tokens+CONFIG['output_tokens']>=int(self.context_limit()*CONFIG['compact_ratio']):
             try:
@@ -598,6 +624,8 @@ class Engine:
             try:
                 args=json.loads(call['function']['arguments']); definition=self.tools.get(name)
                 if not definition: raise ValueError('Unknown tool. Use discover_tools first.')
+                from .services import may_see_files
+                if name not in TEXT_ONLY_TOOLS and not may_see_files(self.model_id()): raise ValueError('This outside model service may not use tools that touch your files.')
                 if run.get('plan_only') and name not in PLAN_TOOLS: raise ValueError('Planning-only mode: this tool is not available. Finish the plan with update_plan; the user decides whether to carry it out.')
                 if run.get('plan_finalize') and name!='update_plan': raise ValueError('Planning-only mode: the investigation budget is used up. Present the plan now.')
                 if not isinstance(args,dict): raise ValueError('Tool arguments must be an object')
@@ -769,7 +797,8 @@ class Engine:
         try:
             async with self.gpu:
                 from .models import registry
-                models=registry();selected=next((m for m in models if m['id']==run.get('model_id')),None)
+                from .services import remote_models
+                models=registry()+remote_models();selected=next((m for m in models if m['id']==run.get('model_id')),None)
                 router=CONFIG.get('orchestrator_model','') if CONFIG.get('orchestration_enabled',True) else ''
                 routed=False
                 if run.get('plan_only') and not compact_only and not selected:

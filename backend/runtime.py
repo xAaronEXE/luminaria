@@ -126,6 +126,11 @@ def start_swap():
                 if tuning.get('cpu_moe'):args+=['--n-cpu-moe',str(tuning['cpu_moe'])]
                 if tuning.get('ubatch'):args[args.index('-ub')+1]=str(tuning['ubatch']);args[args.index('-b')+1]=str(max(2048,tuning['ubatch']))
                 if tuning['gpu_layers']==0:args+=['--no-kv-offload']
+        try:
+            from .sharing import rpc_peers
+            peers=rpc_peers()
+        except ValueError: peers=[]
+        if peers: args+=['--rpc',','.join(peers)]   # split the model across these PCs' graphics cards
         if entry.get('projector_file') and Path(entry['projector_file']).is_file(): args+=['--mmproj',entry['projector_file'],'--no-mmproj-offload','--image-max-tokens','1024']
         command=' '.join('"'+str(a).replace('\\','/').replace('"','\\"')+'"' for a in args)
         configs[entry['id']]={'name':entry['name'],'cmd':command,'proxy':'http://127.0.0.1:8097','checkEndpoint':'/health'}

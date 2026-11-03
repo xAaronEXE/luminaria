@@ -33,7 +33,10 @@ def public_models(store):
     for m in registry():
         p=Path(m.get('model_file',''))
         result.append({**m,'benchmarks':history(m['id'],m.get('benchmarks',[])),'installed':p.is_file(),'bytes':p.stat().st_size if p.is_file() else None,'vision':bool(m.get('projector_file') and Path(m['projector_file']).is_file()),'latest_run':store.setting('model_metrics:'+m['id'])})
-    return {'active':CONFIG['model'],'context':CONFIG['context'],'models':result,'storage':model_storage(result)}
+    storage=model_storage(result)
+    from .services import remote_models
+    result+=[{**m,'installed':True,'benchmarks':[],'bytes':None,'vision':False} for m in remote_models()]
+    return {'active':CONFIG['model'],'context':CONFIG['context'],'models':result,'storage':storage}
 def add_model(body):
     id=body.get('id','')
     if not re.fullmatch('[a-zA-Z0-9_-]{1,60}',id): raise ValueError('Use a short model ID containing letters, numbers, hyphens or underscores')
@@ -45,6 +48,11 @@ def add_model(body):
     models.append({'id':id,'name':str(body.get('name') or id)[:120],'description':str(body.get('description','User-added model. Capabilities have not been tested.'))[:1000],'model_file':str(path),'projector_file':body.get('projector_file',''),'context':max(4096,min(262144,int(body.get('context',16384)))),'quantization':str(body.get('quantization','Unknown'))[:50],'strengths':['User-configured'],'benchmarks':[],'benchmark_note':'Not benchmarked on this machine.'})
     save(models); return {'id':id,'restart_required':True}
 def select(id):
+    from .services import is_remote, remote_models
+    if is_remote(id):
+        m=next((m for m in remote_models() if m['id']==id),None)
+        if not m: raise ValueError('That model service is not set up')
+        save_config({'model':id,'context':m['context']}); return m
     m=next((m for m in registry() if m['id']==id),None)
     if not m or not Path(m['model_file']).is_file(): raise ValueError('Model is unavailable')
     from .runtime import resolve_executable
