@@ -36,7 +36,13 @@ def public_models(store):
     storage=model_storage(result)
     from .services import remote_models
     result+=[{**m,'installed':True,'benchmarks':[],'bytes':None,'vision':False} for m in remote_models()]
-    return {'active':CONFIG['model'],'context':CONFIG['context'],'models':result,'storage':storage}
+    roles={}
+    try:
+        from .orchestration import pick_planner,pick_coder
+        planner=pick_planner(result,CONFIG.get('planner_model','auto')); coder=pick_coder(result,CONFIG.get('coder_model','auto'))
+        roles={'planner':planner['id'] if planner else None,'coder':coder['id'] if coder else None}
+    except Exception: pass
+    return {'active':CONFIG['model'],'context':CONFIG['context'],'models':result,'storage':storage,'roles':roles}
 def add_model(body):
     id=body.get('id','')
     if not re.fullmatch('[a-zA-Z0-9_-]{1,60}',id): raise ValueError('Use a short model ID containing letters, numbers, hyphens or underscores')

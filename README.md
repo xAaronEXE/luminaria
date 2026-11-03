@@ -21,6 +21,9 @@
 9. [Memory](#memory)
 10. [Extensions: skills, connectors and workflows](#extensions-skills-connectors-and-workflows)
 11. [Auto mode, hardware and tuning](#auto-mode-hardware-and-tuning)
+    - [Model roles and long tasks](#model-roles-and-long-tasks)
+    - [Model services and Relay](#model-services-and-relay)
+    - [Your PCs, working together](#your-pcs-working-together)
 12. [Voice](#voice)
 13. [Appearance](#appearance)
 14. [Profiles, sign-in and cloud sync](#profiles-sign-in-and-cloud-sync)
@@ -216,6 +219,40 @@ Open **Library › Extensions**. Everything works the same way: each item shows 
 - **Hardware & tuning** shows the graphics card, memory and processor Luminaria detected. Settings are chosen automatically, and **tuning** can measure the fastest settings for your PC, such as processor threads and how much of the model goes on the graphics card. Context size and reply length are in **Settings › Memory & context**.
 - Only one model is loaded on your graphics card at a time. Switching models loads the new one on demand.
 - **Idle means idle.** When a reply or task is done, Luminaria stops and unloads the model from your graphics card. The bottom corner shows *Model off*, *Model loaded · unloads in…* or *Model working*. To keep the model loaded for 5 or 30 minutes so your next message starts faster, change **After it finishes** in Settings › Hardware & tuning.
+
+### Model roles and long tasks
+Luminaria gives different jobs to different models:
+
+| Role | What it does | Default |
+|---|---|---|
+| **Planning model** | Makes plans with you (Plan only) and checks finished work, with thinking on | Your strongest installed reasoning model |
+| **Coding model** | Does the coding steps when a plan is carried out | Your best installed coding model |
+| **Chat model** | Everything else | The model you pick in the message box, or Auto |
+
+The model picker labels the current picks (*Plans and checks*, *Codes plan steps*). To change them, go to **Settings › Auto mode**. Luminaria loads and swaps models by itself as the work moves between roles.
+
+**Carrying out a plan:** make a plan with **Plan only**, then open the plan card and choose **Carry out plan**.
+1. Luminaria works through the steps one at a time. Each step starts with a clean slate: the plan, short notes from earlier steps, and its own work.
+2. It marks each step done, or blocked if something stops it.
+3. At the end, the planning model checks the whole result against the goal.
+
+### Model services and Relay
+Besides the models on your PC, Luminaria can use **model services**: OpenRouter (including its free models), Groq, Gemini, OmniRoute, Ollama, LM Studio, or any service that works like OpenAI's API.
+
+1. Open **Extensions › Connectors › Add a model service**.
+2. Pick a service, or enter its address, and add your API key if it needs one. Keys are encrypted on your PC.
+3. Its models appear in the model picker under **Model services**.
+
+**Relay:** set a model service as your **Coding model** in Settings › Auto mode. When Luminaria carries out a plan, it relays the coding steps to that service, while your own PC plans the work and checks the result.
+
+**Privacy:** each service has a **May see my files** switch, off by default. When it's off, the service receives only the conversation text. It never gets file contents, command output or your memory, and it can't use file tools. Auto never sends anything to a model service on its own. Free services have usage limits and their own terms, so check them before relying on one.
+
+### Your PCs, working together
+All of these are in **Extensions › Connectors › Your other PCs**.
+
+- **Share this PC's models.** Turn it on to see this PC's address and a pairing key. On another PC, add a model service, choose *Another PC running Luminaria*, and enter that address (ending in `:8099/v1`) and key. Only chat requests with the key are accepted. Windows may ask to allow Luminaria on private networks: choose **Allow**.
+- **Lend this PC's graphics card.** Lets another PC split one large model across both graphics cards, using llama.cpp's RPC server. It has no password, so use it only on your own home or office network.
+- **Use other PCs' graphics cards.** On the main PC, enter the addresses of PCs that lend their graphics card, for example `192.168.1.20`. Models then run across all of them, including models too large for one PC.
 
 ## Voice
 
