@@ -54,7 +54,8 @@ def eligibility(models, setting, vision=False, context_needed=0, router=''):
     rows = []
     for m in models:
         reasons = []
-        if not Path(m.get('model_file', '')).is_file(): reasons.append('Not downloaded')
+        if m.get('remote'): reasons.append('Model service: used only when you pick it or give it a role')
+        elif not Path(m.get('model_file', '')).is_file(): reasons.append('Not downloaded')
         if setting['mode'] == 'custom' and m['id'] not in setting['models']: reasons.append('Not in your selected models')
         if setting['mode'] in ('standard', 'abliterated') and variant(m) != setting['mode']:
             reasons.append(('Standard' if setting['mode'] == 'standard' else 'Abliterated') + ' models only')
@@ -214,6 +215,17 @@ async def choose(client, endpoint, router, models, task, fallback, setting=None,
             'pool_size': len(choices), 'router_called': called, **({'note': profile['router_error']} if profile.get('router_error') else {})}
 
 THINKERS = re.compile(r'qwen3|gpt-oss|deepseek-r1|r1-distill|reason|think|magistral|phi-4', re.I)
+
+def pick_coder(models, setting='auto', evidence_for=None, vram=None):
+    """The model for coding steps: the user's choice (an installed model or a model service), else the best installed coding model."""
+    choices = installed(models)
+    if setting and setting not in ('auto', 'chat'):
+        return next((m for m in choices if m['id'] == setting), None)
+    if setting == 'chat': return None
+    coders = [m for m in choices if 'Coding' in (m.get('strengths') or []) and not m.get('remote')]
+    if not coders: return None
+    ranked = rank(coders, {'needs': ['coding', 'tools'], 'complexity': 'high'}, evidence_for, vram if vram is not None else gpu_memory())
+    return next(m for m in coders if m['id'] == ranked[0]['id'])
 
 def pick_planner(models, setting='auto', evidence_for=None, vram=None):
     """The model that plans and checks: the user's choice, else the strongest installed reasoning model that can use tools."""

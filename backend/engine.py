@@ -300,6 +300,11 @@ class Engine:
         if run and run.get('plan_only') and run.get('plan_finalize'): state.append(PLAN_FINALIZE)
         if summary: messages[0]['content']+='\n\nWorking summary of prior conversation. Original messages are retrievable by ID.\n'+summary['content']
         recent=self.store.messages(chat,summary['through_id'] if summary else 0)
+        if run and run.get('step_from'):
+            recent=[m for m in recent if m.get('id',0)>=run['step_from']]
+            if plan and plan.get('steps'):
+                notes='\n'.join(f"- {s['title']}: {s['note']}" for s in plan['steps'] if s.get('note'))
+                if notes: state.append('Notes from finished plan steps:\n'+notes)
         if run and run.get('trim_history'):
             # Summarizing failed and history no longer fits: work from the latest turns. Nothing is deleted.
             users=[i for i,m in enumerate(recent) if m.get('role')=='user']
@@ -778,11 +783,11 @@ class Engine:
         try: r=await self.client.post('http://127.0.0.1:8098/models/unload',timeout=20); return r.status_code<400
         except httpx.HTTPError: return False
 
-    def start(self,chat,reasoning=False,compact_only=False,plan_only=False,continue_from=None):
+    def start(self,chat,reasoning=False,compact_only=False,plan_only=False,continue_from=None,plan_run=False):
         self.cancel_unload()
         if chat in self.runs and not self.runs[chat].get('finished'): raise ValueError('Finish, resume or stop the existing run first')
         if chat in self.tasks and not self.tasks[chat].done(): raise ValueError('This task is already running')
-        run={'id':uid(),'chat':chat,'phase':'Queued','live':'','reasoning_text':'','enabled':set(),'reasoning':reasoning,'started':now(),'context':self.store.setting('context:'+chat,{}),'compact_only':compact_only,'plan_only':bool(plan_only and not compact_only)}
+        run={'id':uid(),'chat':chat,'phase':'Queued','live':'','reasoning_text':'','enabled':set(),'reasoning':reasoning,'started':now(),'context':self.store.setting('context:'+chat,{}),'compact_only':compact_only,'plan_only':bool(plan_only and not compact_only),'plan_run':bool(plan_run and not plan_only and not compact_only)}
         if continue_from:
             run['continuing']=continue_from.get('continuing') or continue_from['started']
             run['continuations']=continue_from.get('continuations',0)+1
@@ -842,6 +847,13 @@ class Engine:
                     warm=await self.client.post(CONFIG['endpoint']+'/chat/completions',json={'model':self.model_id(),'messages':[{'role':'user','content':'Ready'}],'max_tokens':1,'stream':False,'chat_template_kwargs':{'enable_thinking':False}},timeout=240)
                     warm.raise_for_status()
                 if compact_only: run['compact_result']=await self.compact(chat,force=True,run=run)
+                elif run.get('plan_run'):
+                    if resuming:
+                        result=await self.graph.ainvoke(resume_input,{'recursion_limit':42,'configurable':{'thread_id':run['id']}})
+                        run=self.runs[chat]
+                        if result.get('__interrupt__'): paused=True; run['phase']='Waiting for approval'
+                        else: self.finish_step(run)
+                    if not paused: paused=await self.run_plan(run,models)
                 else:
                     result=await self.graph.ainvoke(resume_input if resuming else {'run':run,'calls':[],'steps':0},{'recursion_limit':42,'configurable':{'thread_id':run['id']}})
                     run=self.runs[chat]
@@ -871,6 +883,58 @@ class Engine:
             elif run['phase'].startswith('Interrupted'): self.work(run,'run.interrupted',str(time.time()),status='interrupted',label='Interrupted by app shutdown')
             run['live']=''; self.store.save_run(run); self.emit('changed',chat=chat)
             if not self.busy(): self.schedule_unload()
+    # ---- Long tasks: carry out the saved plan one step at a time ----
+    def save_plan(self,chat,plan):
+        self.store.set_setting('plan:'+chat,{**plan,'updated':now()}); self.emit('changed',chat=chat)
+    def finish_step(self,run):
+        """Record the active step's outcome from the last reply, so later steps start clean but informed."""
+        chat=run['chat']; plan=self.store.setting('plan:'+chat,None) or {}
+        step=next((s for s in plan.get('steps',[]) if s.get('id')==run.get('step_id')),None)
+        if not step: return
+        last=next((m for m in reversed(self.store.messages(chat)) if m.get('role')=='assistant' and isinstance(m.get('content'),str) and m['content'].strip()),{})
+        step['note']=clip_reply(last.get('content',''),limit=900)
+        step['status']='blocked' if run.get('denied') or run.get('checkpoint') or run.get('stalled') else 'done'
+        self.save_plan(chat,plan)
+    async def run_step(self,run,model,instruction,reasoning=False):
+        chat=run['chat']
+        self.inference.set(model); run['model_id']=model['id'] if model else CONFIG['model']; run['reasoning']=reasoning
+        run['step_from']=self.store.add(chat,{'role':'user','content':instruction,'plan_step':True})
+        for key in ('denied','checkpoint','stalled','announced','nudges','trim_history','skill_preloaded'): run.pop(key,None)
+        self.emit('changed',chat=chat)
+        result=await self.graph.ainvoke({'run':run,'calls':[],'steps':0},{'recursion_limit':42,'configurable':{'thread_id':run['id']}})
+        return bool(result.get('__interrupt__'))
+    async def run_plan(self,run,models):
+        """Each step starts with a clean context (the plan, notes from earlier steps and its own messages) and the right model:
+        coding steps use the coding model (installed or a model service), other steps the chat model, and the planning model
+        checks the finished work. Returns True when paused for an approval."""
+        from .orchestration import pick_planner,pick_coder,keyword_profile
+        chat=run['chat']; plan=self.store.setting('plan:'+chat,None)
+        if not plan or not plan.get('steps'): raise ValueError('There is no saved plan to carry out. Make one with Plan only first.')
+        chat_model=next((m for m in models if m['id']==CONFIG['model']),None)
+        coder=pick_coder(models,CONFIG.get('coder_model','auto'),routing_evidence) or chat_model
+        todo=[s for s in plan['steps'] if s.get('status') not in ('done','skipped')]
+        for step in todo:
+            plan=self.store.setting('plan:'+chat,None) or plan
+            current=next((s for s in plan['steps'] if s.get('id')==step.get('id')),None)
+            if not current or current.get('status') in ('done','skipped'): continue
+            if current.get('status')=='blocked' and step is not todo[0]: break
+            for s in plan['steps']: s['status']='active' if s is current else s['status']
+            self.save_plan(chat,plan)
+            n=plan['steps'].index(current)+1
+            coding='coding' in keyword_profile(current['title']+' '+current.get('detail',''))['needs']
+            run['step_id']=current.get('id'); run['phase']=f'Step {n} of {len(plan["steps"])}'
+            instruction=(f'[Plan step {n} of {len(plan["steps"])}] {current["title"]}'+(f'\n{current["detail"]}' if current.get('detail') else '')
+                         +'\nDo this step now and check it. Then reply with a short note: what you did, where the results are, and anything that did not work.')
+            if await self.run_step(run,coder if coding else chat_model,instruction): return True
+            self.finish_step(run)
+            plan=self.store.setting('plan:'+chat,None) or plan
+            if any(s.get('id')==current.get('id') and s['status']=='blocked' for s in plan['steps']): return False
+        planner=pick_planner(models,CONFIG.get('planner_model','auto'),routing_evidence) or chat_model
+        run['step_id']=None; run['phase']='Checking the work'
+        if await self.run_step(run,planner,'[Final check] Check the finished work against the goal'+(f': {plan.get("goal")}' if plan.get('goal') else '')
+                               +'. Verify the results with tools (run it, run tests, inspect files). Fix small problems; report what works, what does not and what is left.',reasoning=True): return True
+        return False
+
     def finish_event(self,run):
         phase=run.get('phase','')
         from .skills import catalog

@@ -238,7 +238,7 @@ async def run_chat(id:str,request:Request):
         content.append({'type':'image_ref','id':ref['id'],'mime':{'png':'image/png','jpg':'image/jpeg','webp':'image/webp'}[p.suffix[1:]]})
     if not store.messages(id): store.execute('UPDATE chats SET title=? WHERE id=?',(text[:70] or 'Image analysis',id))
     store.add(id,{'role':'user','content':content if attachments else text})
-    return {'run_id':engine.start(id,bool(b.get('reasoning',False)),plan_only=bool(b.get('plan_only',False)))}
+    return {'run_id':engine.start(id,bool(b.get('reasoning',False)),plan_only=bool(b.get('plan_only',False)),plan_run=bool(b.get('plan_run',False)))}
 
 MAX_CONTINUATIONS=5
 
@@ -437,7 +437,7 @@ async def browse_workspace():
 async def settings_save(request:Request):
     if any(not r.get('finished') for r in engine.runs.values()): raise ValueError('Finish or stop active tasks before changing settings')
     b=await request.json(); allowed={'workspace','endpoint','tokenizer','model','context','output_tokens','compact_ratio','python','node','llama_executable','model_file','projector_file','external_tools','ask_reads'}
-    allowed.update({'planner_model','keep_model_loaded','access_mode','orchestrator_model','compact_keep_turns','orchestration_pool','orchestration_enabled'})
+    allowed.update({'coder_model','planner_model','keep_model_loaded','access_mode','orchestrator_model','compact_keep_turns','orchestration_pool','orchestration_enabled'})
     if 'orchestration_pool' in b:
         from .orchestration import normalize_pool
         b['orchestration_pool']=normalize_pool(b['orchestration_pool'])
@@ -446,7 +446,8 @@ async def settings_save(request:Request):
         from .models import registry
         if not any(m['id']==b['orchestrator_model'] and Path(m['model_file']).is_file() for m in registry()):raise ValueError('Choose an installed orchestration model')
     if 'access_mode' in b and b['access_mode'] not in ('review','full'): raise ValueError('Choose review or full access')
-    if 'planner_model' in b and (not isinstance(b['planner_model'],str) or len(b['planner_model'])>200): raise ValueError('Choose a planning model')
+    for role in ('planner_model','coder_model'):
+        if role in b and (not isinstance(b[role],str) or len(b[role])>300): raise ValueError('Choose a model for this role')
     if 'keep_model_loaded' in b and b['keep_model_loaded'] not in (0,300,1800): raise ValueError('Choose how long to keep the model loaded')
     changes={k:v for k,v in b.items() if k in allowed}
     for key in ('external_tools','ask_reads'):
