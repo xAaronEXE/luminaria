@@ -657,7 +657,8 @@ class Engine:
             artifact=DATA/'runs'/run['id']/'artifacts'; artifact.mkdir(parents=True,exist_ok=True)
             (artifact/(id+'.json')).write_text(json.dumps(result,ensure_ascii=False),encoding='utf-8')
             # Keep raw results on disk, small searchable excerpts in the working context.
-            preview=json.dumps(result,ensure_ascii=False)
+            from .compact import render
+            preview=render(result)   # compact text for the model; the full JSON is saved on disk below
             images=[]
             if isinstance(result,dict):
                 for part in result.get('content',[]):
@@ -667,7 +668,7 @@ class Engine:
                         images.append({'type':'image_ref','id':image_id,'mime':part.get('mimeType','image/png')})
                 if images:
                     lightweight={**result,'content':[p if p.get('type')!='image' else {'type':'text','text':'Screenshot saved; image follows.'} for p in result['content']]}
-                    preview=json.dumps(lightweight,ensure_ascii=False)
+                    preview=render(lightweight)
             excerpt=preview[:10000]+(f'\n[Truncated for context. Full output: history_read action_id={id}]' if len(preview)>10000 else '')
             self.store.execute('UPDATE actions SET status=?,result=? WHERE id=?',(status,json.dumps({'text':excerpt,'images':images}),id))
             self.record_tool_outcome(run,id,call,name,status,args if status=='done' and name=='update_plan' else None)
