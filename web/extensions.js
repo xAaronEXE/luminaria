@@ -105,6 +105,45 @@
       body: () => steps([['Name it and choose how often', '', `<form class="ext-form" id="auto-form"><div class="form-grid">${field('Name', 'title', '', 'text', true)}${field('Every (minutes, at least 5)', 'interval_minutes', 60, 'number', true)}</div><label class="field">What should Luminaria do?<textarea name="prompt" required placeholder="Summarize new files in D:\\Reports and save a short report on my Desktop."></textarea></label><div class="ext-actions"><button class="btn primary">Create automation</button></div></form>`], ['It runs on its own', 'While Luminaria is open, following your permission mode. Pause or delete it here any time.']]) };
     return [create, ...schedules, fileCard];
   }
+  // ---- model services (Relay) and other PCs ----
+  const PRESETS = [['OpenRouter', 'https://openrouter.ai/api/v1'], ['Groq', 'https://api.groq.com/openai/v1'], ['Gemini', 'https://generativelanguage.googleapis.com/v1beta/openai'],
+    ['OmniRoute', 'http://localhost:20128/v1'], ['Ollama', 'http://localhost:11434/v1'], ['LM Studio', 'http://localhost:1234/v1'], ['Another PC running Luminaria', 'http://192.168.1.20:8099/v1']];
+  function serviceItems() {
+    const rows = data.services.map((s) => ({ kind: 'connector', key: 'svc:' + s.id, glyph: 'globe', name: s.name, about: s.url, meta: [s.models.length + ' models', s.files ? 'May see your files' : 'Conversation text only'],
+      status: 'Connected', tone: 'good', search: s.name + ' ' + s.url + ' ' + s.models.join(' '), installed: true,
+      body: () => `<p class="small-note">Its models appear in the model picker under Model services, and you can give them roles in Settings › Auto mode. Planning and final checks can stay on this PC.</p>
+        <label class="switch"><input type="checkbox" data-svc-files="${esc(s.id)}" ${s.files ? 'checked' : ''}> May see my files and tool results</label>
+        <p class="small-note">When this is off, the service only receives the conversation text: no file contents, no command output and no file tools.</p>
+        <details class="ext-more"><summary>Models (${s.models.length})</summary><p class="small-note">${s.models.map(esc).join(', ')}</p></details>`
+        + actions(`<button type="button" class="btn danger" data-remove-svc="${esc(s.id)}">Remove</button>`) }));
+    rows.push({ kind: 'connector', key: 'add-svc', glyph: 'plus', name: 'Add a model service', about: 'Use free or paid AI models online, or another PC, alongside your local models.', meta: ['OpenRouter, Groq, Gemini, OmniRoute, Ollama, LM Studio'],
+      status: '', action: { id: 'open', label: 'Add', primary: true }, search: 'model service openrouter groq gemini omniroute ollama lm studio relay api key',
+      body: () => steps([['Pick a service', 'Or enter any address that works like OpenAI\'s API.', `<div class="ext-actions">${PRESETS.map(([n, u]) => `<button type="button" class="btn" data-preset="${esc(u)}" data-preset-name="${esc(n)}">${esc(n)}</button>`).join('')}</div>`],
+        ['Enter its details', 'Keys are encrypted on this PC.', `<form class="ext-form" id="svc-form">${field('Name', 'name', '', 'text', true)}${field('Address', 'url', '', 'text', true)}${field('API key (if it needs one)', 'key', '', 'password', false)}
+          <label class="switch"><input type="checkbox" name="files"> May see my files and tool results</label><div class="ext-actions"><button class="btn primary">Connect</button></div></form>`],
+        ['Use it', 'Its models appear in the model picker. Give them a role in Settings › Auto mode, for example to do coding steps while your local model plans and checks.']]) });
+    return rows;
+  }
+  function pcItems() {
+    const sh = data.sharing; if (!sh) return [];
+    const where = (port) => sh.share.addresses.length ? sh.share.addresses.map((a) => `<code>${esc(a)}:${port}</code>`).join(' or ') : '<code>this PC\'s address</code>';
+    return [
+      { kind: 'connector', key: 'pc-share', glyph: 'models', name: "Share this PC's models", about: 'Other PCs running Luminaria can use the models installed here.', meta: ['Local network'],
+        status: sh.share.on ? 'On' : 'Off', tone: sh.share.on ? 'good' : '', search: 'share models other pc network pair', installed: sh.share.on,
+        body: () => steps([['Turn it on', 'Only chat requests with the pairing key are accepted; nothing else on this PC is reachable. Windows may ask to allow Luminaria on private networks: choose Allow.', `<label class="switch"><input type="checkbox" data-share ${sh.share.on ? 'checked' : ''}> Share my models</label>`],
+          ['On the other PC', sh.share.on ? `In Extensions › Connectors › Add a model service, choose "Another PC running Luminaria" and use address ${where(sh.share.port)} with <code>/v1</code> at the end, and this pairing key:` : 'Turn sharing on to see the address and pairing key.',
+            sh.share.on ? `<span class="copy-row"><input readonly value="${esc(sh.share.key)}" aria-label="Pairing key"><button type="button" class="btn" data-copy="${esc(sh.share.key)}">Copy key</button></span>` : '']]) },
+      { kind: 'connector', key: 'pc-lend', glyph: 'models', name: "Lend this PC's graphics card", about: 'Lets another PC split one large model across both graphics cards.', meta: ['Trusted network only'],
+        status: !sh.lend.available ? 'Unavailable' : sh.lend.on ? 'On' : 'Off', tone: sh.lend.on ? 'good' : !sh.lend.available ? 'warn' : '', search: 'lend gpu split model rpc', installed: sh.lend.on,
+        body: () => steps([['Turn it on', 'This uses llama.cpp\'s RPC server, which has no password, so only use it on your own home or office network.', `<label class="switch"><input type="checkbox" data-lend ${sh.lend.on ? 'checked' : ''} ${sh.lend.available ? '' : 'disabled'}> Lend my graphics card</label>`],
+          ['On the main PC', `Add ${where(sh.lend.port)} under "Use other PCs' graphics cards".`]]) },
+      { kind: 'connector', key: 'pc-use', glyph: 'models', name: "Use other PCs' graphics cards", about: 'Run models too big for this PC by splitting them with PCs that lend their graphics card.', meta: sh.peers ? [sh.peers] : [],
+        status: sh.peers ? 'On' : 'Off', tone: sh.peers ? 'good' : '', search: 'split model rpc other pc gpu', installed: !!sh.peers,
+        body: () => steps([['Lend a graphics card on the other PC', 'Turn on "Lend this PC\'s graphics card" there.'],
+          ['Add its address here', 'Separate several with commas. The model reloads with the new layout.', `<form class="ext-form" id="peers-form">${field('PC addresses', 'rpc_peers', sh.peers, 'text', false)}<div class="ext-actions"><button class="btn primary">Save</button></div></form>`]]) },
+    ];
+  }
+
   function addOwnItems(kind) {
     if (kind === 'skill') return [{ kind: 'skill', key: 'import-skill', glyph: 'plus', name: 'Add your own skill', about: 'Import a SKILL.md or Markdown file with instructions Luminaria should follow.', meta: [], status: '', search: 'import own skill', action: { id: 'open', label: 'Import', primary: true },
       body: () => steps([['Choose the file', 'A Markdown file up to 20,000 characters.', '<input type="file" accept=".md,text/markdown" id="skill-file" class="ext-file">'], ['Check the name and text', '', `<form class="ext-form" id="skill-form">${field('Name', 'name', '', 'text', true)}<label class="field">Instructions<textarea name="content" required></textarea></label><div class="ext-actions"><button class="btn primary">Save skill</button></div></form>`]]) }];
@@ -146,8 +185,9 @@
       html = section('Needs setup', setup) + section('Ready', ready, 'No skills match.') + section('Off', off) + section('Add your own', own);
     } else if (tab === 'connectors') {
       const own = addOwnItems('connector'); current = [...connectors, ...own];
+      const models = serviceItems(), pcs = pcItems(); current.push(...models, ...pcs);
       html = section('Connected', connectors.filter((i) => i.status === 'Connected')) + section('Needs attention', connectors.filter((i) => i.installed && i.status !== 'Connected'))
-        + section('Ready to set up', connectors.filter((i) => !i.installed), 'No services match.') + section('Add your own', own);
+        + section('Ready to set up', connectors.filter((i) => !i.installed), 'No services match.') + section('Model services', models) + section('Your other PCs', pcs) + section('Add your own', own);
     } else if (tab === 'workflows') {
       current = workflows; html = section('Workflows', workflows, 'No workflows match.');
     }
@@ -201,14 +241,15 @@
     if (openKey === key) document.querySelector(`.ext-card[data-key="${CSS.escape(key)}"] .ext-body`)?.querySelector('input,textarea,button,a')?.focus({ preventScroll: true });
   }
   async function reload(keepTab = true) {
-    const [skills, integrations, files] = await Promise.all([api('/skills'), api('/integrations'), api('/file-workflows').catch(() => ({ workflows: [] }))]);
+    const [skills, integrations, files, svc, share] = await Promise.all([api('/skills'), api('/integrations'), api('/file-workflows').catch(() => ({ workflows: [] })),
+      api('/services').catch(() => ({ services: [] })), api('/sharing').catch(() => null)]);
     let counts = data?.counts;
     if (!counts) { try { counts = (await api('/catalog?kind=skills&offset=0&q=')).counts; } catch {} }
-    data = { skills, integrations: integrations.integrations, redirect: integrations.redirect_uri, toolsOn: integrations.tools_enabled, fileWorkflows: files.workflows || [], counts: { skills: counts?.skills || 0, connectors: counts?.connectors || 0 } };
+    data = { skills, integrations: integrations.integrations, redirect: integrations.redirect_uri, toolsOn: integrations.tools_enabled, fileWorkflows: files.workflows || [], services: svc.services || [], sharing: share, counts: { skills: counts?.skills || 0, connectors: counts?.connectors || 0 } };
     if (keepTab) { drawTabs(); draw(); }
   }
   function bind(scope) {
-    scope.querySelectorAll('.ext-card').forEach((el) => {
+    (scope.matches?.('.ext-card') ? [scope] : scope.querySelectorAll('.ext-card')).forEach((el) => {
       const key = el.dataset.key, item = current.find((i) => i.key === key); if (!item) return;
       el.querySelector('.ext-main').onclick = () => toggle(key);
       el.querySelector('[data-toggle]').onclick = () => toggle(key);
@@ -236,6 +277,15 @@
       const skillForm = el.querySelector('#skill-form'), skillFile = el.querySelector('#skill-file');
       if (skillFile) skillFile.onchange = safe(async (e) => { const f = e.target.files[0]; if (!f) return; if (f.size > 20000) throw Error('Skills are limited to 20,000 characters'); skillForm.elements.content.value = await f.text(); if (!skillForm.elements.name.value) skillForm.elements.name.value = f.name.replace(/\.md$/i, '').toLowerCase().replace(/[^a-z0-9-]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 60); });
       if (skillForm) skillForm.onsubmit = safe(async (e) => { e.preventDefault(); await api('/skills', 'POST', Object.fromEntries(new FormData(skillForm))); toast('Skill saved'); openKey = ''; await reload(); });
+      el.querySelectorAll('[data-preset]').forEach((b) => b.onclick = () => { const f = el.querySelector('#svc-form'); f.elements.url.value = b.dataset.preset; if (!f.elements.name.value) f.elements.name.value = b.dataset.presetName; f.elements.key.focus(); });
+      const svc = el.querySelector('#svc-form');
+      if (svc) svc.onsubmit = safe(async (e) => { e.preventDefault(); const b = Object.fromEntries(new FormData(svc)); b.files = svc.elements.files.checked; const btn = svc.querySelector('.btn.primary'); btn.disabled = true; btn.textContent = 'Connecting…'; try { const r = await api('/services', 'POST', b); toast(`Connected ${r.name}: ${r.models.length} models`); openKey = ''; await refresh(); await reload(); } finally { btn.disabled = false; btn.textContent = 'Connect'; } });
+      el.querySelector('[data-svc-files]')?.addEventListener('change', safe(async (e) => { await api('/services/' + e.target.dataset.svcFiles + '/files', 'POST', { files: e.target.checked }); await reload(); }));
+      el.querySelector('[data-remove-svc]')?.addEventListener('click', safe(async (e) => { if (!confirm('Remove this model service and its saved key?')) return; await api('/services/' + e.currentTarget.dataset.removeSvc, 'DELETE'); openKey = ''; await refresh(); await reload(); }));
+      el.querySelector('[data-share]')?.addEventListener('change', safe(async (e) => { await api('/sharing', 'POST', { share_models: e.target.checked }); await reload(); }));
+      el.querySelector('[data-lend]')?.addEventListener('change', safe(async (e) => { await api('/sharing', 'POST', { lend_gpu: e.target.checked }); await reload(); }));
+      const peers = el.querySelector('#peers-form');
+      if (peers) peers.onsubmit = safe(async (e) => { e.preventDefault(); await api('/sharing', 'POST', { rpc_peers: peers.elements.rpc_peers.value }); toast('Saved. The model reloads with the new layout.'); await reload(); });
       const mcp = el.querySelector('#mcp-form');
       if (mcp) mcp.onsubmit = safe(async (e) => { e.preventDefault(); const b = Object.fromEntries(new FormData(mcp)); try { b.args = JSON.parse(b.args); } catch { throw Error('Arguments must be a JSON list, for example ["serve"]'); } await api('/connectors', 'POST', b); toast('Connector saved and starting'); openKey = ''; await refresh(); await reload(); });
     });
