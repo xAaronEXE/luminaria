@@ -59,6 +59,8 @@ if($LASTEXITCODE){throw 'Installing Python packages failed'}
 New-Item -ItemType Directory -Force "$work/python/Scripts" | Out-Null
 if(Test-Path "$site/bin"){Get-ChildItem "$site/bin" -File | Move-Item -Destination "$work/python/Scripts" -Force; Remove-Item -Recurse -Force "$site/bin"}
 if(!(Test-Path "$work/python/Scripts/uvx.exe")){throw 'uv was not installed; Python connectors would not start'}
+# pip's launchers point at the build PC's Python; Luminaria runs pip as `python -m pip` with the built-in Python instead.
+Get-ChildItem "$work/python/Scripts" -Filter 'pip*.exe' -ErrorAction SilentlyContinue | Remove-Item -Force
 Get-ChildItem $site -Recurse -Directory -Filter '__pycache__' | Remove-Item -Recurse -Force
 
 # Node.js (official build, checked against nodejs.org checksums and its Authenticode signature)

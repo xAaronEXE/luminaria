@@ -16,14 +16,16 @@ from .usage import Usage
 class AlreadyDone(Exception):pass
 
 PLAN_TOOLS=frozenset({'list_skills','load_skill','find_capability','inspect_file','list_files','read_file','search_files','web_search','memory_search','history_read','update_plan','update_brief'})
-PLAN_ONLY_PROMPT=('Planning-only mode is on for this turn. Build a concrete plan around what the user described. '
- '1) Restate the goal in one sentence. 2) Draft the plan straight away from the description and call update_plan with a goal and '
- 'specific, ordered steps; give each step a short detail saying what will be done and how it will be checked. Every step is pending '
- 'unless a tool result already proves it is done; list depends_on only for real dependencies. 3) Use read-only tools only when the plan '
- 'depends on facts you do not have (existing files, current versions, documentation); keep it to a few targeted reads, then revise with '
- 'update_plan. If something is ambiguous, make a reasonable assumption and state it instead of stalling. '
- 'Finish by presenting the plan to the user: the goal, the numbered steps, assumptions, risks and at most three questions. '
- 'Do not edit files, run code, send anything or claim that any step was carried out. The user decides afterwards whether to carry it out.')
+PLAN_ONLY_PROMPT=('Planning-only mode is on: you and the user shape a plan together through conversation. Nothing is carried out. '
+ 'Read the user\'s latest message and respond to what it actually says. '
+ 'If they are brainstorming, adding ideas or correcting you: reply briefly with short notes on what you understood or changed, '
+ 'and ask at most two questions when something important is unclear. Apply real changes to the saved plan with update_plan. '
+ 'If they ask for the plan, or there is enough to plan: call update_plan with a one-sentence goal and specific, ordered steps, each with a '
+ 'short detail saying what will be done and how it will be checked. Base steps on facts: when the plan depends on files, versions or '
+ 'how something works, read the files or search the web first (a few targeted lookups), and never invent facts. '
+ 'Every step stays pending. The user sees the saved plan in its own card, so never print the plan, its JSON or tool calls in your reply, '
+ 'and never repeat an earlier reply; summarize in a few lines what changed instead. '
+ 'Do not edit files, run code, send anything or claim that any step was carried out.')
 PLAN_FINALIZE=('Investigation budget for this plan is used up. Do not call more read-only tools. Call update_plan with the final plan '
  'if you have not already, then present it to the user.')
 
@@ -71,6 +73,23 @@ def text_tool_calls(text,names):
     rest=re.sub(r'</?tool_call>','',rest)
     rest=re.sub(r'```[a-zA-Z]*\s*```','',rest).strip()
     return calls,rest
+
+def repeat_cut(text,size=400):
+    """If the end of text repeats something written earlier in it, return text cut to one copy; else None."""
+    if len(text)<size*3: return None
+    tail=text[-size:]
+    first=text.find(tail)
+    if first<0 or first>=len(text)-size: return None
+    second=text.find(tail,first+1)
+    if not 0<second<len(text)-size+1: return None
+    period=second-first; start=first
+    while start>0 and text[start-1]==text[start-1+period]: start-=1   # walk back to where the loop began
+    return text[:start+period].rstrip()
+
+def clip_reply(text,message_id=None,limit=6000):
+    """Old replies stay short in the context: oversized ones are cut, with a pointer to the saved full text."""
+    if not isinstance(text,str) or len(text)<=limit: return text
+    return text[:limit//2].rstrip()+f'\n[Long reply shortened here; the full text is saved{f" as message {message_id}" if message_id else ""}.]'
 
 def with_nudge(messages,run):
     return messages+[{'role':'user','content':NUDGES.get(run.get('nudge_kind'),NUDGE_TEXT)}] if run.get('nudge_pending') else messages
@@ -238,11 +257,19 @@ class Engine:
         state=[]
         plan=self.store.setting('plan:'+chat,None)
         if plan and plan.get('steps'):
-            state.append('Saved plan for this chat (version '+str(plan.get('version',1))+'). When the user asks to see, review or '
-            'continue the plan, present it from here with current statuses. Keep it current with update_plan as work progresses.\n'+plan_text(plan))
+            state.append('Saved plan for this chat (version '+str(plan.get('version',1))+'). The user can see it in its own card. Keep it current '
+            'with update_plan; only write it out in full when the user asks to see it.\n'+plan_text(plan))
         if run and run.get('plan_only') and run.get('plan_finalize'): state.append(PLAN_FINALIZE)
         if summary: messages[0]['content']+='\n\nWorking summary of prior conversation. Original messages are retrievable by ID.\n'+summary['content']
         recent=self.store.messages(chat,summary['through_id'] if summary else 0)
+        if run and run.get('trim_history'):
+            # Summarizing failed and history no longer fits: work from the latest turns. Nothing is deleted.
+            users=[i for i,m in enumerate(recent) if m.get('role')=='user']
+            if len(users)>2:
+                recent=recent[users[-2]:]
+                messages[0]['content']+='\n\nOlder messages in this chat are saved but not shown here; use history_read or memory_search if you need them.'
+        last_user=max((i for i,m in enumerate(recent) if m.get('role')=='user'),default=-1)
+        recent=[{**m,'content':clip_reply(m['content'],m.get('id'))} if m.get('role')=='assistant' and i<last_user and isinstance(m.get('content'),str) else m for i,m in enumerate(recent)]
         refs=[p['id'] for m in recent if isinstance(m.get('content'),list) for p in m['content'] if p.get('type')=='image_ref']
         retained=set(refs[-2:])
         for m in recent:
@@ -342,9 +369,11 @@ class Engine:
             yield response
 
     async def completion(self,messages,tools=None,run=None,max_tokens=None):
-        body={'model':self.model_id(),'messages':messages,'stream':True,'stream_options':{'include_usage':True},'max_tokens':max_tokens or CONFIG['output_tokens'],'temperature':0.4,'repeat_penalty':1.08,'chat_template_kwargs':{'enable_thinking':bool(run and run.get('reasoning'))}}
+        body={'model':self.model_id(),'messages':messages,'stream':True,'stream_options':{'include_usage':True},'max_tokens':max_tokens or CONFIG['output_tokens'],'temperature':0.4,'repeat_penalty':1.08,
+              # DRY ("don't repeat yourself") sampling: llama.cpp's standard guard against looping text.
+              'dry_multiplier':0.8,'dry_base':1.75,'dry_allowed_length':4,'chat_template_kwargs':{'enable_thinking':bool(run and run.get('reasoning'))}}
         if tools: body['tools']=tools; body['tool_choice']='auto'
-        text=''; reasoning=''; calls={}; usage={}; timings=None; started=time.monotonic(); first=None; finish=None
+        text=''; reasoning=''; calls={}; usage={}; timings=None; started=time.monotonic(); first=None; finish=None; checked=0
         async with self.model_stream(body) as response:
             if response.status_code>=400:
                 raw=(await response.aread()).decode('utf-8','replace')[:600]
@@ -352,6 +381,7 @@ class Engine:
                 problem=diagnose() if response.status_code>=500 else None
                 raise RuntimeError(f'{problem} Details: model server {response.status_code}: {raw}' if problem else f'Model server {response.status_code}: {raw}')
             async for line in response.aiter_lines():
+                if finish=='repeat': break
                 if not line.startswith('data: '): continue
                 if line[6:]=='[DONE]': break
                 try: chunk=json.loads(line[6:])
@@ -361,6 +391,13 @@ class Engine:
                     finish=choice.get('finish_reason') or finish; d=choice.get('delta',{})
                     if d.get('content'):
                         first=first or time.monotonic(); text+=d['content']
+                        if len(text)-checked>=200:
+                            checked=len(text); cut=repeat_cut(text)
+                            if cut is not None:
+                                # The model is looping. Stop it, keep one copy, and say so.
+                                text=cut+'\n\n[Stopped a repeating reply.]'; finish='repeat'
+                                if run: run['live']=text; self.emit('changed',chat=run['chat'])
+                                break
                         if run:
                             run['live']=text; self.emit('delta',chat=run['chat'],text=d['content'])
                     if d.get('reasoning_content'):
@@ -399,6 +436,7 @@ class Engine:
         for m in prefix:
             c=clean_message(m)
             if isinstance(c.get('content'),list): c['content']='\n'.join(p.get('text','[Saved image '+p.get('id','')+']') for p in c['content'])
+            if c.get('role')=='assistant': c['content']=clip_reply(c.get('content'),m.get('id'))
             transcript.append({'message_id':m['id'],**c})
         from .compaction import summarize_detailed
         from .context_shaping import for_summary
@@ -473,8 +511,13 @@ class Engine:
                 # Early compaction is an optimisation. If it fails while the request still fits, keep going on full history.
                 if tokens+CONFIG['output_tokens']>self.context_limit(): raise
         if tokens+CONFIG['output_tokens']>self.context_limit():
-            result=await self.compact(chat,force=True,run=run,tokens_before=tokens)
-            if result['compacted']:messages=with_nudge(self.context(chat,run),run);tokens,method=await self.token_count(messages,defs)
+            try:
+                result=await self.compact(chat,force=True,run=run,tokens_before=tokens)
+                if result['compacted']:messages=with_nudge(self.context(chat,run),run);tokens,method=await self.token_count(messages,defs)
+            except (ValueError,RuntimeError,httpx.HTTPError):
+                result={'compacted':False}
+            if tokens+CONFIG['output_tokens']>self.context_limit() and not run.get('trim_history'):
+                run['trim_history']=True; messages=with_nudge(self.context(chat,run),run); tokens,method=await self.token_count(messages,defs)
         run['context']={'used':tokens,'reserved':CONFIG['output_tokens'],'limit':self.context_limit(),'method':method,'shaping':run.get('shaping') or {}}
         self.store.set_setting('context:'+chat,run['context'])
         if tokens+CONFIG['output_tokens']>self.context_limit(): raise ValueError(self.overflow_reason(messages,tokens))
@@ -583,7 +626,7 @@ class Engine:
                 self.store.execute('INSERT OR IGNORE INTO actions VALUES(?,?,?,?,?,?,?,?)',(id,run['chat'],name,json.dumps(args),'auto','ready',None,now()))
                 result={'skipped':True,'already_done':str(done),'message':'This exact step already succeeded before the checkpoint, so it was not repeated.'}; status='done'; duration='skipped'
             except Exception as e:
-                result={'error':str(e)}; status='error'
+                result={'error':str(e) or type(e).__name__}; status='error'
                 if not run.get('plan_only') or name in PLAN_TOOLS:
                     self.store.execute('INSERT OR IGNORE INTO actions VALUES(?,?,?,?,?,?,?,?)',(id,run['chat'],name,json.dumps(args if isinstance(args,dict) else {}),'approve','error',None,now()))
             folder=DATA/'tool-outputs'; folder.mkdir(exist_ok=True)

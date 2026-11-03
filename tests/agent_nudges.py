@@ -1,5 +1,5 @@
 import unittest
-from backend.engine import SKILL_COMMAND, WANTS_WORK, HANDOFF, code_lines, last_user_text, with_nudge, NUDGES
+from backend.engine import repeat_cut, clip_reply, SKILL_COMMAND, WANTS_WORK, HANDOFF, code_lines, last_user_text, with_nudge, NUDGES
 
 CODE='```python\n'+'\n'.join(f'line{i}=1' for i in range(20))+'\n```'
 class AgentNudges(unittest.TestCase):
@@ -20,5 +20,18 @@ class AgentNudges(unittest.TestCase):
         out=with_nudge([{'role':'system','content':'x'}],{'nudge_pending':True,'nudge_kind':'code'})
         self.assertEqual(out[-1]['content'],NUDGES['code'])
         self.assertEqual(last_user_text([{'role':'user','content':[{'type':'text','text':'hi'}]},{'role':'assistant','content':'yo'}]),'hi')
+
+class LoopGuard(unittest.TestCase):
+    def test_looping_plan_is_cut_to_one_copy(self):
+        block='Goal\nThoroughly plan Luminaria.\nSteps\n'+''.join(f'{i}. Step number {i} with a fairly long description of the work.\n' for i in range(12))
+        text='Here is the plan.\n'+block*3+block[:250]
+        cut=repeat_cut(text)
+        self.assertIsNotNone(cut);self.assertEqual(cut.count('Step number 5 '),1)
+    def test_normal_text_is_left_alone(self):
+        self.assertIsNone(repeat_cut(' '.join(f'word{i}' for i in range(2000))))
+        self.assertIsNone(repeat_cut('short reply'))
+    def test_old_long_replies_are_clipped(self):
+        self.assertEqual(clip_reply('hi'),'hi')
+        out=clip_reply('x'*40000,263);self.assertLess(len(out),3300);self.assertIn('message 263',out)
 
 if __name__=='__main__': unittest.main()

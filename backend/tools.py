@@ -2,6 +2,27 @@ import asyncio, base64, json, os, re, subprocess
 from pathlib import Path
 from .config import CONFIG, DATA, workspace_path as _wp, full_access, external_tools_enabled, find_runtime, runtime_missing_message, runtime_path_dirs
 def workspace_path(path='.',write=False): return _wp(path,roam=True,write=write)
+# Import names that differ from their package names: the most common reason a script fails right after "installing" it.
+PACKAGES={'docx':'python-docx','python_docx':'python-docx','pptx':'python-pptx','cv2':'opencv-python','PIL':'Pillow','yaml':'pyyaml',
+          'sklearn':'scikit-learn','bs4':'beautifulsoup4','fitz':'PyMuPDF','dotenv':'python-dotenv','win32api':'pywin32','win32com':'pywin32'}
+def with_hints(result):
+    """Turn common failures into a next step the model can act on."""
+    if not isinstance(result,dict): return result
+    import re
+    missing=re.search(r"No module named '([\w.]+)'",str(result.get('stderr','')))
+    if missing:
+        name=missing.group(1).split('.')[0]
+        if name=='python_docx': result['guidance']="The module is called docx: use 'from docx import Document'. It is already installed."
+        else: result['guidance']=(f"Install it with run_command: pip install {PACKAGES.get(name,name)} (pip installs into the same Python that run_code uses), "
+                                  "then run the code again.")
+    return result
+def python_shims():
+    """In commands, python and pip mean the Python that run_code uses, so installed packages are found."""
+    exe=find_runtime('python')
+    if not exe: return ''
+    q=exe.replace("'","''")
+    return (f"function python {{ & '{q}' @args }}; function py {{ & '{q}' @args }}; "
+            f"function pip {{ & '{q}' -m pip @args }}; function pip3 {{ & '{q}' -m pip @args }}; ")
 def luminaria_api_env():
     # Lets programs the assistant writes use the user's installed models through the local model manager.
     if CONFIG.get('endpoint','').rstrip('/')!='http://127.0.0.1:8098/v1': return {}
@@ -24,7 +45,7 @@ BUILTINS=[
  schema('edit_file','Replace exactly one occurrence of old_text in a file. '+PATH_NOTE,{'path':S,'old_text':S,'new_text':S},['path','old_text','new_text'],'approve'),
  schema('delete_file','Delete one file (never folders). '+PATH_NOTE+' Always asks.',{'path':S},['path'],'always'),
  schema('search_files','Search text files for a literal string, in the default folder or in path (a folder anywhere on this PC).',{'query':S,'path':S},['query']),
- schema('run_command','Run a PowerShell command (starts in the default folder; use full paths or cd for other places). Full PC access after approval; not a sandbox. python, pip, node and npx are available.',{'command':S,'timeout':I},['command'],'always','execution'),
+ schema('run_command','Run a PowerShell command (starts in the default folder; use full paths or cd for other places). Full PC access after approval; not a sandbox. python, pip, node and npx are available; pip installs into the Python that run_code uses. timeout is in seconds (default 60, up to 600; give installs 300).',{'command':S,'timeout':I},['command'],'always','execution'),
  schema('run_code','Execute a Python or JavaScript script (starts in the default folder; use full paths for other places). Saved as a file; no hidden REPL state.',{'language':{'type':'string','enum':['python','javascript']},'code':S,'timeout':I},['language','code'],'always','execution'),
  schema('web_search','Search the public web. Returns status, titles, snippets and source URLs. An empty result means no matches for these words, not that the information does not exist.',{'query':S},['query'],'auto','research'),
  schema('web_fetch','Fetch a public HTTP(S) page or PDF. Network request requires approval. browser_fallback explicitly authorizes navigation and snapshot in the connected browser if JavaScript or sign-in is needed; never completes login dialogs or bypasses blocks. Public cache is bypassed for sensitive responses.',{'url':S,'refresh':{'type':'boolean'},'browser_fallback':{'type':'boolean'}},['url'],'approve','research'),
@@ -91,15 +112,19 @@ class Toolbox:
         flags=subprocess.CREATE_NO_WINDOW if os.name=='nt' else 0
         proc=await asyncio.create_subprocess_exec(*argv,cwd=CONFIG['workspace'],stdout=asyncio.subprocess.PIPE,stderr=asyncio.subprocess.PIPE,creationflags=flags,env={**os.environ,**luminaria_api_env(),'PATH':os.pathsep.join(runtime_path_dirs()+[os.environ.get('PATH','')]),'PYTHONIOENCODING':'utf-8',**({'PYTHONPATH':os.pathsep.join([*extra_path,os.environ.get('PYTHONPATH','')]).rstrip(os.pathsep)} if extra_path else {})})
         try:
-            out,err=await asyncio.wait_for(proc.communicate(),min(max(timeout,1),180))
+            limit=min(max(int(timeout or 60),1),600)
+            out,err=await asyncio.wait_for(proc.communicate(),limit)
             return {'exit_code':proc.returncode,'stdout':out.decode('utf-8','replace'),'stderr':err.decode('utf-8','replace')}
-        except BaseException:
+        except BaseException as stopped:
+            timed_out=isinstance(stopped,asyncio.TimeoutError)
             if proc.returncode is None:
                 if os.name=='nt':
                     killer=await asyncio.create_subprocess_exec('taskkill','/PID',str(proc.pid),'/T','/F',stdout=asyncio.subprocess.DEVNULL,stderr=asyncio.subprocess.DEVNULL,creationflags=flags)
                     await killer.wait()
                 else: proc.kill()
                 await proc.wait()
+            if timed_out:
+                return {'exit_code':None,'timed_out':True,'error':f'Stopped after {limit} seconds without finishing. Installs and long jobs need a longer timeout (up to 600).'}
             raise
     async def call(self,name,a,run):
         if name not in RETRIEVAL: return await self.dispatch(name,a,run)
@@ -214,7 +239,7 @@ class Toolbox:
         if name=='search_files':
             from .sources import search_workspace
             return await search_workspace(workspace_path(a.get('path') or '.'),a['query'])
-        if name=='run_command': return await self.process(['powershell.exe','-NoProfile','-NonInteractive','-Command',a['command']],a.get('timeout',60),extra_path=self.skill_paths(run))
+        if name=='run_command': return with_hints(await self.process(['powershell.exe','-NoProfile','-NonInteractive','-Command',python_shims()+a['command']],a.get('timeout',60),extra_path=self.skill_paths(run)))
         if name=='run_code':
             folder=DATA/'scripts'; folder.mkdir(parents=True,exist_ok=True)  # scratch scripts stay in Luminaria's folder, not the user's
             p=folder/(run['id']+'-'+str(__import__('time').time_ns())+('.py' if a['language']=='python' else '.js'))
@@ -222,7 +247,7 @@ class Toolbox:
             kind='python' if a['language']=='python' else 'node'
             exe=find_runtime(kind)
             if not exe: return {'status':'error','category':'needs_setup','message':runtime_missing_message(kind)}
-            return await self.process([exe,str(p)],a.get('timeout',60),extra_path=self.skill_paths(run))
+            return with_hints(await self.process([exe,str(p)],a.get('timeout',60),extra_path=self.skill_paths(run)))
         if name=='web_search':
             from .retrieval import search
             return await search(a['query'])
