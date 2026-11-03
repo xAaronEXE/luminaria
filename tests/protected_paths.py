@@ -23,6 +23,10 @@ class Protected(unittest.TestCase):
   from unittest import mock
   with mock.patch.dict(os.environ,{'HOME':tempfile.mkdtemp(),'USERPROFILE':tempfile.mkdtemp()}):
    self.assertEqual(config.workspace_path('~/notes-luminaria-test.txt',roam=True),(Path.home()/'notes-luminaria-test.txt').resolve())
+ def test_manual_is_readable_never_writable(self):
+  m=config.manual_path()
+  self.assertEqual(config.workspace_path(str(m),roam=True),m)
+  with self.assertRaises(PermissionError):config.workspace_path(str(m),roam=True,write=True)
  def test_pc_places(self):
   places=config.pc_places()
   self.assertTrue(places['drives']);self.assertEqual(places['home'],str(Path.home()))

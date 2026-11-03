@@ -153,6 +153,10 @@ def skill_folders():
     """Where skills live. The assistant may read these (a skill's scripts and references) but never change them."""
     return [(ROOT/'skills').resolve(),(DATA/'skills').resolve()]
 
+def manual_path():
+    """Luminaria's user manual (the README), shipped with the app so the assistant can answer questions about itself."""
+    return (ROOT/'README.md').resolve()
+
 def _inside(target,folder): return target==folder or target.is_relative_to(folder)
 
 def workspace_path(path='.',roam=False,write=False):
@@ -161,6 +165,9 @@ def workspace_path(path='.',roam=False,write=False):
     if path.startswith('~'): path=str(Path(path).expanduser())
     if os.name=='nt' and '%' in path: path=os.path.expandvars(path)
     target=(root/path).resolve()
+    if target==manual_path():
+        if write: raise PermissionError("Luminaria's manual is read-only.")
+        return target
     for folder in skill_folders():
         if _inside(target,folder):
             if write: raise PermissionError('Skill folders are read-only. Save outputs in the default folder.')
