@@ -47,6 +47,7 @@ BUILTINS=[
  schema('search_files','Search text files for a literal string, in the default folder or in path (a folder anywhere on this PC).',{'query':S,'path':S},['query']),
  schema('run_command','Run a PowerShell command (starts in the default folder; use full paths or cd for other places). Full PC access after approval; not a sandbox. python, pip, node and npx are available; pip installs into the Python that run_code uses. timeout is in seconds (default 60, up to 600; give installs 300).',{'command':S,'timeout':I},['command'],'always','execution'),
  schema('run_code','Execute a Python or JavaScript script (starts in the default folder; use full paths for other places). Saved as a file; no hidden REPL state.',{'language':{'type':'string','enum':['python','javascript']},'code':S,'timeout':I},['language','code'],'always','execution'),
+ schema('research','Research a question on the web: searches several phrasings, reads the best pages from different sites and returns the relevant passages with their sources. Use it first for plans, comparisons, current facts and anything unfamiliar. Network requests require approval.',{'question':S,'extra_queries':{'type':'array','items':S,'maxItems':2}},['question'],'approve','research'),
  schema('web_search','Search the public web. Returns status, titles, snippets and source URLs. An empty result means no matches for these words, not that the information does not exist.',{'query':S},['query'],'auto','research'),
  schema('web_fetch','Fetch a public HTTP(S) page or PDF. Network request requires approval. browser_fallback explicitly authorizes navigation and snapshot in the connected browser if JavaScript or sign-in is needed; never completes login dialogs or bypasses blocks. Public cache is bypassed for sensitive responses.',{'url':S,'refresh':{'type':'boolean'},'browser_fallback':{'type':'boolean'}},['url'],'approve','research'),
  schema('discover_tools','Load more tools. more: delete files, schedules, the working brief, conversation history, file workflows. browser or windows: those connectors. all: every connected app.',{'category':{'type':'string','enum':['more','browser','windows','all']}},['category'],'auto','system'),
@@ -63,7 +64,7 @@ BUILTINS=[
 # clear menu. They can still be called at any time; approvals apply as usual.
 EXTRA_TOOLS=frozenset({'delete_file','history_read','update_brief','create_schedule','create_file_workflow','finish_skill','install_capability'})
 
-RETRIEVAL={'web_search':'web search','web_fetch':'web','memory_search':'memory','search_files':'workspace files','read_file':'workspace file','history_read':'history'}
+RETRIEVAL={'research':'web','web_search':'web search','web_fetch':'web','memory_search':'memory','search_files':'workspace files','read_file':'workspace file','history_read':'history'}
 
 def host_of(url):
     from urllib.parse import urlsplit
@@ -248,6 +249,9 @@ class Toolbox:
             exe=find_runtime(kind)
             if not exe: return {'status':'error','category':'needs_setup','message':runtime_missing_message(kind)}
             return with_hints(await self.process([exe,str(p)],a.get('timeout',60),extra_path=self.skill_paths(run)))
+        if name=='research':
+            from .retrieval import research
+            return await research(a['question'],a.get('extra_queries') or ())
         if name=='web_search':
             from .retrieval import search
             return await search(a['query'])

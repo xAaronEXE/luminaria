@@ -434,7 +434,7 @@ async def browse_workspace():
 async def settings_save(request:Request):
     if any(not r.get('finished') for r in engine.runs.values()): raise ValueError('Finish or stop active tasks before changing settings')
     b=await request.json(); allowed={'workspace','endpoint','tokenizer','model','context','output_tokens','compact_ratio','python','node','llama_executable','model_file','projector_file','external_tools','ask_reads'}
-    allowed.update({'keep_model_loaded','access_mode','orchestrator_model','compact_keep_turns','orchestration_pool','orchestration_enabled'})
+    allowed.update({'planner_model','keep_model_loaded','access_mode','orchestrator_model','compact_keep_turns','orchestration_pool','orchestration_enabled'})
     if 'orchestration_pool' in b:
         from .orchestration import normalize_pool
         b['orchestration_pool']=normalize_pool(b['orchestration_pool'])
@@ -443,6 +443,7 @@ async def settings_save(request:Request):
         from .models import registry
         if not any(m['id']==b['orchestrator_model'] and Path(m['model_file']).is_file() for m in registry()):raise ValueError('Choose an installed orchestration model')
     if 'access_mode' in b and b['access_mode'] not in ('review','full'): raise ValueError('Choose review or full access')
+    if 'planner_model' in b and (not isinstance(b['planner_model'],str) or len(b['planner_model'])>200): raise ValueError('Choose a planning model')
     if 'keep_model_loaded' in b and b['keep_model_loaded'] not in (0,300,1800): raise ValueError('Choose how long to keep the model loaded')
     changes={k:v for k,v in b.items() if k in allowed}
     for key in ('external_tools','ask_reads'):

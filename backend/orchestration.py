@@ -212,3 +212,16 @@ async def choose(client, endpoint, router, models, task, fallback, setting=None,
     return {'model_id': best['id'], 'reason': reason[:300], 'profile': {k: profile[k] for k in ('needs', 'complexity')},
             'method': method, 'ranking': [{k: r[k] for k in ('id', 'name', 'score')} for r in ranking[:4]],
             'pool_size': len(choices), 'router_called': called, **({'note': profile['router_error']} if profile.get('router_error') else {})}
+
+THINKERS = re.compile(r'qwen3|gpt-oss|deepseek-r1|r1-distill|reason|think|magistral|phi-4', re.I)
+
+def pick_planner(models, setting='auto', evidence_for=None, vram=None):
+    """The model that plans and checks: the user's choice, else the strongest installed reasoning model that can use tools."""
+    choices = installed(models)
+    if setting and setting not in ('auto', 'chat'):
+        return next((m for m in choices if m['id'] == setting), None)
+    if setting == 'chat': return None
+    thinkers = [m for m in choices if 'Reasoning' in (m.get('strengths') or []) or THINKERS.search(m['id'] + ' ' + str(m.get('name', '')))]
+    if not thinkers: return None
+    ranked = rank(thinkers, {'needs': ['reasoning', 'tools'], 'complexity': 'high'}, evidence_for, vram if vram is not None else gpu_memory())
+    return next(m for m in thinkers if m['id'] == ranked[0]['id'])

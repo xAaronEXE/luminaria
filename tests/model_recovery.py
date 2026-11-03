@@ -179,3 +179,11 @@ class IdleUnloadTests(unittest.IsolatedAsyncioTestCase):
  def test_keep_loaded_is_bounded(self):
   with patch.dict(CONFIG,keep_model_loaded='junk'):self.assertEqual(Engine.keep_loaded(),0)
   with patch.dict(CONFIG,keep_model_loaded=99999):self.assertEqual(Engine.keep_loaded(),3600)
+
+class HostSettingsTests(unittest.TestCase):
+ def test_threads_and_ram_cache_follow_this_pc(self):
+  import types
+  fake=types.SimpleNamespace(cpu_count=lambda logical=True:6,virtual_memory=lambda:types.SimpleNamespace(total=32*2**30))
+  with patch.dict(sys.modules,{'psutil':fake}):self.assertEqual(runtime.host_settings(),(6,8192))
+  fake=types.SimpleNamespace(cpu_count=lambda logical=True:4,virtual_memory=lambda:types.SimpleNamespace(total=8*2**30))
+  with patch.dict(sys.modules,{'psutil':fake}):self.assertEqual(runtime.host_settings(),(4,2048))

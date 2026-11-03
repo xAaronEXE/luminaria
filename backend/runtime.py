@@ -55,6 +55,15 @@ def listening(port):
         with socket.create_connection(('127.0.0.1',port),timeout=1): return True
     except OSError: return False
 
+def host_settings():
+    """Generation threads and the system-memory prompt cache size for this PC (not the build PC)."""
+    try:
+        import psutil
+        threads=psutil.cpu_count(logical=False) or 8
+        ram_mib=psutil.virtual_memory().total//2**20
+    except Exception: threads,ram_mib=8,16384
+    return max(2,min(threads,32)),int(max(1024,min(16384,ram_mib//4)))
+
 def ensure_model_file():
     """Keep the selected model pointing at a file that exists. After models are removed and downloaded again,
     the saved file can be gone while the same or other models are installed."""
@@ -93,10 +102,13 @@ def start_swap():
         tuning_hardware=information()
     for entry in entries:
         if not Path(entry['model_file']).is_file(): continue
-        args=[exe,'-m',entry['model_file'],'--host','127.0.0.1','--port','8097','-c',str(entry['context']),'-np','1','-fa','on','-ctk','q8_0','-ctv','q8_0','-fit','on','-fitt','512','-b','512','-ub','128','-t','8','--cache-reuse','256','--jinja','--agent','--api-key',CONFIG['model_api_key'],'--reasoning-format','deepseek','--reasoning-budget','1024','--metrics','--alias',entry['id']]
+        threads,cache_ram=host_settings()
+        # Batch sizes are llama.cpp's defaults (fast prompt reading); -fit sizes GPU layers around them.
+        # --cache-ram keeps recent prompts' KV cache in system memory, so returning to a chat does not re-read it.
+        args=[exe,'-m',entry['model_file'],'--host','127.0.0.1','--port','8097','-c',str(entry['context']),'-np','1','-fa','on','-ctk','q8_0','-ctv','q8_0','-fit','on','-fitt','512','-b','2048','-ub','512','-t',str(threads),'--cache-ram',str(cache_ram),'--cache-reuse','256','--jinja','--agent','--api-key',CONFIG['model_api_key'],'--reasoning-format','deepseek','--reasoning-budget','4096','--metrics','--alias',entry['id']]
         launch=entry.get('launch') or {}
         if launch.get('ubatch'):
-            args[args.index('-ub')+1]=str(launch['ubatch']);args[args.index('-b')+1]=str(max(512,launch['ubatch']))
+            args[args.index('-ub')+1]=str(launch['ubatch']);args[args.index('-b')+1]=str(max(2048,launch['ubatch']))
         if launch.get('gpu_layers') is not None or launch.get('cpu_moe'):
             # Custom placement chosen in the library: llama.cpp's own fitting would override it.
             args[args.index('-fit')+1]='off'
@@ -112,7 +124,7 @@ def start_swap():
                 args[args.index('-fit')+1]='off'
                 args+=['-ngl',str(tuning['gpu_layers'])]
                 if tuning.get('cpu_moe'):args+=['--n-cpu-moe',str(tuning['cpu_moe'])]
-                if tuning.get('ubatch'):args[args.index('-ub')+1]=str(tuning['ubatch']);args[args.index('-b')+1]=str(max(512,tuning['ubatch']))
+                if tuning.get('ubatch'):args[args.index('-ub')+1]=str(tuning['ubatch']);args[args.index('-b')+1]=str(max(2048,tuning['ubatch']))
                 if tuning['gpu_layers']==0:args+=['--no-kv-offload']
         if entry.get('projector_file') and Path(entry['projector_file']).is_file(): args+=['--mmproj',entry['projector_file'],'--no-mmproj-offload','--image-max-tokens','1024']
         command=' '.join('"'+str(a).replace('\\','/').replace('"','\\"')+'"' for a in args)

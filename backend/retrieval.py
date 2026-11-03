@@ -256,3 +256,38 @@ async def search(query, engine=None):
     results = [{'title': r.get('title', ''), 'url': r.get('href') or r.get('url', ''), 'snippet': r.get('body', '')[:500]} for r in rows or [] if isinstance(r, dict)]
     if not results: return envelope('empty', 'web search', started, attempts, message='No results. Try different or fewer words; this does not mean the information does not exist.')
     return envelope('ok', 'web search', started, attempts, results=results)
+
+
+async def research(question, queries=(), pages=4):
+    """Search several phrasings, read the best pages from different sites, and return the relevant passages with sources."""
+    question = (question or '').strip()
+    if not question: return {'status': 'error', 'message': 'Give a question to research.'}
+    phrasings = [question] + [q.strip() for q in queries if isinstance(q, str) and q.strip()][:2]
+    found = await asyncio.gather(*(search(q) for q in phrasings))
+    picked, rest, sites = [], [], set()
+    for result in found:
+        for item in result.get('results') or []:
+            url = item.get('url') or ''
+            site = urlsplit(url).netloc.removeprefix('www.')
+            if not url or any(url == p['url'] for p in picked + rest): continue
+            (picked if site not in sites and len(picked) < pages else rest).append(item); sites.add(site)
+    if not picked:
+        return {'status': 'empty', 'message': 'No results. Try different or fewer words.', 'searches': phrasings}
+    pages_read = await asyncio.gather(*(fetch(p['url']) for p in picked), return_exceptions=True)
+    words = {w for w in re.findall(r'[a-z0-9]{4,}', ' '.join(phrasings).lower())}
+    sources = []
+    for item, page in zip(picked, pages_read):
+        if isinstance(page, Exception) or page.get('status') != 'ok' or not page.get('text'):
+            sources.append({'title': item['title'], 'url': item['url'], 'snippet': item.get('snippet', ''), 'note': 'Could not read this page.'}); continue
+        # Keep the passages that share the most words with the question, in page order.
+        parts = [p.strip() for p in re.split(r'\n\s*\n|\n(?=#)', page['text']) if len(p.strip()) > 60]
+        ranked = sorted(range(len(parts)), key=lambda i: -len(words & set(re.findall(r'[a-z0-9]{4,}', parts[i].lower()))))
+        keep, size = [], 0
+        for i in ranked:
+            if size > 1800: break
+            keep.append(i); size += min(len(parts[i]), 700)
+        excerpt = '\n\n'.join(parts[i][:700] for i in sorted(keep))
+        sources.append({'title': page.get('title') or item['title'], 'url': item['url'], 'excerpt': excerpt or item.get('snippet', '')})
+    return {'status': 'ok', 'question': question, 'searches': phrasings, 'sources': sources,
+            'more_results': [{'title': r['title'], 'url': r['url']} for r in rest[:6]],
+            'next': 'Answer from these sources and cite them as [title](url). If they do not answer the question, research again with different words or read one of more_results.'}

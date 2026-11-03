@@ -19,6 +19,7 @@
       case 'search_files': return [`Searched files for ${quote(a.query)}`, 'search'];
       case 'run_command': return ['Ran a command', 'command'];
       case 'run_code': return [`Ran ${a.language === 'javascript' ? 'JavaScript' : 'Python'} code`, 'command'];
+      case 'research': return [`Researched ${quote(a.question)}`, 'websearch'];
       case 'web_search': return [`Searched the web for ${quote(a.query)}`, 'websearch'];
       case 'web_fetch': return [`Read ${host(a.url)}`, 'webread'];
       case 'memory_search': return [`Searched memory for ${quote(a.query)}`, 'memory'];
