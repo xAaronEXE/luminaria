@@ -84,8 +84,8 @@ Open **Library › Models** (also in **Settings › Model library**).
 ### The library
 - **Hundreds of local models** from trusted publishers, each in several sizes ("quantizations"). Smaller sizes use less memory and run faster; larger sizes are a little smarter.
 - **Vision models** can look at images you attach. They're marked with a vision badge.
-- **Search and filter** (All, Installed, Standard, Abliterated, and by capability), and **sort** by best fit for this PC, name, size, parameters or recently added.
-- **Download all** and **Remove all** buttons make bulk changes easy. You can remove any model, including the one that's currently active.
+- **Search and filter** (All, Installed, Standard, Abliterated, and by capability), and **sort** by best fit for this PC, best AI score, name, size, parameters or recently added.
+- **Download all**, **Score my models** and **Remove all** buttons make bulk changes easy. You can remove any model, including the one that's currently active.
 
 ### Fit ratings
 Every size of every model is rated against **your** graphics card and memory before you download it:
@@ -103,6 +103,14 @@ If a model's own design limits it (for example, it only supports a short context
 
 ### Benchmarks
 Click **Benchmark** on any installed size to measure it on your PC. Speed (tokens per second), time to the first word and a quick quality check are saved and shown next to that size.
+
+### AI scores
+Installed models show an **AI score**, for example *AI score 9/12*, right in the list. The score comes from Luminaria's quality check, run on your PC: 6 questions that read code and 6 that need reasoning, each with one exact answer. Hover the score to see the coding and reasoning results.
+
+- **Score my models** scores every installed model that doesn't have a score yet, one at a time. Each takes a few minutes.
+- Sort by **Best AI score** to see your strongest models first.
+- The color shows the result: green for 9 or more, a softer green for 6 to 8, amber below that.
+- It's a small spot check that compares models on your PC, not a general ranking of the model.
 
 ### Abliterated models
 Some publishers release "abliterated" versions with their refusal training removed. They're kept under their own **Abliterated** filter and clearly labelled. Use them responsibly.
@@ -267,7 +275,7 @@ To stop, choose **Unpair** on the paired PC's card, or turn off **Let other PCs 
 
 ## Appearance
 
-**Settings › Appearance**: light, dark or follow Windows, color palettes, the living orb, motion level, and a reduced-graphics mode for older PCs. Luminaria also follows Windows' *reduce motion* setting.
+**Settings › Appearance**: light, dark or follow Windows, an accent color, every color editable for each mode, the background glow color profiles (**Aurora**, **Ember**, **Ocean**, **Forest**, **Mono** or off), the living orb, motion level, and a reduced-graphics mode for older PCs. Your color profile carries across light and dark mode, and every page, including Model services and Paired PCs, uses its colors. Luminaria also follows Windows' *reduce motion* setting.
 
 ## Profiles, sign-in and cloud sync
 

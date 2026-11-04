@@ -140,3 +140,6 @@ body.motion-off .model-option.abliterated::after,body.motion-off #model-detail.a
 .fit-model-limit{margin:8px 0 0;padding:8px 10px;border-radius:8px;background:color-mix(in srgb,var(--fit-slow) 14%,transparent);font-size:12.5px}
 .option-flag.limit{color:var(--fit-slow)}
 .model-sort{flex:none;min-width:190px}
+.option-flag.ai-score{font-variant-numeric:tabular-nums}.option-flag.ai-score.high{color:var(--fit-recommended,var(--text));border-color:color-mix(in srgb,var(--fit-recommended,var(--line)) 45%,transparent)}.option-flag.ai-score.mid{color:var(--fit-good,var(--muted))}.option-flag.ai-score.low{color:var(--fit-slow,var(--muted))}
+/* Light mode: the same hues, deep enough to read on white. */
+:root[data-theme=light]{--fit-recommended:#13804A;--fit-good:#4D7C0F;--fit-slow:#8A6100;--fit-unstable:#B4530F;--fit-too_large:#B42323}

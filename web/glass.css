@@ -399,3 +399,5 @@ body.effects-low .library-menu{background:var(--panel);backdrop-filter:none;-web
 .svc-models{max-height:260px;overflow:auto;display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:4px 12px;margin:6px 0 4px;padding:8px;border:1px solid var(--glass-line);border-radius:12px}
 .svc-model{font-size:12px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .pair-code{font:600 28px/1.2 var(--mono);letter-spacing:.25em;margin:8px 0;color:var(--text)}
+:root[data-theme=light] .ext-icon.ext-connector{color:color-mix(in oklab,var(--aurora-2) 55%,var(--text))}
+:root[data-theme=light] .ext-icon.ext-workflow{color:color-mix(in oklab,var(--aurora-3) 55%,var(--text))}
