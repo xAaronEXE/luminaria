@@ -18,4 +18,14 @@ class Sharing(unittest.TestCase):
         with patch.dict(CONFIG,rpc_peers='1.2.3.4; rm -rf /'):
             with self.assertRaises(ValueError): sharing.rpc_peers()
 
+class RpcServerName(unittest.TestCase):
+    def test_finds_new_and_old_names(self):
+        import os,tempfile
+        from pathlib import Path
+        d=Path(tempfile.mkdtemp());ext='.exe' if os.name=='nt' else ''
+        (d/('llama-server'+ext)).write_bytes(b'')
+        with patch('backend.runtime.resolve_executable',lambda:str(d/('llama-server'+ext))):
+            self.assertIsNone(sharing.rpc_executable())
+            (d/('ggml-rpc-server'+ext)).write_bytes(b'');self.assertEqual(sharing.rpc_executable().name,'ggml-rpc-server'+ext)
+
 if __name__=='__main__': unittest.main()

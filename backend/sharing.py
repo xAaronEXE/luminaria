@@ -217,9 +217,10 @@ async def set_split(on):
 
 def rpc_executable():
     from .runtime import resolve_executable
-    try: exe = Path(resolve_executable()).with_name('rpc-server.exe' if os.name == 'nt' else 'rpc-server')
+    try: folder = Path(resolve_executable()).parent
     except ValueError: return None
-    return exe if exe.is_file() else None
+    names = ('ggml-rpc-server', 'rpc-server')   # newer llama.cpp builds renamed rpc-server
+    return next((folder / (n + ('.exe' if os.name == 'nt' else '')) for n in names if (folder / (n + ('.exe' if os.name == 'nt' else ''))).is_file()), None)
 
 
 def start_rpc():
