@@ -702,6 +702,28 @@ async def sharing_change(request:Request):
     b=await request.json()
     return await apply({k:b[k] for k in ('share_models','lend_gpu','rpc_peers') if k in b})
 
+@app.post('/api/sharing/find')
+async def sharing_find():
+    from .sharing import find_pcs
+    return {'pcs':await find_pcs()}
+
+@app.post('/api/sharing/code')
+async def sharing_code():
+    from .sharing import open_pairing,status
+    if not CONFIG.get('share_models'): raise ValueError('Turn on "Let other PCs pair" first')
+    open_pairing(); return status()
+
+@app.post('/api/sharing/pair')
+async def sharing_pair(request:Request):
+    from .sharing import pair
+    b=await request.json(); entry=await pair(b.get('address'),b.get('code'),b.get('port') or 8099)
+    broadcast({'type':'changed'}); return entry
+
+@app.post('/api/sharing/split')
+async def sharing_split(request:Request):
+    from .sharing import set_split
+    return await set_split(bool((await request.json()).get('on')))
+
 @app.get('/api/services')
 async def list_services():
     from .services import services
@@ -716,6 +738,16 @@ async def add_service(request:Request):
 async def service_files(sid:str,request:Request):
     from .services import set_files
     set_files(sid,bool((await request.json()).get('files'))); return {'ok':True}
+
+@app.post('/api/services/{sid}/models')
+async def service_models(sid:str,request:Request):
+    from .services import set_enabled
+    chosen=set_enabled(sid,(await request.json()).get('enabled') or []); broadcast({'type':'changed'}); return {'enabled':chosen}
+
+@app.post('/api/services/{sid}/refresh')
+async def service_refresh(sid:str):
+    from .services import refresh
+    return await refresh(sid)
 
 @app.delete('/api/services/{sid}')
 async def remove_service(sid:str):
@@ -736,7 +768,7 @@ async def add_model(request:Request):
     if swap_process and swap_process.poll() is None: stop_owned()
     return result
 
-@app.post('/api/models/{id}/select')
+@app.post('/api/models/{id:path}/select')
 async def select_model(id:str):
     if benchmarking: raise ValueError('Wait for the model benchmark to finish')
     if any(not r.get('finished') for r in engine.runs.values()): raise ValueError('Finish or stop active tasks before switching models')

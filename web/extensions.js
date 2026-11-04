@@ -109,13 +109,17 @@
   const PRESETS = [['OpenRouter', 'https://openrouter.ai/api/v1'], ['Groq', 'https://api.groq.com/openai/v1'], ['Gemini', 'https://generativelanguage.googleapis.com/v1beta/openai'],
     ['OmniRoute', 'http://localhost:20128/v1'], ['Ollama', 'http://localhost:11434/v1'], ['LM Studio', 'http://localhost:1234/v1'], ['Another PC running Luminaria', 'http://192.168.1.20:8099/v1']];
   function serviceItems() {
-    const rows = data.services.map((s) => ({ kind: 'connector', key: 'svc:' + s.id, glyph: 'globe', name: s.name, about: s.url, meta: [s.models.length + ' models', s.files ? 'May see your files' : 'Conversation text only'],
-      status: 'Connected', tone: 'good', search: s.name + ' ' + s.url + ' ' + s.models.join(' '), installed: true,
+    const rows = data.services.filter((s) => s.kind !== 'pc').map((s) => { const on = s.enabled || s.models; return ({ kind: 'connector', key: 'svc:' + s.id, glyph: 'globe', name: s.name, about: s.url,
+      meta: [`${on.length} of ${s.models.length} models in use`, s.files ? 'May see your files' : 'Conversation text only'],
+      status: on.length ? 'Connected' : 'Choose models', tone: on.length ? 'good' : 'warn', action: on.length ? null : { id: 'open', label: 'Choose', primary: true },
+      search: s.name + ' ' + s.url + ' ' + s.models.join(' '), installed: true,
       body: () => `<p class="small-note">Its models appear in the model picker under Model services, and you can give them roles in Settings › Auto mode. Planning and final checks can stay on this PC.</p>
         <label class="switch"><input type="checkbox" data-svc-files="${esc(s.id)}" ${s.files ? 'checked' : ''}> May see my files and tool results</label>
         <p class="small-note">When this is off, the service only receives the conversation text: no file contents, no command output and no file tools.</p>
-        <details class="ext-more"><summary>Models (${s.models.length})</summary><p class="small-note">${s.models.map(esc).join(', ')}</p></details>`
-        + actions(`<button type="button" class="btn danger" data-remove-svc="${esc(s.id)}">Remove</button>`) }));
+        <h4>Models to use</h4><p class="small-note">Ticked models appear in the model picker and can be given roles. Free ones often end in <code>:free</code>.</p>
+        <input type="search" class="filter-input" data-svc-filter placeholder="Find a model…" aria-label="Find a model">
+        <div class="svc-models" data-svc-models="${esc(s.id)}">${s.models.map((m) => `<label class="switch svc-model"><input type="checkbox" value="${esc(m)}" ${on.includes(m) ? 'checked' : ''}> ${esc(m)}</label>`).join('')}</div>`
+        + actions(`<button type="button" class="btn primary" data-save-models="${esc(s.id)}">Save model choice</button><button type="button" class="btn" data-refresh-svc="${esc(s.id)}">Refresh list</button><button type="button" class="btn danger" data-remove-svc="${esc(s.id)}">Remove</button>`) }); });
     rows.push({ kind: 'connector', key: 'add-svc', glyph: 'plus', name: 'Add a model service', about: 'Use free or paid AI models online, or another PC, alongside your local models.', meta: ['OpenRouter, Groq, Gemini, OmniRoute, Ollama, LM Studio'],
       status: '', action: { id: 'open', label: 'Add', primary: true }, search: 'model service openrouter groq gemini omniroute ollama lm studio relay api key',
       body: () => steps([['Pick a service', 'Or enter any address that works like OpenAI\'s API.', `<div class="ext-actions">${PRESETS.map(([n, u]) => `<button type="button" class="btn" data-preset="${esc(u)}" data-preset-name="${esc(n)}">${esc(n)}</button>`).join('')}</div>`],
@@ -126,22 +130,27 @@
   }
   function pcItems() {
     const sh = data.sharing; if (!sh) return [];
-    const where = (port) => sh.share.addresses.length ? sh.share.addresses.map((a) => `<code>${esc(a)}:${port}</code>`).join(' or ') : '<code>this PC\'s address</code>';
-    return [
-      { kind: 'connector', key: 'pc-share', glyph: 'models', name: "Share this PC's models", about: 'Other PCs running Luminaria can use the models installed here.', meta: ['Local network'],
-        status: sh.share.on ? 'On' : 'Off', tone: sh.share.on ? 'good' : '', search: 'share models other pc network pair', installed: sh.share.on,
-        body: () => steps([['Turn it on', 'Only chat requests with the pairing key are accepted; nothing else on this PC is reachable. Windows may ask to allow Luminaria on private networks: choose Allow.', `<label class="switch"><input type="checkbox" data-share ${sh.share.on ? 'checked' : ''}> Share my models</label>`],
-          ['On the other PC', sh.share.on ? `In Extensions › Connectors › Add a model service, choose "Another PC running Luminaria" and use address ${where(sh.share.port)} with <code>/v1</code> at the end, and this pairing key:` : 'Turn sharing on to see the address and pairing key.',
-            sh.share.on ? `<span class="copy-row"><input readonly value="${esc(sh.share.key)}" aria-label="Pairing key"><button type="button" class="btn" data-copy="${esc(sh.share.key)}">Copy key</button></span>` : '']]) },
-      { kind: 'connector', key: 'pc-lend', glyph: 'models', name: "Lend this PC's graphics card", about: 'Lets another PC split one large model across both graphics cards.', meta: ['Trusted network only'],
-        status: !sh.lend.available ? 'Unavailable' : sh.lend.on ? 'On' : 'Off', tone: sh.lend.on ? 'good' : !sh.lend.available ? 'warn' : '', search: 'lend gpu split model rpc', installed: sh.lend.on,
-        body: () => steps([['Turn it on', 'This uses llama.cpp\'s RPC server, which has no password, so only use it on your own home or office network.', `<label class="switch"><input type="checkbox" data-lend ${sh.lend.on ? 'checked' : ''} ${sh.lend.available ? '' : 'disabled'}> Lend my graphics card</label>`],
-          ['On the main PC', `Add ${where(sh.lend.port)} under "Use other PCs' graphics cards".`]]) },
-      { kind: 'connector', key: 'pc-use', glyph: 'models', name: "Use other PCs' graphics cards", about: 'Run models too big for this PC by splitting them with PCs that lend their graphics card.', meta: sh.peers ? [sh.peers] : [],
-        status: sh.peers ? 'On' : 'Off', tone: sh.peers ? 'good' : '', search: 'split model rpc other pc gpu', installed: !!sh.peers,
-        body: () => steps([['Lend a graphics card on the other PC', 'Turn on "Lend this PC\'s graphics card" there.'],
-          ['Add its address here', 'Separate several with commas. The model reloads with the new layout.', `<form class="ext-form" id="peers-form">${field('PC addresses', 'rpc_peers', sh.peers, 'text', false)}<div class="ext-actions"><button class="btn primary">Save</button></div></form>`]]) },
+    const rows = [
+      { kind: 'connector', key: 'pc-allow', glyph: 'models', name: 'Let other PCs pair with this one', about: `Lets your other PCs use this PC (${sh.name}) and its models.`, meta: ['Your local network'],
+        status: sh.share.on ? 'On' : 'Off', tone: sh.share.on ? 'good' : '', search: 'pair share models other pc network', installed: sh.share.on,
+        body: () => steps([['Turn it on', 'Windows may ask to allow Luminaria on private networks: choose Allow. Only paired PCs can use this PC, and only for running models.', `<label class="switch"><input type="checkbox" data-share ${sh.share.on ? 'checked' : ''}> Let other PCs pair</label>`],
+          ['On the other PC', sh.share.on ? (sh.share.code ? `Open Extensions › Connectors › <strong>Pair with another PC</strong>, choose <strong>${esc(sh.name)}</strong> and enter this code:<div class="pair-code">${esc(sh.share.code)}</div>The code works once, for 10 minutes.` : 'The code was used or expired.')
+            : 'Turn it on to get a pairing code.', sh.share.on ? `<button type="button" class="btn" data-new-code>New code</button>${sh.share.addresses.length ? `<p class="small-note">This PC's address: ${sh.share.addresses.map(esc).join(', ')}</p>` : ''}` : '']]) },
+      { kind: 'connector', key: 'pc-pair', glyph: 'plus', name: 'Pair with another PC', about: 'Use another PC running Luminaria: its models join yours, and Luminaria picks the best one for each job.', meta: [],
+        status: '', action: { id: 'open', label: 'Pair', primary: true }, search: 'pair another pc computer',
+        body: () => steps([['On the other PC', 'Turn on "Let other PCs pair with this one". It shows a 6-digit code.'],
+          ['Find it', '', `<div class="ext-actions"><button type="button" class="btn" data-find-pcs>Look for PCs</button></div><div data-found-pcs></div>`],
+          ['Enter the code', 'If it was not found, type its address instead.', `<form class="ext-form" id="pair-form"><div class="form-grid">${field('PC address', 'address', '', 'text', false)}${field('Pairing code', 'code', '', 'text', false)}</div><div class="ext-actions"><button class="btn primary">Pair</button></div></form>`]]) },
+      ...sh.paired.map((pc) => ({ kind: 'connector', key: 'pc:' + pc.id, glyph: 'models', name: pc.name, about: 'Paired PC. Its models are used like your own: by Auto, by the roles and by plans.', meta: [pc.models + ' models', pc.url.replace(/\/v1$/, '')],
+        status: 'Paired', tone: 'good', search: 'paired pc ' + pc.name, installed: true,
+        body: () => `<p class="small-note">Luminaria can plan on one PC while the other codes, passing the work back and forth step by step. Your files stay on this PC; the paired PC only runs the model.</p>`
+          + actions(`<button type="button" class="btn" data-refresh-svc="${esc(pc.id)}">Refresh its models</button><button type="button" class="btn danger" data-remove-svc="${esc(pc.id)}">Unpair</button>`) })),
     ];
+    if (sh.paired.length) rows.push({ kind: 'connector', key: 'pc-split', glyph: 'models', name: 'Split big models across paired PCs', about: 'Runs one model on this PC\'s and your paired PCs\' graphics cards together, for models too big for one PC.', meta: ['Uses llama.cpp RPC · home or office network only'],
+      status: sh.split ? 'On' : 'Off', tone: sh.split ? 'good' : '', search: 'split model gpu rpc combine', installed: sh.split,
+      body: () => steps([['Turn it on', 'The paired PCs lend their graphics cards automatically. llama.cpp\'s RPC has no password, so only use this on a network you trust.', `<label class="switch"><input type="checkbox" data-split ${sh.split ? 'checked' : ''}> Split big models</label>`],
+        ['It reloads the model', 'The next message loads the model across all the PCs. Turning it off goes back to this PC only.']]) });
+    return rows;
   }
 
   function addOwnItems(kind) {
@@ -279,13 +288,21 @@
       if (skillForm) skillForm.onsubmit = safe(async (e) => { e.preventDefault(); await api('/skills', 'POST', Object.fromEntries(new FormData(skillForm))); toast('Skill saved'); openKey = ''; await reload(); });
       el.querySelectorAll('[data-preset]').forEach((b) => b.onclick = () => { const f = el.querySelector('#svc-form'); f.elements.url.value = b.dataset.preset; if (!f.elements.name.value) f.elements.name.value = b.dataset.presetName; f.elements.key.focus(); });
       const svc = el.querySelector('#svc-form');
-      if (svc) svc.onsubmit = safe(async (e) => { e.preventDefault(); const b = Object.fromEntries(new FormData(svc)); b.files = svc.elements.files.checked; const btn = svc.querySelector('.btn.primary'); btn.disabled = true; btn.textContent = 'Connecting…'; try { const r = await api('/services', 'POST', b); toast(`Connected ${r.name}: ${r.models.length} models`); openKey = ''; await refresh(); await reload(); } finally { btn.disabled = false; btn.textContent = 'Connect'; } });
+      if (svc) svc.onsubmit = safe(async (e) => { e.preventDefault(); const b = Object.fromEntries(new FormData(svc)); b.files = svc.elements.files.checked; const btn = svc.querySelector('.btn.primary'); btn.disabled = true; btn.textContent = 'Connecting…'; try { const r = await api('/services', 'POST', b); toast(r.enabled.length ? `Connected ${r.name}: ${r.models.length} models` : `Connected ${r.name}. It lists ${r.models.length} models: tick the ones to use.`); openKey = r.enabled.length ? '' : 'svc:' + r.id; await refresh(); await reload(); } finally { btn.disabled = false; btn.textContent = 'Connect'; } });
       el.querySelector('[data-svc-files]')?.addEventListener('change', safe(async (e) => { await api('/services/' + e.target.dataset.svcFiles + '/files', 'POST', { files: e.target.checked }); await reload(); }));
+      el.querySelector('[data-svc-filter]')?.addEventListener('input', (e) => { const q = e.target.value.toLowerCase(); el.querySelectorAll('.svc-model').forEach((row) => { row.hidden = !row.textContent.toLowerCase().includes(q); }); });
+      el.querySelector('[data-save-models]')?.addEventListener('click', safe(async (e) => { const sid = e.currentTarget.dataset.saveModels; const ids = [...el.querySelectorAll(`[data-svc-models="${CSS.escape(sid)}"] input:checked`)].map((i) => i.value); const r = await api('/services/' + sid + '/models', 'POST', { enabled: ids }); toast(`${r.enabled.length} models in use`); await refresh(); await reload(); }));
+      el.querySelector('[data-refresh-svc]')?.addEventListener('click', safe(async (e) => { const r = await api('/services/' + e.currentTarget.dataset.refreshSvc + '/refresh', 'POST', {}); toast(`${r.models.length} models listed`); await reload(); }));
       el.querySelector('[data-remove-svc]')?.addEventListener('click', safe(async (e) => { if (!confirm('Remove this model service and its saved key?')) return; await api('/services/' + e.currentTarget.dataset.removeSvc, 'DELETE'); openKey = ''; await refresh(); await reload(); }));
       el.querySelector('[data-share]')?.addEventListener('change', safe(async (e) => { await api('/sharing', 'POST', { share_models: e.target.checked }); await reload(); }));
-      el.querySelector('[data-lend]')?.addEventListener('change', safe(async (e) => { await api('/sharing', 'POST', { lend_gpu: e.target.checked }); await reload(); }));
-      const peers = el.querySelector('#peers-form');
-      if (peers) peers.onsubmit = safe(async (e) => { e.preventDefault(); await api('/sharing', 'POST', { rpc_peers: peers.elements.rpc_peers.value }); toast('Saved. The model reloads with the new layout.'); await reload(); });
+      el.querySelector('[data-new-code]')?.addEventListener('click', safe(async () => { await api('/sharing/code', 'POST', {}); await reload(); }));
+      el.querySelector('[data-split]')?.addEventListener('change', safe(async (e) => { const r = await api('/sharing/split', 'POST', { on: e.target.checked }); if (r.problems.length) toast(r.problems.join(' · '), true); else toast(e.target.checked ? `Big models now split across ${r.peers.length + 1} PCs` : 'Back to this PC only'); await reload(); }));
+      el.querySelector('[data-find-pcs]')?.addEventListener('click', safe(async (e) => { const out = el.querySelector('[data-found-pcs]'); e.currentTarget.disabled = true; out.innerHTML = '<p class="small-note" role="status">Looking…</p>';
+        try { const r = await api('/sharing/find', 'POST', {}); out.innerHTML = r.pcs.length ? r.pcs.map((pc) => `<button type="button" class="btn" data-pick-pc="${esc(pc.address)}">${esc(pc.name)} · ${esc(pc.address)}${pc.pairing ? '' : ' (pairing off)'}</button>`).join(' ') : '<p class="small-note">No PCs found. Check that Luminaria is open there with pairing on, or type its address below.</p>';
+          out.querySelectorAll('[data-pick-pc]').forEach((b) => b.onclick = () => { const f = el.querySelector('#pair-form'); f.elements.address.value = b.dataset.pickPc; f.elements.code.focus(); }); } finally { e.currentTarget.disabled = false; } }));
+      const pairForm = el.querySelector('#pair-form');
+      if (pairForm) pairForm.onsubmit = safe(async (e) => { e.preventDefault(); const btn = pairForm.querySelector('.btn.primary'); btn.disabled = true; btn.textContent = 'Pairing…';
+        try { const r = await api('/sharing/pair', 'POST', { address: pairForm.elements.address.value, code: pairForm.elements.code.value }); toast(`Paired with ${r.name}: ${r.models.length} models`); openKey = ''; await refresh(); await reload(); } finally { btn.disabled = false; btn.textContent = 'Pair'; } });
       const mcp = el.querySelector('#mcp-form');
       if (mcp) mcp.onsubmit = safe(async (e) => { e.preventDefault(); const b = Object.fromEntries(new FormData(mcp)); try { b.args = JSON.parse(b.args); } catch { throw Error('Arguments must be a JSON list, for example ["serve"]'); } await api('/connectors', 'POST', b); toast('Connector saved and starting'); openKey = ''; await refresh(); await reload(); });
     });

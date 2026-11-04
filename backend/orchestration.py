@@ -54,8 +54,8 @@ def eligibility(models, setting, vision=False, context_needed=0, router=''):
     rows = []
     for m in models:
         reasons = []
-        if m.get('remote'): reasons.append('Model service: used only when you pick it or give it a role')
-        elif not Path(m.get('model_file', '')).is_file(): reasons.append('Not downloaded')
+        if m.get('remote') and m.get('kind') != 'pc': reasons.append('Model service: used only when you pick it or give it a role')
+        elif not m.get('remote') and not Path(m.get('model_file', '')).is_file(): reasons.append('Not downloaded')
         if setting['mode'] == 'custom' and m['id'] not in setting['models']: reasons.append('Not in your selected models')
         if setting['mode'] in ('standard', 'abliterated') and variant(m) != setting['mode']:
             reasons.append(('Standard' if setting['mode'] == 'standard' else 'Abliterated') + ' models only')
@@ -222,7 +222,8 @@ def pick_coder(models, setting='auto', evidence_for=None, vram=None):
     if setting and setting not in ('auto', 'chat'):
         return next((m for m in choices if m['id'] == setting), None)
     if setting == 'chat': return None
-    coders = [m for m in choices if 'Coding' in (m.get('strengths') or []) and not m.get('remote')]
+    # Automatic picks use this PC and paired PCs, never an online service: those are only used when chosen.
+    coders = [m for m in choices if 'Coding' in (m.get('strengths') or []) and m.get('kind') != 'cloud']
     if not coders: return None
     ranked = rank(coders, {'needs': ['coding', 'tools'], 'complexity': 'high'}, evidence_for, vram if vram is not None else gpu_memory())
     return next(m for m in coders if m['id'] == ranked[0]['id'])
@@ -233,7 +234,7 @@ def pick_planner(models, setting='auto', evidence_for=None, vram=None):
     if setting and setting not in ('auto', 'chat'):
         return next((m for m in choices if m['id'] == setting), None)
     if setting == 'chat': return None
-    thinkers = [m for m in choices if 'Reasoning' in (m.get('strengths') or []) or THINKERS.search(m['id'] + ' ' + str(m.get('name', '')))]
+    thinkers = [m for m in choices if m.get('kind') != 'cloud' and ('Reasoning' in (m.get('strengths') or []) or THINKERS.search(m['id'] + ' ' + str(m.get('name', ''))))]
     if not thinkers: return None
     ranked = rank(thinkers, {'needs': ['reasoning', 'tools'], 'complexity': 'high'}, evidence_for, vram if vram is not None else gpu_memory())
     return next(m for m in thinkers if m['id'] == ranked[0]['id'])

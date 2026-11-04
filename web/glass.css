@@ -395,3 +395,7 @@ body.effects-low .library-menu{background:var(--panel);backdrop-filter:none;-web
 .local-status[data-model-state=loaded] .status-dot{background:var(--accent)}
 .local-status[data-model-state=working] .status-dot{background:var(--accent);animation:pulse 1.5s ease-in-out infinite}
 .lumen[data-state=idle] i,.lumen[data-state=complete] i,.lumen[data-state=interrupted] i,.lumen[data-state=error] i,.lumen:not([data-state]) i{animation-play-state:paused!important}
+
+.svc-models{max-height:260px;overflow:auto;display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:4px 12px;margin:6px 0 4px;padding:8px;border:1px solid var(--glass-line);border-radius:12px}
+.svc-model{font-size:12px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.pair-code{font:600 28px/1.2 var(--mono);letter-spacing:.25em;margin:8px 0;color:var(--text)}

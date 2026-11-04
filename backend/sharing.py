@@ -15,6 +15,10 @@ from .integrations import read_secrets, write_secrets
 
 SHARE_PORT = 8099
 RPC_PORT = 50052
+DISCOVERY_PORT = 8100
+HELLO = b'LUMINARIA_DISCOVER_1'
+_pairing = {'code': None, 'expires': 0, 'failures': 0}
+_discovery = None
 _server = None
 _task = None
 _rpc = None
@@ -58,18 +62,45 @@ def share_app():
                 if runtime.listening(8098): break
                 await asyncio.sleep(.25)
 
+    @app.get('/luminaria/hello')
+    async def hello():
+        return {'name': socket.gethostname(), 'version': CONFIG.get('version'), 'pairing': pairing_open()}
+
+    @app.post('/luminaria/pair')
+    async def pair(request: Request):
+        body = await request.json()
+        if not pairing_open(): return JSONResponse({'error': 'Pairing is not open on this PC. Turn on "Let other PCs pair" there first.'}, 403)
+        if _pairing['failures'] >= 5: return JSONResponse({'error': 'Too many wrong codes. Turn pairing off and on again on that PC.'}, 429)
+        if not secrets.compare_digest(str(body.get('code', '')).strip(), _pairing['code']):
+            _pairing['failures'] += 1
+            return JSONResponse({'error': 'That code is not right. Check the code shown on the other PC.'}, 401)
+        _pairing['code'] = None   # one pairing per code
+        return {'key': share_key(), 'name': socket.gethostname(), 'port': SHARE_PORT}
+
     @app.get('/v1/models')
     async def models(request: Request):
         if not allowed(request): return JSONResponse({'error': 'Wrong pairing key'}, 401)
         from .models import registry
-        return {'object': 'list', 'data': [{'id': m['id'], 'object': 'model'} for m in registry() if Path(m.get('model_file', '')).is_file()]}
+        rows = [m for m in registry() if Path(m.get('model_file', '')).is_file()]
+        # Extra details let the other PC's Auto mode and roles judge these models like its own.
+        return {'object': 'list', 'data': [{'id': m['id'], 'object': 'model', 'luminaria': {k: m.get(k) for k in ('name', 'parameters', 'strengths', 'context', 'variant')}} for m in rows]}
+
+    @app.post('/luminaria/lend')
+    async def lend(request: Request):
+        if not allowed(request): return JSONResponse({'error': 'Wrong pairing key'}, 401)
+        on = bool((await request.json()).get('on'))
+        try: start_rpc() if on else stop_rpc()
+        except ValueError as error: return JSONResponse({'error': str(error)}, 409)
+        save_config({'lend_gpu': on})
+        return {'on': on, 'port': RPC_PORT}
 
     @app.post('/v1/chat/completions')
     async def chat(request: Request):
         if not allowed(request): return JSONResponse({'error': 'Wrong pairing key'}, 401)
         body = await request.json()
         await ensure_manager()
-        headers = {'Authorization': 'Bearer ' + CONFIG.get('model_api_key', '')}
+        key = CONFIG.get('model_api_key')
+        headers = {'Authorization': 'Bearer ' + key} if key else {}
         client = httpx.AsyncClient(timeout=httpx.Timeout(600, connect=10), trust_env=False)
         upstream = await client.send(client.build_request('POST', local + '/chat/completions', json=body, headers=headers), stream=True)
 
@@ -83,8 +114,11 @@ def share_app():
 
 
 async def start_share():
-    global _server, _task
+    global _server, _task, _discovery
     if _task and not _task.done(): return
+    try:
+        _discovery, _ = await asyncio.get_running_loop().create_datagram_endpoint(_Discovery, local_addr=('0.0.0.0', DISCOVERY_PORT), allow_broadcast=True)
+    except OSError: _discovery = None   # discovery is a convenience; pairing by address still works
     import uvicorn
     _server = uvicorn.Server(uvicorn.Config(share_app(), host='0.0.0.0', port=SHARE_PORT, log_level='warning', access_log=False, log_config=None))
     _server.install_signal_handlers = lambda: None
@@ -92,12 +126,93 @@ async def start_share():
 
 
 async def stop_share():
-    global _server, _task
+    global _server, _task, _discovery
+    if _discovery: _discovery.close(); _discovery = None
+    _pairing['code'] = None
     if _server: _server.should_exit = True
     if _task:
         try: await asyncio.wait_for(_task, 5)
         except (asyncio.TimeoutError, Exception): _task.cancel()
     _server = _task = None
+
+
+def pairing_open():
+    import time
+    return bool(_pairing['code'] and time.time() < _pairing['expires'])
+
+
+def open_pairing():
+    """A fresh 6-digit code, valid for 10 minutes and for one pairing."""
+    import time
+    _pairing.update(code=f'{secrets.randbelow(10**6):06d}', expires=time.time() + 600, failures=0)
+    return _pairing['code']
+
+
+class _Discovery(asyncio.DatagramProtocol):
+    """Answers "is Luminaria here?" broadcasts from other PCs on the local network."""
+    def connection_made(self, transport): self.transport = transport
+    def datagram_received(self, data, addr):
+        if data == HELLO:
+            import json
+            self.transport.sendto(json.dumps({'name': socket.gethostname(), 'port': SHARE_PORT, 'pairing': pairing_open()}).encode(), addr)
+
+
+async def find_pcs(wait=1.5):
+    """PCs on the local network that are sharing with Luminaria."""
+    import json
+    found = {}
+    loop = asyncio.get_running_loop()
+
+    class Listen(asyncio.DatagramProtocol):
+        def datagram_received(self, data, addr):
+            try: info = json.loads(data.decode())
+            except ValueError: return
+            if addr[0] not in addresses(): found[addr[0]] = {'address': addr[0], 'name': str(info.get('name', addr[0]))[:60], 'port': int(info.get('port', SHARE_PORT)), 'pairing': bool(info.get('pairing'))}
+
+    transport, _ = await loop.create_datagram_endpoint(Listen, local_addr=('0.0.0.0', 0), allow_broadcast=True)
+    try:
+        for _ in range(2):
+            transport.sendto(HELLO, ('255.255.255.255', DISCOVERY_PORT)); await asyncio.sleep(wait / 2)
+    finally: transport.close()
+    return sorted(found.values(), key=lambda p: p['name'])
+
+
+async def pair(address, code, port=SHARE_PORT):
+    """Pair with another PC using the code it shows. It becomes a model service whose models join Auto and the roles."""
+    import re
+    from . import services
+    address = str(address or '').strip()
+    if not re.fullmatch(r'[A-Za-z0-9.\-]{1,253}', address): raise ValueError('Enter the other PC\'s address, for example 192.168.1.20')
+    base = f'http://{address}:{int(port)}'
+    try:
+        async with httpx.AsyncClient(timeout=10, trust_env=False) as client:
+            r = await client.post(base + '/luminaria/pair', json={'code': str(code or '').strip(), 'name': socket.gethostname()})
+    except httpx.HTTPError: raise ValueError(f"Couldn't reach {address}. Make sure Luminaria is open there with \"Let other PCs pair\" on, and that Windows allowed it on private networks.") from None
+    if r.status_code >= 400:
+        try: message = r.json().get('error')
+        except ValueError: message = None
+        raise ValueError(message or f'Pairing failed ({r.status_code}).')
+    info = r.json()
+    entry = await services.add({'name': info.get('name') or address, 'url': base + '/v1', 'key': info['key'], 'files': True, 'kind': 'pc', 'replace': True})
+    return entry
+
+
+async def set_split(on):
+    """Split big models across this PC and every paired PC that can lend its graphics card."""
+    from . import services
+    peers, problems = [], []
+    for pc in [s for s in services.services() if s.get('kind') == 'pc']:
+        base = pc['url'].removesuffix('/v1')
+        key = services.read_secrets(services._secret(pc['id'])).get('key', '')
+        try:
+            async with httpx.AsyncClient(timeout=15, trust_env=False) as client:
+                r = await client.post(base + '/luminaria/lend', json={'on': on}, headers={'Authorization': 'Bearer ' + key})
+            if r.status_code >= 400: problems.append(f"{pc['name']}: {r.json().get('error', r.status_code)}")
+            elif on: peers.append(f"{base.split('//')[1].rsplit(':', 1)[0]}:{r.json().get('port', RPC_PORT)}")
+        except (httpx.HTTPError, ValueError): problems.append(f"{pc['name']}: not reachable")
+    await apply({'rpc_peers': ','.join(peers)})
+    save_config({'split_models': bool(on and peers)})
+    return {'peers': peers, 'problems': problems}
 
 
 def rpc_executable():
@@ -139,8 +254,12 @@ def rpc_peers():
 
 
 def status():
-    return {'share': {'on': bool(CONFIG.get('share_models')), 'running': bool(_task and not _task.done()), 'port': SHARE_PORT,
-                      'addresses': addresses(), 'key': share_key() if CONFIG.get('share_models') else None},
+    from . import services
+    return {'name': socket.gethostname(),
+            'share': {'on': bool(CONFIG.get('share_models')), 'running': bool(_task and not _task.done()), 'port': SHARE_PORT,
+                      'addresses': addresses(), 'code': _pairing['code'] if pairing_open() else None},
+            'paired': [{'id': s['id'], 'name': s['name'], 'url': s['url'], 'models': len(s.get('models', []))} for s in services.services() if s.get('kind') == 'pc'],
+            'split': bool(CONFIG.get('split_models')),
             'lend': {'on': bool(CONFIG.get('lend_gpu')), 'running': bool(_rpc and _rpc.poll() is None), 'port': RPC_PORT,
                      'available': rpc_executable() is not None, 'addresses': addresses()},
             'peers': CONFIG.get('rpc_peers') or ''}
@@ -151,6 +270,7 @@ async def apply(changes):
     if 'share_models' in changes:
         save_config({'share_models': bool(changes['share_models'])})
         await (start_share() if changes['share_models'] else stop_share())
+        if changes['share_models']: open_pairing()
     if 'lend_gpu' in changes:
         if changes['lend_gpu']: start_rpc()
         else: stop_rpc()

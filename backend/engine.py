@@ -96,7 +96,7 @@ def text_only(messages,full_system,private_system):
     """What an outside service without file access receives: conversation text only, no tool results or file contents."""
     out=[]
     for m in messages:
-        if m.get('role')=='system': out.append({**m,'content':str(m.get('content','')).replace(full_system,private_system,1)})
+        if m.get('role')=='system': out.append({'role':'system','content':private_system})
         elif m.get('role')=='tool': continue
         elif m.get('role')=='assistant':
             if m.get('content'): out.append({'role':'assistant','content':m['content']})
@@ -350,6 +350,11 @@ class Engine:
                     if p.get('type')=='image_url': images+=1; parts.append('[image]')
                     elif p.get('type')=='text': parts.append(p.get('text',''))
                 m['content']='\n'.join(parts)
+        from .services import is_remote
+        if is_remote(self.model_id()):
+            # A model service: the local tokenizer belongs to another model. About 3.5 characters per token.
+            size=len(json.dumps(safe,ensure_ascii=False))+len(json.dumps(definitions or []))
+            return int(size/3.5)+images*1200+256,'estimate for a model service'
         payload={'messages':safe,'add_generation_prompt':True,'chat_template_kwargs':{'enable_thinking':False}}
         if definitions: payload['tools']=definitions
         try:
@@ -427,6 +432,14 @@ class Engine:
         async with self.model_stream(body) as response:
             if response.status_code>=400:
                 raw=(await response.aread()).decode('utf-8','replace')[:600]
+                from .services import is_remote,resolve
+                if is_remote(body['model']):
+                    service=(resolve(body['model'])[0] or {}).get('name','The model service')
+                    try: detail=(json.loads(raw).get('error') or {}).get('message') or raw
+                    except (ValueError,AttributeError): detail=raw
+                    hint={401:'Check its API key in Extensions › Connectors.',403:'Check its API key in Extensions › Connectors.',404:'That model may have been removed by the service.',
+                          429:'Its usage limit was reached. Wait a bit, or pick another model.'}.get(response.status_code,'Try again, or pick another model.')
+                    raise RuntimeError(f'{service} could not answer ({response.status_code}: {str(detail)[:200]}). {hint}')
                 from .runtime import diagnose
                 problem=diagnose() if response.status_code>=500 else None
                 raise RuntimeError(f'{problem} Details: model server {response.status_code}: {raw}' if problem else f'Model server {response.status_code}: {raw}')
@@ -895,10 +908,11 @@ class Engine:
         step['note']=clip_reply(last.get('content',''),limit=900)
         step['status']='blocked' if run.get('denied') or run.get('checkpoint') or run.get('stalled') else 'done'
         self.save_plan(chat,plan)
-    async def run_step(self,run,model,instruction,reasoning=False):
+    async def run_step(self,run,model,instruction,reasoning=False,continue_step=False):
         chat=run['chat']
         self.inference.set(model); run['model_id']=model['id'] if model else CONFIG['model']; run['reasoning']=reasoning
-        run['step_from']=self.store.add(chat,{'role':'user','content':instruction,'plan_step':True})
+        added=self.store.add(chat,{'role':'user','content':instruction,'plan_step':True})
+        if not continue_step: run['step_from']=added   # a follow-up within the same step keeps the step's earlier messages
         for key in ('denied','checkpoint','stalled','announced','nudges','trim_history','skill_preloaded'): run.pop(key,None)
         self.emit('changed',chat=chat)
         result=await self.graph.ainvoke({'run':run,'calls':[],'steps':0},{'recursion_limit':42,'configurable':{'thread_id':run['id']}})
@@ -925,7 +939,13 @@ class Engine:
             run['step_id']=current.get('id'); run['phase']=f'Step {n} of {len(plan["steps"])}'
             instruction=(f'[Plan step {n} of {len(plan["steps"])}] {current["title"]}'+(f'\n{current["detail"]}' if current.get('detail') else '')
                          +'\nDo this step now and check it. Then reply with a short note: what you did, where the results are, and anything that did not work.')
-            if await self.run_step(run,coder if coding else chat_model,instruction): return True
+            worker=coder if coding else chat_model
+            if await self.run_step(run,worker,instruction): return True
+            from .services import may_see_files
+            if worker and not may_see_files(worker['id']):
+                # Relay: a model service that may not see files drafted the work; this PC saves, runs and checks it.
+                if await self.run_step(run,chat_model,'[Apply] Save the work drafted above into files where it belongs, run or check it, fix problems, '
+                                       'and reply with a short note: what you did and where the results are.',continue_step=True): return True
             self.finish_step(run)
             plan=self.store.setting('plan:'+chat,None) or plan
             if any(s.get('id')==current.get('id') and s['status']=='blocked' for s in plan['steps']): return False
