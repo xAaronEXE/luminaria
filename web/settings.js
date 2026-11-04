@@ -1,6 +1,6 @@
 /* Categorized settings backed by the local API. */
 (()=>{
- const groups=[['Account',['Profile','Sign-in & devices','Cloud sync','Insights']],['Workspace',['Default folder','Tools & permissions','Memory & context','Extensions']],['Models & voice',['Models','Orchestration','Hardware & tuning','Voice']],['App',['Appearance','Updates']]];
+ const groups=[['Account',['Profile','Sign-in & devices','Cloud sync','Insights']],['Workspace',['Default folder','Tools & permissions','Memory & context','Extensions']],['Models & voice',['Models','Model roles','Orchestration','Model services','Paired PCs','Hardware & tuning','Voice']],['App',['Appearance','Updates']]];
  const labels={Models:'Model library',Orchestration:'Auto mode','Tools & permissions':'Permissions'};
  const sections=groups.flatMap(([,pages])=>pages);
  const aliases={Inference:'Default folder','Working folder':'Default folder','Model library':'Models',Account:'Profile',Accounts:'Profile','Sign-in methods':'Sign-in & devices','Devices & security':'Sign-in & devices','Auto mode':'Orchestration',Permissions:'Tools & permissions'};
@@ -25,6 +25,23 @@
   body.innerHTML='<p role="status" class="settings-loading">Loading settings…</p>';
   try{
   if(section==='Cloud sync'){await renderCloudSync(body);return}
+  if(section==='Model services'||section==='Paired PCs'){
+   const services=section==='Model services';
+   body.innerHTML=`<h3 class="settings-page-title">${section}</h3><p class="settings-intro">${services?'Use AI models from online services or apps like Ollama and LM Studio alongside the models on this PC. Nothing is sent to them unless you pick one of their models or give it a role.':'Pair your PCs running Luminaria. Their models join yours: Luminaria picks the best one for each job, and can split big models across your graphics cards.'}</p><div class="ext-page"></div>`;
+   await window.mountExtensionPage(body.querySelector('.ext-page'),services?'services':'pcs');return}
+  if(section==='Model roles'){
+   const [s,list]=await Promise.all([api('/settings'),api('/models')]);if(!body.isConnected)return;
+   const models=list.models.filter(m=>m.installed),opt=(v,label,cur)=>`<option value="${esc(v)}" ${cur===v?'selected':''}>${esc(label)}</option>`;
+   const pick=(name,cur,autoLabel)=>`<select name="${name}">${opt('auto',autoLabel,cur||'auto')}${opt('chat','Same as the chat model',cur)}${models.map(m=>opt(m.id,m.name,cur)).join('')}</select>`;
+   const now=id=>esc(list.models.find(m=>m.id===id)?.name||'none installed yet');
+   body.innerHTML=`<h3 class="settings-page-title">Model roles</h3><p class="settings-intro">Luminaria gives different jobs to different models and loads them as needed. Automatic picks only use this PC and your paired PCs, never an online service unless you choose one here.</p>
+    <div class="s-card">
+     <label class="setting-row"><div><h3>Planning model</h3><p>Makes plans with you and checks finished work, with thinking on. Now: ${now(list.roles?.planner)}.</p></div>${pick('planner_model',s.planner_model,'Automatic · strongest reasoning model')}</label>
+     <label class="setting-row"><div><h3>Coding model</h3><p>Does the coding steps when a plan is carried out. Choose a model service here to relay that work while this PC plans and checks. Now: ${now(list.roles?.coder)}.</p></div>${pick('coder_model',s.coder_model,'Automatic · best coding model')}</label>
+     <div class="setting-row"><div><h3>Chat model</h3><p>Everything else: the model you pick in the message box, or Auto.</p></div><span class="badge">${esc(list.models.find(m=>m.id===s.model)?.name||s.model||'—')}</span></div>
+    </div><p class="small-note" role="status" id="roles-state"></p>`;
+   body.querySelectorAll('select').forEach(sel=>sel.addEventListener('change',safe(async()=>{await api('/settings','POST',{[sel.name]:sel.value});toast('Saved');await settingsView('Model roles')})));
+   return}
   if(['Profile','Sign-in & devices'].includes(section)){await renderAccounts(body);return}
   if(section==='Integrations'){body.innerHTML='<h3 class="settings-page-title">Integrations</h3><p class="settings-intro">Connect outside services. Each one adds its own tools once you sign in to it.</p><div id="tools-body"></div>';await renderIntegrations(body.querySelector('#tools-body'));return}
   if(section==='Default folder'){await studioSettingsSection('Inference',body);await renderAccountProfiles(body);return}

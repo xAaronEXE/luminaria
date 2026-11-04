@@ -351,8 +351,8 @@ body.effects-low .library-menu{background:var(--panel);backdrop-filter:none;-web
 .ext-main{flex:1;min-width:0;display:flex!important;align-items:center;gap:12px!important;text-align:left;padding:2px;border-radius:10px}
 .ext-main:focus-visible{outline:2px solid var(--accent)}
 .ext-icon{flex:none;display:grid!important;place-items:center;width:38px;height:38px;border-radius:11px;color:var(--accent);background:color-mix(in srgb,var(--accent) 12%,transparent)}
-.ext-icon.ext-connector{color:#3aa6c9;background:color-mix(in srgb,#3aa6c9 14%,transparent)}
-.ext-icon.ext-workflow{color:#b07ad9;background:color-mix(in srgb,#b07ad9 14%,transparent)}
+.ext-icon.ext-connector{color:var(--aurora-2);background:color-mix(in srgb,var(--aurora-2) 14%,transparent)}
+.ext-icon.ext-workflow{color:var(--aurora-3);background:color-mix(in srgb,var(--aurora-3) 14%,transparent)}
 .ext-icon svg{width:18px;height:18px}
 .ext-text{min-width:0;display:flex;flex-direction:column;gap:2px}
 .ext-text strong{font-size:13.5px;font-weight:600;color:var(--text)}

@@ -437,7 +437,7 @@ class Engine:
                     service=(resolve(body['model'])[0] or {}).get('name','The model service')
                     try: detail=(json.loads(raw).get('error') or {}).get('message') or raw
                     except (ValueError,AttributeError): detail=raw
-                    hint={401:'Check its API key in Extensions › Connectors.',403:'Check its API key in Extensions › Connectors.',404:'That model may have been removed by the service.',
+                    hint={401:'Check its API key in Settings › Model services.',403:'Check its API key in Settings › Model services.',404:'That model may have been removed by the service.',
                           429:'Its usage limit was reached. Wait a bit, or pick another model.'}.get(response.status_code,'Try again, or pick another model.')
                     raise RuntimeError(f'{service} could not answer ({response.status_code}: {str(detail)[:200]}). {hint}')
                 from .runtime import diagnose

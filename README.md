@@ -229,7 +229,7 @@ Luminaria gives different jobs to different models:
 | **Coding model** | Does the coding steps when a plan is carried out | Your best installed coding model |
 | **Chat model** | Everything else | The model you pick in the message box, or Auto |
 
-The model picker labels the current picks (*Plans and checks*, *Codes plan steps*). To change them, go to **Settings › Auto mode**. Luminaria loads and swaps models by itself as the work moves between roles.
+The model picker labels the current picks (*Plans and checks*, *Codes plan steps*). To change them, go to **Settings › Model roles**. Luminaria loads and swaps models by itself as the work moves between roles.
 
 **Carrying out a plan:** make a plan with **Plan only**, then open the plan card and choose **Carry out plan**.
 1. Luminaria works through the steps one at a time. Each step starts with a clean slate: the plan, short notes from earlier steps, and its own work.
@@ -237,22 +237,26 @@ The model picker labels the current picks (*Plans and checks*, *Codes plan steps
 3. At the end, the planning model checks the whole result against the goal.
 
 ### Model services and Relay
-Besides the models on your PC, Luminaria can use **model services**: OpenRouter (including its free models), Groq, Gemini, OmniRoute, Ollama, LM Studio, or any service that works like OpenAI's API.
+Besides the models on your PC, Luminaria can use **model services**: OpenRouter (including its free models), Groq, Gemini, OmniRoute, Ollama, LM Studio, or any service that works like OpenAI's API. (To use your own other PCs, pair them instead: see below.)
 
-1. Open **Extensions › Connectors › Add a model service**.
+1. Open **Settings › Model services › Add a model service**.
 2. Pick a service, or enter its address, and add your API key if it needs one. Keys are encrypted on your PC.
 3. Its models appear in the model picker under **Model services**.
 
-**Relay:** set a model service as your **Coding model** in Settings › Auto mode. When Luminaria carries out a plan, it relays the coding steps to that service, while your own PC plans the work and checks the result.
+**Relay:** set a model service as your **Coding model** in Settings › Model roles. When Luminaria carries out a plan, it relays the coding steps to that service, while your own PC plans the work and checks the result.
 
 **Privacy:** each service has a **May see my files** switch, off by default. When it's off, the service receives only the conversation text. It never gets file contents, command output or your memory, and it can't use file tools. Auto never sends anything to a model service on its own. Free services have usage limits and their own terms, so check them before relying on one.
 
 ### Your PCs, working together
-All of these are in **Extensions › Connectors › Your other PCs**.
+Everything is in **Settings › Paired PCs**.
 
-- **Share this PC's models.** Turn it on to see this PC's address and a pairing key. On another PC, add a model service, choose *Another PC running Luminaria*, and enter that address (ending in `:8099/v1`) and key. Only chat requests with the key are accepted. Windows may ask to allow Luminaria on private networks: choose **Allow**.
-- **Lend this PC's graphics card.** Lets another PC split one large model across both graphics cards, using llama.cpp's RPC server. It has no password, so use it only on your own home or office network.
-- **Use other PCs' graphics cards.** On the main PC, enter the addresses of PCs that lend their graphics card, for example `192.168.1.20`. Models then run across all of them, including models too large for one PC.
+1. **On the PC to share:** turn on **Let other PCs pair with this one**. It shows a 6-digit code that works once, for 10 minutes. Windows may ask to allow Luminaria on private networks: choose **Allow**.
+2. **On your other PC:** choose **Pair with another PC** → **Look for PCs**, pick it, and enter the code. If it isn't found, type its address (shown on the first PC).
+3. **That's it.** Its models now appear under *Paired PCs* in the model picker. Auto mode and the model roles use them like your own, so Luminaria can plan on one PC while another codes, passing the work back and forth. Your files stay on the PC you're using.
+
+**Split big models:** with at least one paired PC, turn on **Split big models across paired PCs**. The next message loads the model across all the graphics cards, so models too big for one PC can run. This uses llama.cpp's RPC system, which has no password: use it only on your own home or office network.
+
+To stop, choose **Unpair** on the paired PC's card, or turn off **Let other PCs pair** on the shared PC.
 
 ## Voice
 
