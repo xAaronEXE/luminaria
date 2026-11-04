@@ -15,7 +15,7 @@ from .usage import Usage
 
 class AlreadyDone(Exception):pass
 
-PLAN_TOOLS=frozenset({'list_skills','load_skill','find_capability','inspect_file','list_files','read_file','search_files','web_search','web_fetch','research','memory_search','history_read','update_plan','update_brief'})
+PLAN_TOOLS=frozenset({'list_skills','load_skill','find_capability','inspect_file','list_files','read_file','search_files','web_search','research','memory_search','history_read','update_plan','update_brief'})
 PLAN_ONLY_PROMPT=('Planning-only mode is on: you and the user shape a plan together through conversation. Nothing is carried out. '
  'Read the user\'s latest message and respond to what it actually says. '
  'If they are brainstorming, adding ideas or correcting you: reply briefly with short notes on what you understood or changed, '
