@@ -150,6 +150,8 @@ def score(model, profile, evidence, vram=None):
             if need in needs and result and result.get('total'):
                 ratio = result['passed'] / result['total']; value += 8.0 * (ratio - 0.5)
                 factors.append(f"{need} check {result['passed']}/{result['total']}")
+        if quality.get('score') is not None:   # overall AI score out of 100, measured here
+            value += 6.0 * (quality['score'] / 100 - 0.5); factors.append(f"AI score {quality['score']}")
     size = math.log2(max(total, 0.5))
     if profile['complexity'] == 'high': value += 1.4 * size; factors.append(f'{total:g}B for a demanding task')
     elif profile['complexity'] == 'medium': value += 0.6 * size

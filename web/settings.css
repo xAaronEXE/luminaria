@@ -178,3 +178,10 @@
 .settings-body[data-account-view="Sign-in methods"] .account-method-heading{display:none}
 
 .settings-loading{color:var(--muted);font-size:13px;padding:16px 0}.profile-stats,.profile-weeks,.insight-stat,.insight-table{font-variant-numeric:tabular-nums}.settings-nav button:focus-visible,.settings-body button:focus-visible,.library-sheet button:focus-visible{outline:2px solid var(--accent);outline-offset:3px}.settings-body .setting-row>div{min-width:0}.settings-body .setting-row p,.settings-body .profile-row p{overflow-wrap:anywhere}.settings-body{scrollbar-gutter:stable}.settings-nav .settings-navigation{scrollbar-gutter:stable}
+/* Selecting several models */
+.model-pick-bar{display:flex;flex-wrap:wrap;align-items:center;gap:8px;margin:0 0 10px;padding:8px 10px;border:1px solid var(--line);border-radius:10px;background:var(--panel)}
+.model-pick-bar .pick-count{font-size:12px;color:var(--muted);margin-right:4px}
+.model-pick-bar .pick-actions{display:flex;gap:8px;margin-left:auto}
+.pick-box{display:inline-grid;place-items:center;width:14px;height:14px;margin-right:7px;border:1.5px solid var(--control-line);border-radius:4px;font-size:10px;line-height:1;vertical-align:-2px;color:var(--accent-contrast)}
+.model-option.picked{border-color:var(--accent);background:var(--accent-soft)}
+.model-option.picked .pick-box{background:var(--accent);border-color:var(--accent)}

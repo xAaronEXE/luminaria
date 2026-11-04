@@ -622,16 +622,31 @@ def remove_all(confirm):
 
 GOOD_FITS = ('recommended', 'good', 'slow')
 
-def download_all(store, confirm=False):
-    """Queue the best-fit size of every model that runs on this PC. Without confirm, only reports what would happen."""
+def remove_selected(ids, confirm):
+    """Uninstall several models. Each id is a quant or registry id; one that fails does not stop the rest."""
+    if confirm is not True: raise ValueError('Confirm removal before deleting model files.')
+    removed, failed = 0, []
+    for ident in dict.fromkeys(str(i) for i in ids or []):
+        try: remove(ident, True); removed += 1
+        except (ValueError, OSError) as error: failed.append(f'{ident}: {error}')
+    message = f'Removed {removed} model{"s" if removed != 1 else ""}.' + (f' {len(failed)} could not be removed.' if failed else '')
+    return {'removed': removed, 'failed': failed, 'message': message}
+
+def download_all(store, confirm=False, keys=None):
+    """Queue the best-fit size of every model that runs on this PC, or only of the chosen models (keys).
+    Chosen models may also be ones that only just fit; models too large for this PC are never queued.
+    Without confirm, only reports what would happen."""
     lib = library(store)
+    chosen = set(keys) if keys else None
+    allowed = GOOD_FITS + ('unstable', 'unknown') if chosen else GOOD_FITS
     picks = []
     for entry in lib['models']:
+        if chosen is not None and entry.get('key') not in chosen: continue
         quant = next((q for q in entry.get('quants', []) if q.get('best_fit')), None)
         if not quant or quant.get('installed') or is_projector(quant) or not quant.get('downloadable', True): continue
-        if (quant.get('fit') or {}).get('rating') not in GOOD_FITS: continue
+        if (quant.get('fit') or {}).get('rating', 'unknown') not in allowed: continue
         if (quant.get('job') or {}).get('status') in ('queued', 'downloading'): continue
-        picks.append((GOOD_FITS.index(quant['fit']['rating']), quant.get('bytes') or 0, entry.get('name', ''), quant))
+        picks.append((allowed.index((quant.get('fit') or {}).get('rating', 'unknown')), quant.get('bytes') or 0, entry.get('name', ''), quant))
     picks.sort(key=lambda p: (p[0], p[1]))
     free = shutil.disk_usage(models_folder() if models_folder().exists() else models.BASE_DATA).free
     room = min(lib['budget']['remaining'], max(0, free - 1024**3))

@@ -1036,7 +1036,18 @@ async def model_remove_all(request:Request):
 @app.post('/api/model-library/download-all')
 async def model_download_all(request:Request):
     from .model_library import download_all
-    result=await asyncio.to_thread(download_all,store,(await request.json()).get('confirm') is True)
+    body=await request.json()
+    keys=[str(k) for k in body.get('keys') or []] or None
+    result=await asyncio.to_thread(download_all,store,body.get('confirm') is True,keys)
+    broadcast({'type':'changed'}); return result
+
+@app.post('/api/model-library/remove-selected')
+async def model_remove_selected(request:Request):
+    if benchmarking: raise ValueError('Wait for the model benchmark to finish')
+    if any(not r.get('finished') for r in engine.runs.values()): raise ValueError('Finish or stop active tasks before removing models')
+    from .model_library import remove_selected
+    body=await request.json()
+    result=await asyncio.to_thread(remove_selected,body.get('ids'),body.get('confirm'))
     broadcast({'type':'changed'}); return result
 
 @app.post('/api/model-library/{id}/remove')
