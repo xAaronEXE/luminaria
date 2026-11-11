@@ -29,6 +29,8 @@ class Store:
         CREATE TABLE IF NOT EXISTS runs(id TEXT PRIMARY KEY,chat TEXT,payload TEXT,status TEXT,updated REAL);
         CREATE TABLE IF NOT EXISTS retrieval_events(id TEXT PRIMARY KEY,run TEXT,tool TEXT,status TEXT,category TEXT,source TEXT,duration_ms INTEGER,attempts INTEGER,cached INTEGER,created REAL);
         ''')
+        # Which plan step an action belongs to; older databases get the column added.
+        if 'step' not in [r[1] for r in self.db.execute('PRAGMA table_info(actions)')]: self.db.execute('ALTER TABLE actions ADD COLUMN step TEXT')
         # A process restart must never resume previously approved side effects.
         self.db.execute("UPDATE actions SET status='interrupted' WHERE status='running'")
         self.db.commit()

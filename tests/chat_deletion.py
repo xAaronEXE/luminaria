@@ -15,7 +15,7 @@ def seed(store,title):
  chat=store.create_chat(title)
  store.add(chat,{'role':'user','content':'secret '+title})
  store.save_summary(chat,1,'summary of '+title)
- store.execute('INSERT INTO actions VALUES(?,?,?,?,?,?,?,?)',(chat+'-a',chat,'write_file','{}','ask','done',None,0))
+ store.execute('INSERT INTO actions(id,chat,name,args,tier,status,result,created) VALUES(?,?,?,?,?,?,?,?)',(chat+'-a',chat,'write_file','{}','ask','done',None,0))
  run=chat+'-run'
  store.save_run({'id':run,'chat':chat,'phase':'Finished','finished':True})
  return chat,run

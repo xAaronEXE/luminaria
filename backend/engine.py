@@ -21,7 +21,7 @@ PLAN_ONLY_PROMPT=('Planning-only mode is on: you and the user shape a plan toget
  'If they are brainstorming, adding ideas or correcting you: reply briefly with short notes on what you understood or changed, '
  'and ask at most two questions when something important is unclear. Apply real changes to the saved plan with update_plan. '
  'If they ask for the plan, or there is enough to plan: call update_plan with a one-sentence goal and specific, ordered steps, each with a '
- 'short detail saying what will be done and how it will be checked. Base steps on facts: when the plan depends on files, versions or '
+ 'short detail saying what will be done, and a check that proves it worked: a command that only succeeds when the work is right (tests, running the program) or a result file that must exist or contain something. Base steps on facts: when the plan depends on files, versions or '
  'how something works, read the files or search the web first (a few targeted lookups), and never invent facts. '
  'Every step stays pending. The user sees the saved plan in its own card, so never print the plan, its JSON or tool calls in your reply, '
  'and never repeat an earlier reply; summarize in a few lines what changed instead. '
@@ -109,6 +109,17 @@ def with_nudge(messages,run):
 SKILL_COMMAND=re.compile(r'^\s*/skill\s+([A-Za-z0-9][\w.:-]{0,80})',re.I)
 WANTS_WORK=re.compile(r"\b(?:build|code|make|create|write|implement|put (?:it|this|everything|it all) together|do (?:it|this|that|the whole|it all)|set (?:it|this) up|fix|run (?:it|this)|how do i run)\b",re.I)
 HANDOFF=re.compile(r"\b(?:open (?:a |the )?(?:command prompt|terminal|powershell)|run the following command|type the following|execute the (?:script|following)|save the file (?:with|as)|save (?:it|this|the code) as|install it using|you can install|pip install)\b",re.I)
+SHOW_CODE=re.compile(r"\b(?:show|see|paste|print|display|view|give|send|share|read|explain|review|walk me through)\b[^.?!\n]{0,40}\b(?:code|script|source|file|snippet|function|program)\b|\b(?:code|script|snippet)\b[^.?!\n]{0,20}\b(?:in (?:the )?chat|here|inline)\b",re.I)
+FENCE=re.compile(r"```[^\n]*\n(.*?)(?:```|\Z)",re.S)
+def hide_run_code(msg,asked):
+    """When a reply both shows code and sends it to a tool, the code belongs in the file or the run, not in the chat.
+    It is taken out of the reply (which also keeps it out of the context) and kept beside the message for anyone who wants to look."""
+    content=msg.get('content')
+    if not msg.get('tool_calls') or not isinstance(content,str) or '```' not in content or SHOW_CODE.search(asked or ''): return msg
+    blocks=[b for b in FENCE.findall(content) if b.strip()]
+    if sum(len(b.strip().splitlines()) for b in blocks)<4: return msg
+    kept=re.sub(r'\n{3,}','\n\n',FENCE.sub('',content)).strip()
+    return {**msg,'content':kept,'hidden_code':[b.strip()[:20000] for b in blocks][:6]}
 def last_user_text(messages):
     last=next((m for m in reversed(messages) if m.get('role')=='user'),{})
     content=last.get('content','')
@@ -173,7 +184,11 @@ class Engine:
         for row in self.store.rows("SELECT * FROM runs WHERE status NOT IN ('Complete','Stopped','Error','Denied') ORDER BY updated"):
             run=json.loads(row['payload']); run['enabled']=set(run.get('enabled',[])); run.pop('finished',None)
             snap=await self.graph.aget_state({'configurable':{'thread_id':run['id']}})
-            if not snap.next: continue
+            if not snap.next:
+                # A plan cut off between two steps has nothing half-done, but still has steps left.
+                plan=self.store.setting('plan:'+run['chat'],None) or {}
+                if not (run.get('plan_run') and any(s.get('status')=='active' for s in plan.get('steps',[]))): continue
+                run['plan_resume_clean']=True
             run['phase']='Interrupted — resume available'; run['resume_available']=True
             self.runs[run['chat']]=run
             for task in snap.tasks:
@@ -186,6 +201,8 @@ class Engine:
         if not run or run.get('finished'): raise ValueError('No interrupted run to resume')
         if chat in self.tasks and not self.tasks[chat].done(): raise ValueError('Run is already active')
         run['resume_available']=False; run['phase']='Resuming'; run.pop('error',None)
+        if run.get('plan_run'):   # never repeat an action that already succeeded in the step being resumed
+            run['continuing']=run.get('continuing') or run['started']; run['resumed_step']=run.get('step_id')
         self.work(run,'run.resumed',str(time.time()),label='Resumed',status='running')
         self.tasks[chat]=asyncio.create_task(self.execute(run,False,Command(resume=decision) if decision is not None else None,resuming=True))
         return run['id']
@@ -248,7 +265,7 @@ class Engine:
         'Code and debugging: read the relevant code first, reproduce the problem, fix the root cause, run it or its tests, and keep changes small '
         '(reuse what exists, no features nobody asked for, finish every part the change touches; from Ponytail, MIT licence). '
         'Files, documents and computer tasks: do them with tools and verify the result (inspect_file, run it, list the folder). '
-        'Plans and big jobs: clarify the goal, research what you do not know, call update_plan with concrete steps, then work through them, keeping step status current. '
+        'Plans and big jobs: clarify the goal, research what you do not know, call update_plan with concrete steps, each with a check that proves it worked, then work through them. Luminaria records a step as finished from what you actually did and its check, not from your say-so. '
         'UNDERSTAND FIRST. Use the conversation, memory, project notes and files to resolve vague requests. If it is truly ambiguous and a wrong guess '
         'would waste real effort, ask at most three short questions and stop; otherwise state your assumption in one line and proceed. '
         'DO THE WORK. Write the files, run the scripts, install what is needed and fix errors yourself; never hand the user steps you can do, and never '
@@ -591,7 +608,7 @@ class Engine:
         run['phase']='Thinking' if run.get('reasoning') else 'Generating'; self.emit('changed',chat=chat)
         turn=run['round']=state['steps']; node='gen'+str(turn)
         self.work(run,'generation.started',turn,node=node,label='Model response' if turn==0 else 'Model response after tools',status='running',region='generation',reasoning_requested=bool(run.get('reasoning')),parent=run.get('last_tool_node'))
-        msg=await self.completion(messages,defs,run)
+        msg=hide_run_code(await self.completion(messages,defs,run),last_user_text([m for m in self.store.messages(chat) if not m.get('plan_step')]))
         message_id=self.store.add(chat,msg); run['live']=''; run['reasoning_text']=''
         raw=run.pop('usage_raw',None) or {}
         self.measure('generation',run,message_id,self.model_id(),run.get('metrics',{}),raw.get('usage') or {},raw.get('timings'),run.get('reasoning'))
@@ -650,7 +667,8 @@ class Engine:
                 from jsonschema import validate
                 validate(args,definition['parameters'])
                 if run.get('continuing') and (name in SIDE_EFFECTS or '__' in name):
-                    prior=self.store.rows("SELECT id,args,status FROM actions WHERE chat=? AND name=? AND created>=? AND id<>? ORDER BY created",(run['chat'],name,run['continuing'],id))
+                    prior=self.store.rows("SELECT id,args,status,step FROM actions WHERE chat=? AND name=? AND created>=? AND id<>? ORDER BY created",(run['chat'],name,run['continuing'],id))
+                    if run.get('plan_run'): prior=[p for p in prior if p.get('step')==run.get('step_id') and run.get('resumed_step')==run.get('step_id')]
                     matching=[p for p in prior if call_key(name,json.loads(p['args']))==call_key(name,args)]
                     uncertain=next((p for p in matching if p['status'] in ('running','interrupted','error')),None)
                     if uncertain:
@@ -662,7 +680,8 @@ class Engine:
                 existing=self.store.rows('SELECT * FROM actions WHERE id=?',(id,))
                 if existing: tier=existing[0]['tier']
                 elif tier=='approve' and self.store.setting('permission:'+name,False): tier='auto'
-                self.store.execute('INSERT OR IGNORE INTO actions VALUES(?,?,?,?,?,?,?,?)',(id,run['chat'],name,json.dumps(args),tier,'pending' if tier!='auto' else 'ready',None,now()))
+                self.store.execute('INSERT OR IGNORE INTO actions(id,chat,name,args,tier,status,result,created) VALUES(?,?,?,?,?,?,?,?)',(id,run['chat'],name,json.dumps(args),tier,'pending' if tier!='auto' else 'ready',None,now()))
+                if run.get('step_id'): self.store.execute('UPDATE actions SET step=? WHERE id=? AND step IS NULL',(run['step_id'],id))
                 self.emit('changed',chat=run['chat'])
                 base=dict(node=id,tool=name,tool_call=call['id'],region=region_for(name),parent='gen'+str(run.get('round',0)),step=run.get('active_step'),evidence={'action':id})
                 self.work(run,'tool.requested',id,label=name.replace('__',' · '),status='requested',follows_failure=run.get('failed_tools',{}).get(name),**base)
@@ -692,12 +711,12 @@ class Engine:
             except __import__('langgraph.errors',fromlist=['GraphInterrupt']).GraphInterrupt:
                 raise
             except AlreadyDone as done:
-                self.store.execute('INSERT OR IGNORE INTO actions VALUES(?,?,?,?,?,?,?,?)',(id,run['chat'],name,json.dumps(args),'auto','ready',None,now()))
+                self.store.execute('INSERT OR IGNORE INTO actions(id,chat,name,args,tier,status,result,created) VALUES(?,?,?,?,?,?,?,?)',(id,run['chat'],name,json.dumps(args),'auto','ready',None,now()))
                 result={'skipped':True,'already_done':str(done),'message':'This exact step already succeeded before the checkpoint, so it was not repeated.'}; status='done'; duration='skipped'
             except Exception as e:
                 result={'error':str(e) or type(e).__name__}; status='error'
                 if not run.get('plan_only') or name in PLAN_TOOLS:
-                    self.store.execute('INSERT OR IGNORE INTO actions VALUES(?,?,?,?,?,?,?,?)',(id,run['chat'],name,json.dumps(args if isinstance(args,dict) else {}),'approve','error',None,now()))
+                    self.store.execute('INSERT OR IGNORE INTO actions(id,chat,name,args,tier,status,result,created) VALUES(?,?,?,?,?,?,?,?)',(id,run['chat'],name,json.dumps(args if isinstance(args,dict) else {}),'approve','error',None,now()))
             folder=DATA/'tool-outputs'; folder.mkdir(exist_ok=True)
             (folder/(id+'.json')).write_text(json.dumps(result,ensure_ascii=False),encoding='utf-8')
             artifact=DATA/'runs'/run['id']/'artifacts'; artifact.mkdir(parents=True,exist_ok=True)
@@ -748,7 +767,8 @@ class Engine:
     def checkpoint(self,run,reason):
         """Stop with a readable account of progress, built without calling the model."""
         text=report(self.run_actions(run),self.store.setting('plan:'+run['chat'],None),reason,run.get('stalled'))
-        self.store.add(run['chat'],{'role':'assistant','content':text,'checkpoint':True})
+        if not run.get('plan_run'):   # while a plan runs, the plan report says where things stand
+            self.store.add(run['chat'],{'role':'assistant','content':text,'checkpoint':True})
         run['checkpoint']={'reason':reason,'at':now()}
         self.store.save_run(run); self.emit('changed',chat=run['chat'])
 
@@ -764,7 +784,9 @@ class Engine:
             run['active_step']=next((s['id'] for s in steps if s['status']=='active'),None)
             self.work(run,'plan.created' if version==1 else 'plan.revised',id,node='plan'+str(version),version=version,steps=steps,source='model-provided',label='Plan from the model' if version==1 else f'Plan revision {version}',evidence={'action':id},region='planning')
             saved=self.store.setting('plan:'+run['chat'],None) or {}
-            goal=str(plan_args.get('goal') or '').strip()[:300] or saved.get('goal','')
+            from .plan_runner import merge_plan
+            steps=merge_plan(saved,steps,bool(run.get('plan_run')))
+            goal=saved.get('goal','') if run.get('plan_run') and saved.get('goal') else str(plan_args.get('goal') or '').strip()[:300] or saved.get('goal','')
             self.store.set_setting('plan:'+run['chat'],{'goal':goal,'steps':steps,'version':saved.get('version',0)+1,'run':run['id'],'planning_only':bool(run.get('plan_only')),'updated':now()})
 
     # ---- Model lifecycle: once nothing is running, the model is unloaded from the graphics card. ----
@@ -861,17 +883,19 @@ class Engine:
                     warm.raise_for_status()
                 if compact_only: run['compact_result']=await self.compact(chat,force=True,run=run)
                 elif run.get('plan_run'):
+                    judge_first=False
                     if resuming:
-                        result=await self.graph.ainvoke(resume_input,{'recursion_limit':42,'configurable':{'thread_id':run['id']}})
-                        run=self.runs[chat]
-                        if result.get('__interrupt__'): paused=True; run['phase']='Waiting for approval'
-                        else: self.finish_step(run)
-                    if not paused: paused=await self.run_plan(run,models)
+                        if not run.pop('plan_resume_clean',False):   # the step was cut off part-way: let it finish from its checkpoint
+                            result=await self.graph.ainvoke(resume_input,{'recursion_limit':42,'configurable':{'thread_id':run['id']}})
+                            run=self.runs[chat]
+                            if result.get('__interrupt__'): paused=True; run['phase']='Waiting for approval'
+                        judge_first=not paused
+                    if not paused: paused=await self.run_plan(run,models,judge_first=judge_first)
                 else:
                     result=await self.graph.ainvoke(resume_input if resuming else {'run':run,'calls':[],'steps':0},{'recursion_limit':42,'configurable':{'thread_id':run['id']}})
                     run=self.runs[chat]
                     if result.get('__interrupt__'): paused=True; run['phase']='Waiting for approval'
-            if not paused: run['phase']='Denied' if run.get('denied') else 'Checkpoint' if run.get('checkpoint') else 'Complete'
+            if not paused: run['phase']=('Stopped' if run.get('plan_blocked') else 'Complete') if run.get('plan_run') else 'Denied' if run.get('denied') else 'Checkpoint' if run.get('checkpoint') else 'Complete'
         except asyncio.CancelledError:
             run=self.runs.get(chat,run)
             if run.get('live'): self.store.add(chat,{'role':'assistant','content':run['live']+'\n\n[Stopped]','interrupted':True})
@@ -899,60 +923,106 @@ class Engine:
     # ---- Long tasks: carry out the saved plan one step at a time ----
     def save_plan(self,chat,plan):
         self.store.set_setting('plan:'+chat,{**plan,'updated':now()}); self.emit('changed',chat=chat)
-    def finish_step(self,run):
-        """Record the active step's outcome from the last reply, so later steps start clean but informed."""
+    def judge_step(self,run,state):
+        """Decide the active step's outcome from the action journal and its check, and record it. The model has no say."""
+        from . import plan_runner as PR
+        from .config import workspace_path
         chat=run['chat']; plan=self.store.setting('plan:'+chat,None) or {}
-        step=next((s for s in plan.get('steps',[]) if s.get('id')==run.get('step_id')),None)
-        if not step: return
+        step=next((s for s in plan.get('steps',[]) if s.get('id')==state['id']),None)
+        if not step: return 'done',None
+        resolve=lambda path: workspace_path(path,roam=True)
+        actions=PR.step_actions(self.store,chat,state['id'],state['since'])
+        outcome,detail=PR.run_check(step.get('check'),actions,resolve)
+        mark=PR.fingerprint(actions,outcome,resolve)
+        flags={k:bool(run.get(k)) for k in ('denied','checkpoint','stalled')}
+        decision,verdict,reason=PR.judge(step,actions,flags,outcome,detail,state.get('fingerprint'),mark,state['attempt'])
         last=next((m for m in reversed(self.store.messages(chat)) if m.get('role')=='assistant' and isinstance(m.get('content'),str) and m['content'].strip()),{})
-        step['note']=clip_reply(last.get('content',''),limit=900)
-        step['status']='blocked' if run.get('denied') or run.get('checkpoint') or run.get('stalled') else 'done'
+        step['note']=clip_reply(last.get('content',''),limit=900); step['attempts']=state['attempt']; step['reason']=reason
+        if outcome!='none': step['check_result']={'outcome':outcome,'detail':detail[:300]}
+        if decision=='done': step['status']='done'; step['verdict']=verdict
+        elif decision=='blocked': step['status']='blocked'; step['verdict']=verdict
+        if verdict is None: step.pop('verdict',None)
         self.save_plan(chat,plan)
+        self.work(run,'plan.step',state['id']+str(state['attempt']),node='step-'+state['id'],step=state['id'],label=step['title'][:80],region='planning',
+                  status={'done':'done','blocked':'error','retry':'running'}[decision],evidence={'decision':decision,'verdict':verdict,'reason':reason,'check':outcome,'attempt':state['attempt'],'actions':len(actions)})
+        state['fingerprint']=mark
+        return decision,reason
+    def plan_report(self,run):
+        """Say plainly how the plan ended, from recorded step states only."""
+        from .plan_runner import summary
+        plan=self.store.setting('plan:'+run['chat'],None)
+        text=summary(plan)
+        if text: self.store.add(run['chat'],{'role':'assistant','content':text,'plan_report':True}); self.emit('changed',chat=run['chat'])
+        run['plan_blocked']=any(s.get('status')=='blocked' for s in (plan or {}).get('steps',[]))
+        for key in ('denied','checkpoint','stalled'): run.pop(key,None)
     async def run_step(self,run,model,instruction,reasoning=False,continue_step=False):
         chat=run['chat']
         self.inference.set(model); run['model_id']=model['id'] if model else CONFIG['model']; run['reasoning']=reasoning
         added=self.store.add(chat,{'role':'user','content':instruction,'plan_step':True})
         if not continue_step: run['step_from']=added   # a follow-up within the same step keeps the step's earlier messages
-        for key in ('denied','checkpoint','stalled','announced','nudges','trim_history','skill_preloaded'): run.pop(key,None)
-        self.emit('changed',chat=chat)
+        for key in ('denied','checkpoint','stalled','announced','nudges','trim_history','skill_preloaded','round','repeat_failures'): run.pop(key,None)
+        self.store.save_run(run); self.emit('changed',chat=chat)
         result=await self.graph.ainvoke({'run':run,'calls':[],'steps':0},{'recursion_limit':42,'configurable':{'thread_id':run['id']}})
         return bool(result.get('__interrupt__'))
-    async def run_plan(self,run,models):
-        """Each step starts with a clean context (the plan, notes from earlier steps and its own messages) and the right model:
-        coding steps use the coding model (installed or a model service), other steps the chat model, and the planning model
-        checks the finished work. Returns True when paused for an approval."""
+    async def run_plan(self,run,models,judge_first=False):
+        """Carry out the saved plan one step at a time. Each step starts with a clean context (the plan, notes from earlier
+        steps and its own messages) and the right model. After every attempt Luminaria itself decides, from what was actually
+        done and the step's check, whether the step passed, should be tried again differently, or is blocked.
+        Returns True when paused for an approval."""
         from .orchestration import pick_planner,pick_coder,keyword_profile
+        from . import plan_runner as PR
+        from .services import may_see_files
         chat=run['chat']; plan=self.store.setting('plan:'+chat,None)
         if not plan or not plan.get('steps'): raise ValueError('There is no saved plan to carry out. Make one with Plan only first.')
         chat_model=next((m for m in models if m['id']==CONFIG['model']),None)
         coder=pick_coder(models,CONFIG.get('coder_model','auto'),routing_evidence) or chat_model
-        todo=[s for s in plan['steps'] if s.get('status') not in ('done','skipped')]
-        for step in todo:
+        order=[s['id'] for s in PR.unfinished(plan)]
+        for sid in order:
             plan=self.store.setting('plan:'+chat,None) or plan
-            current=next((s for s in plan['steps'] if s.get('id')==step.get('id')),None)
-            if not current or current.get('status') in ('done','skipped'): continue
-            if current.get('status')=='blocked' and step is not todo[0]: break
-            for s in plan['steps']: s['status']='active' if s is current else s['status']
-            self.save_plan(chat,plan)
-            n=plan['steps'].index(current)+1
+            current=next((s for s in plan['steps'] if s.get('id')==sid),None)
+            if not current or current.get('status') in ('done','skipped'): continue   # removed or settled by the user meanwhile
+            state=run.get('step_state') if judge_first and (run.get('step_state') or {}).get('id')==sid else None
+            resumed=bool(state)
+            if not state:
+                state={'id':sid,'attempt':1,'since':now(),'fingerprint':None}
+                for s in plan['steps']:
+                    if s.get('status')=='active': s['status']='pending'
+                current['status']='active'
+                for key in ('verdict','reason','check_result','attempts'): current.pop(key,None)
+                self.save_plan(chat,plan)
+            run['step_state']=state; run['step_id']=sid
+            n=plan['steps'].index(current)+1; check=current.get('check')
             coding='coding' in keyword_profile(current['title']+' '+current.get('detail',''))['needs']
-            run['step_id']=current.get('id'); run['phase']=f'Step {n} of {len(plan["steps"])}'
-            instruction=(f'[Plan step {n} of {len(plan["steps"])}] {current["title"]}'+(f'\n{current["detail"]}' if current.get('detail') else '')
-                         +'\nDo this step now and check it. Then reply with a short note: what you did, where the results are, and anything that did not work.')
             worker=coder if coding else chat_model
-            if await self.run_step(run,worker,instruction): return True
-            from .services import may_see_files
-            if worker and not may_see_files(worker['id']):
-                # Relay: a model service that may not see files drafted the work; this PC saves, runs and checks it.
-                if await self.run_step(run,chat_model,'[Apply] Save the work drafted above into files where it belongs, run or check it, fix problems, '
-                                       'and reply with a short note: what you did and where the results are.',continue_step=True): return True
-            self.finish_step(run)
-            plan=self.store.setting('plan:'+chat,None) or plan
-            if any(s.get('id')==current.get('id') and s['status']=='blocked' for s in plan['steps']): return False
-        planner=pick_planner(models,CONFIG.get('planner_model','auto'),routing_evidence) or chat_model
-        run['step_id']=None; run['phase']='Checking the work'
-        if await self.run_step(run,planner,'[Final check] Check the finished work against the goal'+(f': {plan.get("goal")}' if plan.get('goal') else '')
-                               +'. Verify the results with tools (run it, run tests, inspect files). Fix small problems; report what works, what does not and what is left.',reasoning=True): return True
+            proof=('' if not check else '\nThis step is finished only when '+(f'this command succeeds: {check["command"]} (run it with run_command)' if check['type']=='command'
+                   else f'{check["path"]} exists' if check['type']=='file_exists' else f'{check["path"]} contains "{check["text"][:80]}"')+'.')
+            instruction=(f'[Plan step {n} of {len(plan["steps"])}] {current["title"]}'+(f'\n{current["detail"]}' if current.get('detail') else '')+proof
+                         +'\nDo this step now with tools, and check it. Put code in files and run it; do not paste it in your reply. '
+                          'Then reply with a short note: what you did, where the results are, and anything that did not work.')
+            follow_up=False
+            while True:
+                run['phase']=f'Step {n} of {len(plan["steps"])}'+(f' (attempt {state["attempt"]})' if state['attempt']>1 else '')
+                if not resumed:
+                    if await self.run_step(run,worker,instruction,continue_step=follow_up): return True
+                    if worker and not may_see_files(worker['id']) and not follow_up:
+                        # Relay: a model service that may not see files drafted the work; this PC saves, runs and checks it.
+                        if await self.run_step(run,chat_model,'[Apply] Save the work drafted above into files where it belongs, run or check it, fix problems, '
+                                               'and reply with a short note: what you did and where the results are.',continue_step=True): return True
+                resumed=False; run.pop('resumed_step',None)
+                decision,reason=self.judge_step(run,state)
+                if decision!='retry': break
+                instruction=PR.retry_instruction(current,reason,check,state['attempt']); state['attempt']+=1; follow_up=True
+                if coding and worker is not chat_model and not may_see_files(worker['id']): worker=chat_model   # fixes need this PC's tools
+            run.pop('step_state',None)
+            if decision=='blocked': break   # later steps build on this one; stop and say exactly where
+        run['step_id']=None
+        plan=self.store.setting('plan:'+chat,None) or plan
+        if not PR.unfinished(plan):
+            planner=pick_planner(models,CONFIG.get('planner_model','auto'),routing_evidence) or chat_model
+            run['phase']='Checking the work'
+            if await self.run_step(run,planner,'[Final check] Check the finished work against the goal'+(f': {plan.get("goal")}' if plan.get('goal') else '')
+                                   +'. Verify the results with tools (run it, run tests, inspect files). Fix small problems; report what works, what does not and what is left.',reasoning=True): return True
+        self.plan_report(run)
         return False
 
     def finish_event(self,run):

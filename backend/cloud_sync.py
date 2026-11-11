@@ -211,7 +211,7 @@ class CloudSync:
                 for action in value.get('actions',[]):
                     if action['chat']!=id:raise ValueError('Invalid cloud action scope')
                     status=action['status'] if action['status'] in ('done','error','denied','interrupted','cancelled','skipped') else 'interrupted'
-                    self.store.db.execute('INSERT INTO actions VALUES(?,?,?,?,?,?,?,?)',(action['id'],id,action['name'],action['args'],action['tier'],status,action['result'],action['created']))
+                    self.store.db.execute('INSERT INTO actions(id,chat,name,args,tier,status,result,created) VALUES(?,?,?,?,?,?,?,?)',(action['id'],id,action['name'],action['args'],action['tier'],status,action['result'],action['created']))
             self.store.set_setting('cloud_deleted_chat:'+id,False)
         else:
             if deleted:raise ValueError('Cloud settings/profile deletion requires an explicit local reset')

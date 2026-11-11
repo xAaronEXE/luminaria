@@ -47,7 +47,9 @@ def plan_steps(args):
         if not title: raise ValueError('Each plan step needs a title')
         if status not in PLAN_STATUSES: raise ValueError('Plan step status must be one of: ' + ', '.join(PLAN_STATUSES))
         if sid in ids: raise ValueError('Plan step ids must be unique')
-        ids.add(sid); out.append({'id': sid, 'title': title, 'status': status, 'depends_on': [str(d)[:40] for d in step.get('depends_on', []) or []]} | ({'detail': str(step['detail']).strip()[:400]} if str(step.get('detail') or '').strip() else {}))
+        from .plan_runner import clean_check
+        check = clean_check(step.get('check'))
+        ids.add(sid); out.append({'id': sid, 'title': title, 'status': status, 'depends_on': [str(d)[:40] for d in step.get('depends_on', []) or []]} | ({'detail': str(step['detail']).strip()[:400]} if str(step.get('detail') or '').strip() else {}) | ({'check': check} if check else {}))
     for step in out:
         unknown = [d for d in step['depends_on'] if d not in ids or d == step['id']]
         if unknown: raise ValueError('Unknown plan dependency: ' + ', '.join(unknown))

@@ -103,3 +103,5 @@ body[data-voice=conversation]:not(.voice-review) .inspector-content,body[data-vo
 .skill-runtime-detail{margin-top:8px;font-size:12px}
 .model-nudge{top:auto;bottom:24px;right:24px}
 .model-nudge .btn{white-space:nowrap}
+.plan-steps li small{grid-column:2/-1;color:var(--muted)}.plan-steps li small.plan-reason{color:var(--text)}
+.hidden-code{margin:6px 0;font-size:12px;color:var(--muted)}.hidden-code summary{cursor:pointer}.hidden-code pre{max-height:320px;overflow:auto;margin:6px 0 0;padding:10px;border:1px solid var(--line);border-radius:8px;color:var(--text)}

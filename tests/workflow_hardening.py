@@ -110,7 +110,7 @@ class SkillWorkflowTests(unittest.IsolatedAsyncioTestCase):
    result=await h.engine.tools.call('load_skill',{'name':'research'},run)
    self.assertEqual(result['state'],'Running')
    (Path(engine_module.CONFIG['workspace'])/'report.md').write_text('Verified source findings')
-   h.store.execute('INSERT INTO actions VALUES(?,?,?,?,?,?,?,?)',('evidence',chat,'read_file',json.dumps({'path':'a.txt'}),'auto','done','{}',1))
+   h.store.execute('INSERT INTO actions(id,chat,name,args,tier,status,result,created) VALUES(?,?,?,?,?,?,?,?)',('evidence',chat,'read_file',json.dumps({'path':'a.txt'}),'auto','done','{}',1))
    result=await h.engine.tools.call('finish_skill',{'name':'research','outputs':['report.md'],'evidence_actions':['evidence']},run)
    self.assertEqual(result['state'],'Completed');self.assertEqual(len(result['outputs'][0]['sha256']),64)
    from backend.skill_runs import complete,set_state

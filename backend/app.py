@@ -238,7 +238,11 @@ async def run_chat(id:str,request:Request):
         content.append({'type':'image_ref','id':ref['id'],'mime':{'png':'image/png','jpg':'image/jpeg','webp':'image/webp'}[p.suffix[1:]]})
     if not store.messages(id): store.execute('UPDATE chats SET title=? WHERE id=?',(text[:70] or 'Image analysis',id))
     store.add(id,{'role':'user','content':content if attachments else text})
-    return {'run_id':engine.start(id,bool(b.get('reasoning',False)),plan_only=bool(b.get('plan_only',False)),plan_run=bool(b.get('plan_run',False)))}
+    # Every way of saying "go ahead" carries the saved plan out step by step, never as one long ordinary run.
+    from .plan_runner import wants_plan_run
+    plan_only=bool(b.get('plan_only',False))
+    plan_run=not plan_only and (bool(b.get('plan_run',False)) or (not attachments and wants_plan_run(text,store.setting('plan:'+id,None))))
+    return {'run_id':engine.start(id,bool(b.get('reasoning',False)),plan_only=plan_only,plan_run=plan_run)}
 
 MAX_CONTINUATIONS=5
 

@@ -21,7 +21,7 @@ class ActionHistoryTests(unittest.TestCase):
         (cls.old,'delete_file',{'path':'100%_done.txt'},'denied',None,3),
         (cls.work,'web_search',{'query':'llama'},'interrupted',None,4)]
   for i,(chat,name,args,status,result,created) in enumerate(rows):
-   store.execute('INSERT INTO actions VALUES(?,?,?,?,?,?,?,?)',(f'{i:032x}',chat,name,json.dumps(args),'approve',status,json.dumps(result) if result else None,created))
+   store.execute('INSERT INTO actions(id,chat,name,args,tier,status,result,created) VALUES(?,?,?,?,?,?,?,?)',(f'{i:032x}',chat,name,json.dumps(args),'approve',status,json.dumps(result) if result else None,created))
   store.execute('UPDATE chats SET archived=2 WHERE id=?',(cls.old,))
  @classmethod
  def tearDownClass(cls):
