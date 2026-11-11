@@ -116,6 +116,24 @@ def pc_places():
     if allowed is not None: drives=[d for d in drives if drive_of(d) in allowed]   # the assistant is only told about drives it may use
     return {'home':str(home),'drives':drives,'folders':places}
 
+def sandbox_root():
+    """Luminaria's own work area for scratch scripts and temporary files, one folder per task, kept apart from the user's files.
+    It is an ordinary folder the assistant may read and write (unlike Luminaria's private data folder)."""
+    root=Path(CONFIG.get('sandbox') or (Path.home()/'Luminaria Sandbox')).resolve()
+    root.mkdir(parents=True,exist_ok=True)
+    readme=root/'README.txt'
+    if not readme.exists():
+        try: readme.write_text('Luminaria keeps its scratch scripts and temporary files here, one folder per task.\n'
+                               'Your own files are never put here. You can delete old task folders at any time.\n',encoding='utf-8')
+        except OSError: pass
+    return root
+
+def task_folder(run_id):
+    import time
+    folder=sandbox_root()/(time.strftime('%Y-%m-%d')+'-'+str(run_id)[:8])
+    folder.mkdir(parents=True,exist_ok=True)
+    return folder
+
 def drive_of(path):
     return (Path(path).drive or Path(path).anchor or '/').upper().rstrip('\\/') or '/'
 

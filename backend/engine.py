@@ -251,6 +251,7 @@ class Engine:
     @staticmethod
     def environment():
         """Where Luminaria and the user's files are on this PC, so the assistant never has to guess."""
+        from .config import sandbox_root
         built_in,installed=skill_folders()
         pc=pc_places()
         folders=', '.join(f'{k} {v}' for k,v in pc['folders'].items())
@@ -262,7 +263,9 @@ class Engine:
                 + Engine.settings_note() +
                 f"Skills: built-in in {built_in}, installed in {installed}; you can read and list them (including scripts) but not change them. "
                 f"Models: {BASE_DATA.parent/'models'}. " + Engine.model_note() +
-                f"Off limits to file tools: Luminaria's settings, history and sign-in data ({BASE_DATA}), Windows, Program Files and credential folders. ")
+                f"Your sandbox for scratch scripts, temporary files and experiments: {sandbox_root()} (make a folder per task there); never leave scratch files among the user's files. "
+                f"Off limits to file tools, commands and scripts: Windows, credential folders and Luminaria's settings, history and sign-in data ({BASE_DATA}). "
+                f"Changes under Program Files and ProgramData always need the user's approval. Never run anything as administrator; tell the user which step needs it. ")
     def system(self,private=False):
         """Ordered for the prompt cache: fixed instructions first, then this PC's layout, then the memory files.
         Everything here changes only when a setting or a memory file changes, so cached work is reused between messages."""

@@ -251,7 +251,8 @@ class Toolbox:
             command_guard(a['command'])
             return with_hints(await self.process(['powershell.exe','-NoProfile','-NonInteractive','-Command',python_shims()+a['command']],a.get('timeout',60),extra_path=self.skill_paths(run)))
         if name=='run_code':
-            folder=DATA/'scripts'; folder.mkdir(parents=True,exist_ok=True)  # scratch scripts stay in Luminaria's folder, not the user's
+            from .config import task_folder
+            folder=task_folder(run['id'])  # scratch scripts go to Luminaria's sandbox, one folder per task, never among the user's files
             p=folder/(run['id']+'-'+str(__import__('time').time_ns())+('.py' if a['language']=='python' else '.js'))
             from .config import command_guard
             command_guard(a['code'])
