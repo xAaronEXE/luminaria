@@ -13,6 +13,8 @@ class Store:
     def messages(self,chat,after=0): return [m for m in self.msgs if m['id']>after]
     def save_run(self,run): self.saved.append(json.loads(json.dumps({k:v for k,v in run.items() if k!='enabled'})))
     def rows(self,sql,args=()):
+        if 'step IN (' in sql:
+            return [dict(name=a['name'],args=json.dumps(a['args']),status=a['status']) for a in self.actions if a['step'] in args[1:]]
         assert 'FROM actions WHERE chat=? AND step=?' in sql
         return [dict(a,args=json.dumps(a['args']),result=json.dumps(a['result']) if a['result'] else None) for a in self.actions if a['step']==args[1] and a['created']>=args[2]]
     def act(self,step,name,args,status='done',result=None):
@@ -209,5 +211,20 @@ class Rules(unittest.TestCase):
         self.assertIn('not fully proven',mixed); self.assertIn('1 of 2 steps passed',mixed); self.assertNotIn('Continue plan',mixed)
         stopped=PR.summary({'steps':[done('passed'),{'id':'b','title':'Tests','status':'blocked','reason':'Check failed: 1 failed'},{'id':'c','title':'Docs','status':'pending'}]})
         self.assertIn('Plan not finished',stopped); self.assertIn('Step 2, **Tests**, stopped: Check failed: 1 failed',stopped); self.assertIn('1 not started',stopped)
+
+class Evidence(unittest.TestCase):
+    def test_strength_of_a_passed_check(self):
+        from backend import plan_runner as PR
+        resolve=lambda p:'/w/'+p
+        wrote=[{'name':'write_file','status':'done','args':{'path':'tests/test_app.py'}}]
+        check={'type':'command','command':'python -m pytest tests/test_app.py'}
+        self.assertEqual(PR.evidence(check,wrote,resolve),'self_written')
+        self.assertEqual(PR.evidence(check,[{'name':'write_file','status':'done','args':{'path':'app.py'}}],resolve),'independent')
+        self.assertEqual(PR.evidence({'type':'file_exists','path':'out.txt'},wrote,resolve),'file')
+        self.assertIsNone(PR.evidence(None,wrote,resolve))
+    def test_summary_mentions_self_written_tests(self):
+        from backend import plan_runner as PR
+        plan={'steps':[{'id':'a','title':'Build','status':'done','verdict':'passed','evidence':'self_written'}]}
+        self.assertIn('tests written during this plan',PR.summary(plan))
 
 if __name__=='__main__': unittest.main()

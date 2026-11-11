@@ -12,7 +12,7 @@ from .checkpoint import SIDE_EFFECTS, CHANGES, call_key, result_data
 
 ATTEMPTS = 3            # tries per step before it is blocked
 CHECK_TYPES = ('command', 'file_exists', 'file_contains')
-HARNESS_FIELDS = ('status', 'verdict', 'reason', 'attempts', 'note', 'check_result', 'fingerprint', 'added_by')
+HARNESS_FIELDS = ('status', 'verdict', 'reason', 'attempts', 'note', 'check_result', 'fingerprint', 'added_by', 'evidence')
 GO_AHEAD = re.compile(r"^\s*(?:ok(?:ay)?[,.! ]*|yes[,.! ]*|yep[,.! ]*|sure[,.! ]*|great[,.! ]*|please[,.! ]*|now[,.! ]*)*"
                       r"(?:go ahead|go for it|do it|proceed|continue|carry (?:it|this|that|the plan) out|carry out the (?:saved )?plan|"
                       r"run the plan|execute the plan|start the plan|implement (?:it|this|that|the plan)|build it|make it happen|"
@@ -86,6 +86,17 @@ def step_actions(store, chat, step_id, since):
     return rows
 
 
+def plan_actions(store, chat, step_ids):
+    """Every action taken in any step of this plan, across runs (Continue starts a new run)."""
+    ids = [str(i) for i in step_ids]
+    if not ids: return []
+    rows = store.rows(f'SELECT name,args,status FROM actions WHERE chat=? AND step IN ({",".join("?" * len(ids))})', (chat, *ids))
+    for r in rows:
+        try: r['args'] = json.loads(r['args'] or '{}')
+        except ValueError: r['args'] = {}
+    return rows
+
+
 def _same_command(a, b):
     norm = lambda s: re.sub(r'\s+', ' ', str(s or '')).strip().lower()
     return norm(a) == norm(b)
@@ -117,6 +128,23 @@ def run_check(check, actions, resolve):
     if last['status'] != 'done': return 'failed', ('Check failed: ' + output.strip())[:400]
     if check.get('expect') and check['expect'].lower() not in output.lower(): return 'failed', f'Check ran but its output did not contain: {check["expect"][:80]}'
     return 'passed', 'Check command succeeded'
+
+
+def evidence(check, plan_actions, resolve):
+    """How independent a passed check is.
+    independent: a command that only uses files that existed before this plan started (your own tests or tools).
+    self_written: the command runs a test or script the model wrote or changed during this plan, so a pass proves less.
+    file: a file check (the deliverable exists or contains the expected text)."""
+    if not check: return None
+    if check['type'] != 'command': return 'file'
+    touched = set()
+    for a in plan_actions:
+        if a['name'] in CHANGES and a['status'] == 'done':
+            try: touched.add(Path(resolve(a['args'].get('path', ''))).name.lower())
+            except (PermissionError, ValueError, OSError): pass
+        if a['name'] == 'run_code' and a['status'] == 'done': touched.add('(script)')
+    words = {Path(w.strip('"\'')).name.lower() for w in re.split(r'[\s;|&()]+', check['command']) if w}
+    return 'self_written' if touched & words else 'independent'
 
 
 def unknown_outcome(actions):
@@ -196,5 +224,8 @@ def summary(plan):
             lines.append(f'- Step {n}, **{s["title"]}**, stopped: {s.get("reason") or "it could not be completed."}')
     for s in unverified:
         lines.append(f'- Step {steps.index(s) + 1}, **{s["title"]}**, was done but not proven: {s.get("reason") or "no check."}')
+    self_tested = [s for s in steps if s.get('verdict') == 'passed' and s.get('evidence') == 'self_written']
+    if self_tested:
+        lines.append(f'- {len(self_tested)} passed step{"s" if len(self_tested) != 1 else ""} were checked with tests written during this plan, which prove less than your own tests would.')
     if blocked or waiting: lines.append('Press **Continue plan** to pick up from the step that stopped, or tell me what to change.')
     return '\n'.join(lines)

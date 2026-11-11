@@ -955,6 +955,8 @@ class Engine:
         last=next((m for m in reversed(self.store.messages(chat)) if m.get('role')=='assistant' and isinstance(m.get('content'),str) and m['content'].strip()),{})
         step['note']=clip_reply(last.get('content',''),limit=900); step['attempts']=state['attempt']; step['reason']=reason
         if outcome!='none': step['check_result']={'outcome':outcome,'detail':detail[:300]}
+        if decision=='done' and verdict=='passed':
+            step['evidence']=PR.evidence(step.get('check'),PR.plan_actions(self.store,chat,[s.get('id') for s in plan.get('steps',[])]),resolve)
         if decision=='done': step['status']='done'; step['verdict']=verdict
         elif decision=='blocked': step['status']='blocked'; step['verdict']=verdict
         if verdict is None: step.pop('verdict',None)
