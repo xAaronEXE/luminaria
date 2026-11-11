@@ -187,3 +187,4 @@
 .model-option.picked .pick-box{background:var(--accent);border-color:var(--accent)}
 .drive-list{display:flex;flex-wrap:wrap;gap:8px;margin-top:10px}.drive-chip{display:inline-flex;align-items:center;gap:6px;padding:6px 10px;border:1px solid var(--line);border-radius:8px}.drive-chip small{color:var(--muted)}
 .admin-grants{display:grid;gap:8px;margin-top:10px}
+.sync-key{display:block;padding:14px;margin:12px 0;border:1px dashed var(--line);border-radius:8px;font-size:15px;letter-spacing:.04em;word-break:break-all;user-select:all}

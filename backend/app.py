@@ -1172,7 +1172,18 @@ async def cloud_sync_status():
     try:return await cloud_sync.status()
     except ValueError as error:
         owner=store.setting('cloud_sync_owner');state=cloud_sync.state(owner) if owner else {}
-        return {'enabled':bool(state.get('enabled')),'last_sync':state.get('last_sync'),'conflicts':[],'error':str(error),'unavailable':True}
+        return {'enabled':bool(state.get('enabled')),'last_sync':state.get('last_sync'),'conflicts':[],'error':str(error),'unavailable':True,'mode':cloud_sync.settings()['mode']}
+@app.post('/api/cloud-sync/setup')
+async def cloud_sync_setup(request:Request):
+    payload=await request.json()
+    result=cloud_sync.setup(str(payload.get('mode','')),str(payload.get('folder','')),str(payload.get('key','')))
+    return result
+@app.post('/api/cloud-sync/key')
+async def cloud_sync_key():return cloud_sync.show_key()
+@app.post('/api/cloud-sync/stop')
+async def cloud_sync_stop():
+    """Stop syncing on this PC and forget where it synced. Synced copies and the data on this PC stay."""
+    await cloud_sync.enable(False); save_config({'sync':{'mode':'off','folder':'','service':''}}); return {'ok':True}
 @app.post('/api/cloud-sync/preview')
 async def cloud_sync_preview():return await cloud_sync.preview()
 @app.post('/api/cloud-sync/enable')

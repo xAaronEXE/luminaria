@@ -303,7 +303,7 @@ To stop, choose **Unpair** on the paired PC's card, or turn off **Let other PCs 
 
 - **Profiles** keep separate chats, memory, settings and files for each person who uses the PC.
 - **Sign-in** with Google, GitHub or Discord happens in your browser. You can link several sign-in methods to one account in **Settings › Sign-in & devices**, and require sign-in when Luminaria opens.
-- **Cloud sync** (optional) carries your account data, such as chats, memory and settings, between your devices. The AI itself always runs on your desktop.
+- **Sync** (optional, off until you set it up) carries your chats, files, memory and settings between your own PCs. Everything is end-to-end encrypted on your PC with a sync key only your devices hold, and stored somewhere you own: pick your OneDrive, Google Drive or Dropbox folder (or a shared network folder) in **Settings › Cloud sync**, and your sync app carries the encrypted files to your other PCs. On another PC, enter the same sync key to join. Keep the key safe: it's also the only way to recover your synced data, and nobody can reset it. The AI itself always runs on your desktop.
 - **Insights** shows how you use models, tools and skills on this PC.
 
 ## Updates

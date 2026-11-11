@@ -5,13 +5,15 @@ from contextlib import contextmanager
 import httpx
 from backend import cloud_sync,config,profiles,identity
 from backend.store import Store
+from backend import sync_secure
+KEY=sync_secure.new_key()
 class CloudTests(unittest.IsolatedAsyncioTestCase):
  def setUp(self):
   self.tmp=tempfile.TemporaryDirectory();self.root=Path(self.tmp.name);self.remote={};self.blobs={};self.receipts={};self.calls=0
   self.devices={}
   for name in ['a','b']:
    folder=self.root/name;folder.mkdir();(folder/'Files').mkdir();store=Store(folder/'studio.sqlite3');sync=cloud_sync.CloudSync(store)
-   sync.account=AsyncMock(return_value=('account','a'*64));sync.client_factory=lambda **kwargs:httpx.AsyncClient(transport=httpx.MockTransport(self.server),**kwargs)
+   sync.account=AsyncMock(return_value=('account',None));sync.key=lambda:KEY;sync.settings=lambda:{'mode':'service','folder':'','service':''};sync.client_factory=lambda **kwargs:httpx.AsyncClient(transport=httpx.MockTransport(self.server),**kwargs)
    self.devices[name]=(folder,store,sync)
  def tearDown(self):
   for _,store,_ in self.devices.values():store.db.close()
@@ -19,7 +21,7 @@ class CloudTests(unittest.IsolatedAsyncioTestCase):
  @contextmanager
  def device(self,name):
   folder,store,sync=self.devices[name]
-  with patch.object(config,'DATA',folder),patch.object(config,'BASE_DATA',folder),patch.object(config,'CONFIG_PATH',folder/'config.json'),patch.object(config,'PROFILE_ID','local'),patch.object(profiles,'PATH',folder/'profiles.json'),patch.object(config,'CONFIG',{'workspace':str(folder/'Files'),'output_tokens':4096,'compact_ratio':.8,'compact_keep_turns':4}):yield folder,store,sync
+  with patch.object(identity,'status',AsyncMock(return_value={'signed_in':True})),patch.object(identity,'read_session',lambda:'session'),patch.object(identity,'ORIGIN','https://sync.test'),patch.object(config,'DATA',folder),patch.object(config,'BASE_DATA',folder),patch.object(config,'CONFIG_PATH',folder/'config.json'),patch.object(config,'PROFILE_ID','local'),patch.object(profiles,'PATH',folder/'profiles.json'),patch.object(config,'CONFIG',{'workspace':str(folder/'Files'),'output_tokens':4096,'compact_ratio':.8,'compact_keep_turns':4}):yield folder,store,sync
  def server(self,request):
   self.calls+=1;path=request.url.path.removeprefix('/sync/')
   if path=='status':return httpx.Response(200,json={'available':True})
@@ -73,10 +75,18 @@ class CloudTests(unittest.IsolatedAsyncioTestCase):
   with self.device('b') as (_,_,sync):await sync.enable(True);await sync.run()
   with self.device('a') as (_,store,sync):store.execute('DELETE FROM memories WHERE id=?',(id,));await sync.run()
   with self.device('b') as (_,store,sync):await sync.run();self.assertFalse(store.memory())
- async def test_account_mismatch_cannot_enable_sync(self):
-  with self.device('a') as (_,store,sync),patch.object(identity,'status',AsyncMock(return_value={'signed_in':True,'account':{'id':'other'},'connections':[]})):
-   del sync.account
-   with self.assertRaisesRegex(ValueError,'Attach'):await sync.enable(True)
+ async def test_sync_is_off_until_set_up(self):
+  with self.device('a') as (_,store,sync):
+   del sync.account; sync.settings=lambda:{'mode':'off','folder':'','service':''}
+   with self.assertRaisesRegex(ValueError,'Sync is off'):await sync.enable(True)
+ async def test_the_service_only_ever_sees_ciphertext(self):
+  with self.device('a') as (folder,store,sync):
+   chat=store.create_chat('Quarterly plans for ACT');store.add(chat,{'role':'user','content':'The secret price is 4200'})
+   (folder/'Files'/'invoice-smith.txt').write_text('Smith owes 900');store.save_memory('Bank','we use First National')
+   await sync.enable(True);await sync.run()
+  seen=json.dumps(self.remote)+' '.join(b.decode('latin-1') for b in self.blobs.values())
+  for secret in ('Quarterly','ACT','4200','invoice-smith','Smith owes','First National','Bank',chat):self.assertNotIn(secret,seen)
+  self.assertTrue(all(set(v['data'])<= {'enc','blob'} for v in self.remote.values()))
  async def test_retry_after_lost_response_does_not_duplicate_a_write(self):
   with self.device('a') as (_,store,sync):
    store.save_memory('Retry','value');await sync.enable(True);failed=False
@@ -139,4 +149,20 @@ class CloudTests(unittest.IsolatedAsyncioTestCase):
    chat=store.create_chat('Original');id=store.add(chat,{'role':'user','content':'Keep original'});store.save_summary(chat,id,'Original summary');rows,blobs,_=sync.export();data=rows['chat:'+chat];value=json.loads(zlib.decompress(blobs[data['blob']].read_bytes()));value['chat']['title']='Bad replacement';value['summaries'][0]['through']=999
    with self.assertRaises(IndexError):sync.apply('chat:'+chat,data,False,zlib.compress(cloud_sync.canonical(value)))
    self.assertEqual(store.messages(chat)[0]['content'],'Keep original');self.assertEqual(store.chats()[0]['title'],'Original');self.assertEqual(store.summary(chat)['content'],'Original summary')
+ async def test_two_devices_sync_through_a_shared_folder(self):
+  shared=self.root/'OneDrive';shared.mkdir()
+  for name in ('a','b'):
+   sync=self.devices[name][2];sync.settings=lambda:{'mode':'folder','folder':str(shared),'service':''}
+  with self.device('a') as (folder,store,sync):
+   chat=store.create_chat('Folder chat');store.add(chat,{'role':'user','content':'hello from A'});(folder/'Files'/'notes.txt').write_text('A wrote this')
+   await sync.enable(True);await sync.run()
+  self.assertEqual(self.calls,0,'folder sync never talks to a server')
+  on_disk=' '.join(p.read_bytes().decode('latin-1') for p in shared.rglob('*') if p.is_file() and p.name!='README.txt')
+  for secret in ('Folder chat','hello from A','notes.txt','A wrote this'):self.assertNotIn(secret,on_disk)
+  with self.device('b') as (folder,store,sync):
+   await sync.enable(True);r=await sync.run();self.assertFalse(r['conflicts'])
+   self.assertEqual(store.messages(chat)[0]['content'],'hello from A');self.assertEqual((folder/'Files'/'notes.txt').read_text(),'A wrote this')
+   (folder/'Files'/'notes.txt').write_text('B changed it');await sync.run()
+  with self.device('a') as (folder,_,sync):await sync.run();self.assertEqual((folder/'Files'/'notes.txt').read_text(),'B changed it')
+
 if __name__=='__main__':unittest.main()

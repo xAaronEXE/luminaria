@@ -1,10 +1,12 @@
-"""Account-scoped offline-first sync. Portable data only; never credentials or approvals.
-Each record uses a server revision. Both changed => conflict, never last-writer-wins.
+"""Offline-first, end-to-end encrypted sync. Portable data only; never credentials or approvals.
+Each record has a revision. Both changed => conflict, never last-writer-wins.
+Sync is off until the user sets it up. Data is encrypted on this PC with the sync key (sync_secure.py) and stored
+where the user chooses: a folder they already sync (OneDrive, Google Drive, Dropbox, a network share) or a sync service.
 """
-import asyncio,hashlib,json,os,re,time,uuid,zipfile,io
+import asyncio,contextlib,hashlib,json,os,re,time,uuid,zipfile,io
 from pathlib import Path,PurePosixPath
 import httpx
-from . import identity,config,profiles,preferences
+from . import identity,config,profiles,preferences,sync_secure
 MAX_BLOB=20*1024*1024
 PORTABLE_PREFS=set(preferences.DEFAULTS)-{'microphone'}
 PORTABLE_CONFIG={'output_tokens','compact_ratio','compact_keep_turns'}
@@ -34,15 +36,52 @@ class BudgetPause(ValueError):pass
 class CloudSync:
     def __init__(self,store,busy=lambda:False,protected=lambda:set(),changed=lambda:None):
         self.store=store;self.busy=busy;self.protected=protected;self.changed=changed;self.lock=asyncio.Lock();self.last={};self.pause_requested=False;self.client_factory=httpx.AsyncClient
+
+    # ---- setup: where encrypted data lives, and the key ----
+    def settings(self):
+        value=config.CONFIG.get('sync') or {}
+        return {'mode':value.get('mode','off'),'folder':value.get('folder',''),'service':value.get('service','')}
+    def key(self):
+        from .integrations import read_secrets
+        text=read_secrets('sync_key').get('key','')
+        return sync_secure.parse_key(text) if text else None
+    def setup(self,mode,folder='',key_text=''):
+        """Choose where synced data lives. A new sync key is made unless the user enters the key from another device."""
+        from .integrations import write_secrets
+        if mode not in ('folder','service'):raise ValueError('Choose a sync folder or a sync service')
+        if mode=='folder':
+            target=Path(str(folder or '')).expanduser()
+            if not str(folder).strip() or not target.is_dir():raise ValueError('Choose a folder that exists, for example your OneDrive folder')
+            target=target.resolve()
+            if any(target==p or target.is_relative_to(p) for p in config.protected_roots()):raise ValueError('That folder is off limits. Choose your OneDrive, Google Drive or Dropbox folder.')
+        key=sync_secure.parse_key(key_text) if str(key_text or '').strip() else (self.key() or sync_secure.new_key())
+        write_secrets('sync_key',{'key':sync_secure.format_key(key)})
+        config.save_config({'sync':{'mode':mode,'folder':str(target) if mode=='folder' else '','service':''}})
+        space=sync_secure.key_id(key);self.store.set_setting('cloud_sync_owner',space)
+        state=self.state(space);state['enabled']=True;self.pause_requested=False;self.save(space,state)
+        return {'enabled':True,'mode':mode,'key':sync_secure.format_key(key)}
+    def show_key(self):
+        key=self.key()
+        if not key:raise ValueError('Sync is not set up on this PC')
+        return {'key':sync_secure.format_key(key)}
     async def account(self):
-        info=await identity.status()
-        if not info.get('signed_in') or not info.get('account'):raise ValueError('Sign in online before syncing')
-        account=info['account']['id'];entry=next((p for p in profiles.registry()['profiles'] if p['id']==config.PROFILE_ID),{})
-        members={c['id'] for c in info.get('connections',[])}
-        if entry.get('account_id')!=account and entry.get('identity_id') not in members:raise ValueError('Attach this local profile to your account before enabling sync')
-        token=identity.read_session()
-        if not token:raise ValueError('A valid sign-in session is required')
-        return account,token
+        """(space id, None). The space is derived from the sync key, so every device with the key shares it."""
+        mode=self.settings()['mode']
+        if mode=='off':raise ValueError('Sync is off. Set it up in Settings › Cloud sync.')
+        key=self.key()
+        if not key:raise ValueError('This PC has no sync key yet. Set up sync again, or enter the key from your other device.')
+        return sync_secure.key_id(key),None
+    @contextlib.asynccontextmanager
+    async def open(self):
+        """The encrypted store for the chosen place."""
+        settings=self.settings();key=self.key();space=sync_secure.key_id(key)
+        if settings['mode']=='folder':
+            yield sync_secure.EncryptedStore(key,sync_secure.FolderStore(settings['folder'],space));return
+        info=await identity.status();token=identity.read_session()
+        if not info.get('signed_in') or not token:raise ValueError('Sign in to your sync service first')
+        async with self.client_factory(timeout=60,headers={'Authorization':'Bearer '+token,'User-Agent':'Luminaria-Sync'},follow_redirects=False) as client:
+            yield sync_secure.EncryptedStore(key,sync_secure.ServiceStore(client,identity.ORIGIN))
+
     def state(self,account):return self.store.setting('cloud_sync:'+account,{'enabled':False,'records':{},'conflicts':{},'last_sync':None})
     def save(self,account,state):
         if self.pause_requested:state['enabled']=False
@@ -101,52 +140,25 @@ class CloudSync:
             if old.is_file() and re.fullmatch('[a-f0-9]{64}',old.name) and old.name not in blobs and time.time()-old.stat().st_mtime>86400:old.unlink()
         return records,blobs,excluded_count
     async def status(self):
-        account,token=await self.account();state=self.state(account)
-        return {'enabled':state['enabled'],'last_sync':state.get('last_sync'),'error':self.last.get(account),'conflicts':[{'key':k,**v} for k,v in state.get('conflicts',{}).items()],'running':self.lock.locked(),'paused_until':state.get('not_before'),'storage':state.get('storage'),'max_file_bytes':MAX_BLOB,'excluded':'Credentials, environment files, key files, installed model weights, dependencies, links and device permissions stay local.'}
+        account,_=await self.account();state=self.state(account);settings=self.settings()
+        return {'enabled':state['enabled'],'mode':settings['mode'],'folder':settings['folder'],'last_sync':state.get('last_sync'),'error':self.last.get(account),
+                'conflicts':[{'key':k,**v} for k,v in state.get('conflicts',{}).items()],'running':self.lock.locked(),'paused_until':state.get('not_before'),
+                'storage':state.get('storage'),'excluded':state.get('excluded',0),'encrypted':True}
     async def enable(self,enabled):
-        if not enabled:self.pause_requested=True
-        if enabled:
-            account,token=await self.account()
-            async with self.client_factory(timeout=15,headers={'Authorization':'Bearer '+token,'User-Agent':'Luminaria-Sync'},follow_redirects=False) as client:cloud_status=(await self.request(client,'GET','status')).json()
-        else:
+        if not enabled:
+            self.pause_requested=True
             account=self.store.setting('cloud_sync_owner')
             if not account:return {'enabled':False,'conflicts':[]}
-        if enabled:self.pause_requested=False
-        state=self.state(account);state['enabled']=bool(enabled)
-        if enabled:state['storage']=cloud_status
-        self.save(account,state);self.store.set_setting('cloud_sync_owner',account)
+        else:
+            account,_=await self.account();self.pause_requested=False
+        state=self.state(account);state['enabled']=bool(enabled);self.save(account,state);self.store.set_setting('cloud_sync_owner',account)
         return {'enabled':state['enabled'],'conflicts':[],'last_sync':state.get('last_sync')}
+    async def preview(self):
+        await self.account()
+        if self.busy():raise ValueError('Finish the current task before preparing sync')
+        records,blobs,excluded_count=self.export()
+        return {'records':len(records),'files':sum(k.startswith('file:') for k in records),'chats':sum(k.startswith('chat:') for k in records),'memories':sum(k.startswith('memory:') for k in records),'bytes':sum(p.stat().st_size for p in blobs.values()),'excluded':excluded_count}
 
-    async def request(self,client,method,path,**kwargs):
-        r=await client.request(method,identity.ORIGIN+'/sync/'+path,**kwargs)
-        if r.status_code==409:raise SyncConflict('Another device changed this record')
-        if r.status_code in (401,403):raise ValueError('Your cloud session expired or was revoked. Sign in again.')
-        if r.status_code==429:raise BudgetPause('Cloud sync reached a free-use request budget and is paused. Your local data is safe.')
-        if r.status_code==413:raise ValueError('The cloud storage or file-size limit was reached. Sync stopped; local data is safe. There is no paid fallback.')
-        if r.status_code==503:
-            try:disabled=r.json().get('code')=='sync_disabled'
-            except (ValueError,AttributeError):disabled=False
-            raise ValueError('Cloud uploads are paused by the service owner pending the free-plan check.' if disabled else 'Cloud sync storage is not configured yet')
-        if not r.is_success:raise ValueError('Cloud sync request failed ('+str(r.status_code)+')')
-        return r
-    async def upload_blob(self,client,digest,content):
-        async def chunks():
-            with Path(content).open('rb') as stream:
-                while chunk:=stream.read(1024*1024):yield chunk
-        await self.request(client,'PUT','blobs/'+digest,content=chunks(),headers={'Content-Type':'application/octet-stream','Content-Length':str(Path(content).stat().st_size)})
-    async def download_blob(self,client,data):
-        digest=data.get('blob','')
-        if not re.fullmatch('[a-f0-9]{64}',digest):raise ValueError('Invalid cloud file reference')
-        async with client.stream('GET',identity.ORIGIN+'/sync/blobs/'+digest) as r:
-            if r.status_code!=200:raise ValueError('Could not download synced file')
-            parts=[];size=0
-            async for part in r.aiter_bytes():
-                size+=len(part)
-                if size>MAX_BLOB:raise ValueError('Cloud file exceeds download limit')
-                parts.append(part)
-        content=b''.join(parts)
-        if hashlib.sha256(content).hexdigest()!=digest:raise ValueError('Cloud file failed integrity verification')
-        return content
     def apply(self,key,data,deleted,content=None):
         kind,id=key.split(':',1)
         if kind=='memory':
@@ -217,95 +229,85 @@ class CloudSync:
             if deleted:raise ValueError('Cloud settings/profile deletion requires an explicit local reset')
             raise ValueError('Unknown cloud record')
 
-    async def remote_records(self,client):
-        rows={};after=''
-        while True:
-            result=(await self.request(client,'GET','records',params={'after':after})).json()
-            for row in result['records']:rows[row['kind']+':'+row['id']]=row
-            after=result.get('next')
-            if not after:return rows
-    async def preview(self):
-        await self.account()
-        if self.busy():raise ValueError('Finish the current task before preparing sync')
-        records,blobs,excluded_count=self.export()
-        return {'records':len(records),'files':sum(k.startswith('file:') for k in records),'chats':sum(k.startswith('chat:') for k in records),'memories':sum(k.startswith('memory:') for k in records),'bytes':sum(p.stat().st_size for p in blobs.values()),'excluded':excluded_count,'folders':[str(p) for p in self.roots().values()]}
-    async def push(self,client,key,data,deleted,base,blobs):
-        if data.get('blob') and not deleted:
-            await self.upload_blob(client,data['blob'],blobs[data['blob']])
-        if self.pause_requested:raise ValueError('Sync was turned off. Local changes remain queued.')
-        value={'base':base,'mutation':fingerprint([key,base,data,deleted]),'data':data,'deleted':bool(deleted)}
-        return (await self.request(client,'PUT','records/'+key.replace(':','/',1),json=value)).json()['version']
+    async def remote_view(self,store,state,local):
+        """Remote records by local key. Records another device added are opened once to learn their local name."""
+        rows=await store.records();key=self.key();known={}
+        for name in set(local)|set(state['records']):known[sync_secure.remote_name(key,name)]=name
+        fetched={}
+        for remote,meta in rows.items():
+            if remote in known:continue
+            row=await store.get(remote)
+            if row and sync_secure.remote_name(key,row['key'])==remote:known[remote]=row['key'];fetched[row['key']]=row
+        return {known[r]:m for r,m in rows.items() if r in known},fetched
     async def run(self):
         if self.lock.locked():return {'message':'Sync is already running'}
         async with self.lock:
-            account,token=await self.account();state=self.state(account)
-            if not state['enabled']:return {'message':'Cloud sync is off'}
+            account,_=await self.account();state=self.state(account);key=self.key()
+            if not state['enabled']:return {'message':'Sync is off'}
             if state.get('not_before',0)>time.time():return {'message':'Sync is paused to protect the free-use budget. It will check again later.'}
             if self.busy():return {'message':'Sync waits until the current task is idle'}
             try:
-                # Export is bounded to the selected folders, with no model/credential state.
                 local,blobs,excluded_count=self.export();changed=0;deferred=False;empty_workspace=not any(k.startswith(('chat:','file:','memory:')) for k in local)
-                async with self.client_factory(timeout=60,headers={'Authorization':'Bearer '+token,'User-Agent':'Luminaria-Sync'},follow_redirects=False) as client:
-                    cloud_status=(await self.request(client,'GET','status')).json();state['storage']=cloud_status;remote=await self.remote_records(client)
-                    for key in sorted(set(local)|set(remote)|set(state['records'])):
+                async with self.open() as store:
+                    state['storage']=await store.status();remote,fetched=await self.remote_view(store,state,local)
+                    for name in sorted(set(local)|set(remote)|set(state['records'])):
                         if self.busy() or self.pause_requested:deferred=True;break
-                        base=state['records'].get(key,{'version':0,'hash':None,'data':{}});present=key in local;data=local.get(key,base.get('data',{}));local_hash=fingerprint(data) if present else None
-                        cloud_version=remote.get(key,{}).get('version',0);cloud_changed=cloud_version>base['version'];local_changed=local_hash!=base['hash']
-                        if not base['version'] and empty_workspace and key.startswith(('settings:','profile:')):local_changed=False
-                        if key in state['conflicts']:continue
+                        base=state['records'].get(name,{'version':0,'hash':None,'data':{}});present=name in local;data=local.get(name,base.get('data',{}));local_hash=fingerprint(data) if present else None
+                        cloud_version=remote.get(name,{}).get('version',0);cloud_changed=cloud_version>base['version'];local_changed=local_hash!=base['hash']
+                        if not base['version'] and empty_workspace and name.startswith(('settings:','profile:')):local_changed=False
+                        if name in state['conflicts']:continue
                         if cloud_changed:
-                            row=(await self.request(client,'GET','records/'+key.replace(':','/',1))).json();cloud_data=row['data'];cloud_hash=None if row['deleted'] else fingerprint(cloud_data)
+                            row=fetched.get(name) or await store.get(sync_secure.remote_name(key,name))
+                            cloud_data=row['data'];cloud_hash=None if row['deleted'] else fingerprint(cloud_data)
                             if local_hash==cloud_hash:
-                                state['records'][key]={'version':row['version'],'hash':cloud_hash,'data':cloud_data};self.save(account,state);continue
-                            if local_changed or key.startswith('chat:') and key.split(':',1)[1] in self.protected():
-                                state['conflicts'][key]={'version':row['version'],'local_hash':local_hash,'title':str(data.get('title') or data.get('path') or key)[:160]};self.save(account,state);continue
+                                state['records'][name]={'version':row['version'],'hash':cloud_hash,'data':cloud_data};self.save(account,state);continue
+                            if local_changed or name.startswith('chat:') and name.split(':',1)[1] in self.protected():
+                                state['conflicts'][name]={'version':row['version'],'local_hash':local_hash,'title':str(data.get('title') or data.get('path') or name)[:160]};self.save(account,state);continue
                             prior_changes=self.store.db.total_changes
-                            content=await self.download_blob(client,cloud_data) if cloud_data.get('blob') and not row['deleted'] else None
+                            content=await store.get_blob(row) if cloud_data.get('blob') and not row['deleted'] else None
                             if self.busy() or self.pause_requested or prior_changes!=self.store.db.total_changes:raise ValueError('Local data changed during download; sync will retry safely')
-                            if key.startswith('file:'):
+                            if name.startswith('file:'):
                                 target=safe_path(self.roots()[cloud_data['scope']],cloud_data['path'])
                                 if not present and target.exists():raise ValueError('A local file was created during download; sync will preserve it')
-                                if present:
-                                    path=blobs.get(local[key].get('blob'))
-                                    if not path or not path.is_file() or path.stat().st_size>MAX_BLOB or hashlib.sha256(path.read_bytes()).hexdigest()!=local[key]['blob']:raise ValueError('A local file changed during sync; retrying will preserve both versions')
-                            try:self.apply(key,cloud_data,row['deleted'],content)
+                            try:self.apply(name,cloud_data,row['deleted'],content)
                             except SyncConflict:
-                                state['conflicts'][key]={'version':row['version'],'local_hash':local_hash,'title':key};self.save(account,state);continue
-                            state['records'][key]={'version':row['version'],'hash':cloud_hash,'data':cloud_data};changed+=1;self.save(account,state)
+                                state['conflicts'][name]={'version':row['version'],'local_hash':local_hash,'title':name};self.save(account,state);continue
+                            state['records'][name]={'version':row['version'],'hash':cloud_hash,'data':cloud_data};changed+=1;self.save(account,state)
                         elif local_changed:
-                            try:version=await self.push(client,key,data,not present,base['version'],blobs)
-                            except SyncConflict:
-                                state['conflicts'][key]={'version':cloud_version,'local_hash':local_hash,'title':str(data.get('title') or data.get('path') or key)[:160]};self.save(account,state);continue
-                            state['records'][key]={'version':version,'hash':local_hash,'data':data};self.save(account,state)
+                            if self.pause_requested:raise ValueError('Sync was turned off. Local changes remain queued.')
+                            try:version=await store.put(name,base['version'],data,not present,blobs.get(data.get('blob')) if present else None,lambda:not self.pause_requested)
+                            except sync_secure.Conflict:
+                                state['conflicts'][name]={'version':cloud_version,'local_hash':local_hash,'title':str(data.get('title') or data.get('path') or name)[:160]};self.save(account,state);continue
+                            state['records'][name]={'version':version,'hash':local_hash,'data':data};self.save(account,state)
                     state['last_sync']=state.get('last_sync') if deferred else time.time();state['excluded']=excluded_count;self.save(account,state);self.last.pop(account,None)
                 if changed:self.changed()
                 return {'message':'Sync paused for the current task' if deferred else 'Sync finished','conflicts':len(state['conflicts']),'downloaded':changed}
             except Exception as error:
-                if isinstance(error,BudgetPause):state['not_before']=time.time()+3600;self.save(account,state)
-                self.last[account]=str(error) if isinstance(error,(ValueError,SyncConflict)) else 'Cloud sync is temporarily unavailable. Local data is safe; retry later.'
+                if isinstance(error,BudgetPause) or 'free-use limit' in str(error):state['not_before']=time.time()+3600;self.save(account,state)
+                self.last[account]=str(error) if isinstance(error,(ValueError,SyncConflict,sync_secure.Conflict)) else 'Sync is temporarily unavailable. Local data is safe; retry later.'
                 raise ValueError(self.last[account]) from None
-    async def resolve(self,key,choice):
+    async def resolve(self,name,choice):
         if choice not in ('local','cloud'):raise ValueError('Choose which version to keep')
         if self.lock.locked() or self.busy():raise ValueError('Wait for the current task or sync to finish')
         async with self.lock:
-            account,token=await self.account();state=self.state(account);conflict=state['conflicts'].get(key)
+            account,_=await self.account();state=self.state(account);conflict=state['conflicts'].get(name);key=self.key()
             if not conflict:raise ValueError('Conflict no longer exists')
-            local,blobs,_=self.export();value=local.get(key);current=fingerprint(value) if value is not None else None
+            local,blobs,_=self.export();value=local.get(name);current=fingerprint(value) if value is not None else None
             if current!=conflict['local_hash']:raise ValueError('The local copy changed again. Review it before resolving.')
-            async with self.client_factory(timeout=60,headers={'Authorization':'Bearer '+token,'User-Agent':'Luminaria-Sync'},follow_redirects=False) as client:
-                row=(await self.request(client,'GET','records/'+key.replace(':','/',1))).json()
-                if row['version']!=conflict['version']:
-                    state['conflicts'][key]['version']=row['version'];self.save(account,state);raise ValueError('The cloud copy changed again. Review the current versions before choosing.')
+            async with self.open() as store:
+                row=await store.get(sync_secure.remote_name(key,name))
+                if not row or row['version']!=conflict['version']:
+                    state['conflicts'][name]['version']=(row or {}).get('version',0);self.save(account,state);raise ValueError('The synced copy changed again. Review the current versions before choosing.')
                 # Keep a durable local recovery copy before an explicit resolution.
                 folder=config.DATA/'cloud-sync-conflicts';folder.mkdir(exist_ok=True);backup=folder/(uuid.uuid4().hex+'.json')
-                backup.write_bytes(canonical({'key':key,'local':value,'cloud':row}))
+                backup.write_bytes(canonical({'key':name,'local':value,'cloud':row}))
                 if value and value.get('blob'):
                     import shutil
                     shutil.copy2(blobs[value['blob']],folder/(backup.stem+'.blob'))
                 if choice=='local':
-                    data=value if value is not None else row['data'];version=await self.push(client,key,data,value is None,row['version'],blobs);hash_value=current
+                    data=value if value is not None else row['data'];version=await store.put(name,row['version'],data,value is None,blobs.get(data.get('blob')) if value else None);hash_value=current
                 else:
-                    content=await self.download_blob(client,row['data']) if row['data'].get('blob') and not row['deleted'] else None
-                    self.apply(key,row['data'],row['deleted'],content);data=row['data'];version=row['version'];hash_value=None if row['deleted'] else fingerprint(data)
-                state['records'][key]={'version':version,'hash':hash_value,'data':data};del state['conflicts'][key];self.save(account,state);self.changed()
+                    content=await store.get_blob(row) if row['data'].get('blob') and not row['deleted'] else None
+                    self.apply(name,row['data'],row['deleted'],content);data=row['data'];version=row['version'];hash_value=None if row['deleted'] else fingerprint(data)
+                state['records'][name]={'version':version,'hash':hash_value,'data':data};del state['conflicts'][name];self.save(account,state);self.changed()
             return {'message':'Conflict resolved; a recovery copy was saved on this PC'}
