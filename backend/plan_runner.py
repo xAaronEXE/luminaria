@@ -101,7 +101,7 @@ def merge_plan(saved, proposed, plan_run):
     steps = []
     for step in proposed:
         before = old.get(step['id'])
-        revision_fields = ('title', 'detail', 'check')
+        revision_fields = ('title', 'detail', 'check', 'parallel_draft')
         if before and (any(before.get(key) != step.get(key) for key in revision_fields)
                        or before.get('depends_on', []) != step.get('depends_on', [])):
             step = {**step, 'status': 'pending'}

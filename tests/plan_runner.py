@@ -62,6 +62,70 @@ class PlanRunner(unittest.TestCase):
         self.assertIn('all 2 steps were checked and passed',e.store.msgs[-1]['content'])
         self.assertFalse(run['plan_blocked'])
 
+    def test_final_reviewer_can_reopen_a_checked_step_once(self):
+        steps=[{'id':'s1','title':'Write the Python code','status':'pending',
+                'check':{'type':'file_exists','path':'todo.py'}}]
+        e=self.engine(steps,[self.write('todo.py'),self.write('todo.py','print(2)')])
+        worker=e.run_step
+        reviews=[]
+
+        async def run_step(run,model,instruction,**kwargs):
+            if not instruction.startswith('[Final check]'):
+                return await worker(run,model,instruction,**kwargs)
+            run['step_from']=e.store.add('c',{'role':'user','content':instruction})
+            reviews.append(instruction)
+            e.store.add('c',{'role':'assistant','content':'REPAIR s1: Change the printed value to 2.' if len(reviews)==1 else 'Looks right.'})
+            return False
+
+        e.run_step=run_step
+        paused,run,plan=self.run_plan(e)
+        self.assertFalse(paused)
+        self.assertFalse(run['plan_blocked'])
+        self.assertEqual(plan['steps'][0]['verdict'],'passed')
+        self.assertEqual((self.dir/'todo.py').read_text(),'print(2)')
+        self.assertEqual(len(reviews),2)
+
+    def test_direct_work_rejects_a_stale_command_receipt(self):
+        e=self.engine([],[])
+        run={'chat':'c','id':'r','started':0}
+        e.run_actions=lambda _:e.store.actions
+        check={'type':'command','command':'python verify.py'}
+        e.store.act(None,'write_file',{'path':'todo.py'})
+        self.assertEqual(e.direct_work_check(run)[0],'not_run')
+        e.store.act(None,'set_work_check',{'check':check},result={'check':check})
+        e.store.act(None,'run_command',{'command':check['command']},result={'exit_code':0})
+        self.assertEqual(e.direct_work_check(run)[0],'passed')
+        e.store.act(None,'edit_file',{'path':'todo.py'})
+        self.assertEqual(e.direct_work_check(run)[0],'not_run')
+
+    def test_independent_drafts_overlap_and_leave_dependent_work_local(self):
+        from contextvars import ContextVar
+        from unittest.mock import AsyncMock
+
+        def step(id, deps=()):
+            return {'id':id,'title':id,'status':'pending','parallel_draft':True,
+                    'depends_on':list(deps),'check':{'type':'file_exists','path':id+'.txt'}}
+        plan={'steps':[step('first'),step('second'),step('dependent',['first'])]}
+        models=[{'id':'svc:a/model','kind':'pc','service':'a'}, {'id':'svc:b/model','kind':'pc','service':'b'}]
+        e=self.engine([],[])
+        e.inference=ContextVar('test_inference',default=None)
+        async def check():
+            joined=asyncio.Event()
+            seen=[]
+            async def completion(messages,**kwargs):
+                seen.append((e.inference.get()['id'],json.loads(messages[-1]['content'])['title']))
+                if len(seen)==2: joined.set()
+                await asyncio.wait_for(joined.wait(),timeout=1)
+                return {'content':'draft'}
+            e.completion=AsyncMock(side_effect=completion)
+            run={'id':'r','chat':'c'}
+            await e.draft_independent_steps(run,plan,models)
+            self.assertEqual(seen,[('svc:a/model','first'),('svc:b/model','second')])
+            self.assertEqual(run['peer_drafts'],{'first':'draft','second':'draft'})
+            self.assertIsNone(e.inference.get())
+        with patch('backend.orchestration.pool',return_value=models),patch('backend.services.may_see_files',return_value=True):
+            asyncio.run(check())
+
     def test_activity_is_not_completion(self):
         # The model writes an unrelated file. With a check the step never passes; trying the same thing again is "no progress".
         steps=[{'id':'s1','title':'Write the Python code','status':'pending','check':{'type':'file_exists','path':'todo.py'}},{'id':'s2','title':'Write docs','status':'pending'}]

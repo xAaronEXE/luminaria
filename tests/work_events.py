@@ -78,14 +78,17 @@ class WorkEventTests(unittest.IsolatedAsyncioTestCase):
   self.assertEqual(h.work()[-1]['type'],'run.cancelled')
 
  async def test_approval_replay_does_not_duplicate_events(self):
-  h=Harness([stream([tool_call(0,'c1','write_file',{'path':'b.txt','content':'y'})]),stream([{'choices':[{'delta':{'content':'ok'}}]}])])
+  check={'type':'file_contains','path':'b.txt','text':'y'}
+  h=Harness([stream([tool_call(0,'c0','set_work_check',{'check':check})]),
+   stream([tool_call(0,'c1','write_file',{'path':'b.txt','content':'y'})]),stream([{'choices':[{'delta':{'content':'ok'}}]}])])
   try:
    chat=h.store.create_chat();h.store.add(chat,{'role':'user','content':'write'})
    h.engine.start(chat);await h.engine.tasks[chat]
    self.assertEqual(h.work()[-1]['type'],'approval.requested')
    h.engine.resume(chat,{'approved':True});await h.engine.tasks[chat]
    types=[e['type'] for e in h.work()]
-   for kind in ('tool.requested','approval.requested','approval.allowed','tool.completed'):self.assertEqual(types.count(kind),1,kind)
+   for kind in ('approval.requested','approval.allowed'):self.assertEqual(types.count(kind),1,kind)
+   for kind in ('tool.requested','tool.completed'):self.assertEqual(types.count(kind),2,kind)
    self.assertIn('run.resumed',types);self.assertEqual(types[-1],'run.completed')
   finally:h.close()
 

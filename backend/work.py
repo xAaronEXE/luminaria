@@ -17,7 +17,7 @@ TYPES = {
     'tool.requested', 'tool.started', 'tool.completed', 'tool.failed', 'tool.denied', 'tool.interrupted',
     'approval.requested', 'approval.allowed', 'approval.denied',
     'compaction.started', 'compaction.completed', 'compaction.skipped',
-    'routing.started', 'routing.completed',
+    'routing.started', 'routing.completed', 'model.recovery', 'work.verification', 'plan.step',
 }
 REGIONS = ('planning', 'memory', 'retrieval', 'files', 'tools', 'generation', 'verification')
 PLAN_STATUSES = ('pending', 'active', 'done', 'blocked', 'skipped')
@@ -28,7 +28,7 @@ def region_for(tool):
     if tool in ('memory_search', 'history_read', 'remember'): return 'memory'
     if tool in ('web_search', 'web_fetch', 'discover_tools', 'list_skills', 'load_skill'): return 'retrieval'
     if tool in ('list_files', 'read_file', 'write_file', 'edit_file', 'delete_file', 'search_files'): return 'files'
-    if tool in ('run_command', 'run_code'): return 'verification'
+    if tool in ('run_command', 'run_code', 'set_work_check'): return 'verification'
     return 'tools'
 
 def event_id(run, *parts):
@@ -49,7 +49,7 @@ def plan_steps(args):
         if sid in ids: raise ValueError('Plan step ids must be unique')
         from .plan_runner import clean_check
         check = clean_check(step.get('check'))
-        ids.add(sid); out.append({'id': sid, 'title': title, 'status': status, 'depends_on': [str(d)[:40] for d in step.get('depends_on', []) or []]} | ({'detail': str(step['detail']).strip()[:400]} if str(step.get('detail') or '').strip() else {}) | ({'check': check} if check else {}))
+        ids.add(sid); out.append({'id': sid, 'title': title, 'status': status, 'depends_on': [str(d)[:40] for d in step.get('depends_on', []) or []]} | ({'detail': str(step['detail']).strip()[:400]} if str(step.get('detail') or '').strip() else {}) | ({'check': check} if check else {}) | ({'parallel_draft':True} if step.get('parallel_draft') is True else {}))
     for step in out:
         unknown = [d for d in step['depends_on'] if d not in ids or d == step['id']]
         if unknown: raise ValueError('Unknown plan dependency: ' + ', '.join(unknown))

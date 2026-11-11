@@ -10,6 +10,53 @@ from backend.config import CONFIG
 def text(content):return stream([{'choices':[{'delta':{'content':content}}]}])
 
 class CheckpointTests(unittest.IsolatedAsyncioTestCase):
+ async def test_model_recovery_retries_generation_before_executing_tools(self):
+  h=Harness([httpx.Response(503),httpx.Response(503),text('Recovered.')])
+  try:
+   chat=h.store.create_chat();h.store.add(chat,{'role':'user','content':'hello'})
+   h.engine.start(chat);await h.engine.tasks[chat]
+   self.assertEqual(h.store.messages(chat)[-1]['content'],'Recovered.')
+   self.assertEqual(h.store.actions(chat),[])
+   labels=[event['label'] for event in h.work() if event['type']=='model.recovery']
+   self.assertEqual(labels,['Retrying the model','Retrying with a shorter context'])
+  finally:h.close()
+
+ async def test_direct_work_passes_only_with_a_recorded_check(self):
+  check={'type':'file_contains','path':'verified.txt','text':'expected'}
+  write={'path':'verified.txt','content':'expected'}
+  h=Harness([stream([tool_call(0,'check','set_work_check',{'check':check})]),
+   stream([tool_call(0,'write','write_file',write)]),text('The file is ready.')])
+  try:
+   h.store.set_setting('permission:write_file',True)
+   chat=h.store.create_chat();h.store.add(chat,{'role':'user','content':'Create verified.txt with expected as its content.'})
+   h.engine.start(chat);await h.engine.tasks[chat]
+   run=h.engine.runs[chat]
+   self.assertEqual(run['phase'],'Complete')
+   self.assertEqual(run['verification']['outcome'],'passed')
+  finally:h.close()
+
+ async def test_research_retries_when_retrieved_text_does_not_support_a_claim(self):
+  url='https://example.com/source'
+  answer='The launch was in 1999. [Source]('+url+')'
+  corrected='The launch was in 2000. [Source]('+url+')'
+  h=Harness([stream([tool_call(0,'r1','research',{'question':'When was the launch?'})]),
+   text(answer),text('UNSUPPORTED'),text(corrected),text('SUPPORTED')])
+  try:
+   h.store.set_setting('permission:research',True)
+   original=h.engine.tools.dispatch
+   async def dispatch(name,args,run):
+    if name=='research':
+     return {'status':'ok','sources':[{'url':url,'excerpt':'The launch was in 2000.'}]}
+    return await original(name,args,run)
+   with patch.object(h.engine.tools,'dispatch',dispatch):
+    chat=h.store.create_chat();h.store.add(chat,{'role':'user','content':'Research when the launch occurred.'})
+    h.engine.start(chat);await h.engine.tasks[chat]
+   messages=h.store.messages(chat)
+   self.assertFalse(any(m.get('content')==answer for m in messages))
+   self.assertEqual(messages[-1]['content'],corrected)
+   self.assertEqual(h.engine.runs[chat]['verification']['outcome'],'passed')
+  finally:h.close()
+
  async def test_round_limit_writes_a_readable_checkpoint_without_another_model_call(self):
   h=Harness([stream([tool_call(0,f'c{i}','read_file',{'path':'a.txt'})]) for i in range(3)])
   try:
@@ -37,7 +84,7 @@ class CheckpointTests(unittest.IsolatedAsyncioTestCase):
  async def test_continuation_does_not_repeat_a_completed_write(self):
   write={'path':'b.txt','content':'hello'}
   h=Harness([stream([tool_call(0,'w1','write_file',write)]),stream([tool_call(0,'l1','list_files',{'path':'.'})]),
-   stream([tool_call(0,'w2','write_file',write)]),text('Done.')])
+   stream([tool_call(0,'w2','write_file',write)]),text('Done.'),text('Done.')])
   try:
    h.store.set_setting('permission:write_file',True)
    with patch.object(engine_module,'ROUND_LIMIT',2):
@@ -46,11 +93,13 @@ class CheckpointTests(unittest.IsolatedAsyncioTestCase):
     first=h.engine.public_run(chat);self.assertEqual(first['phase'],'Checkpoint')
     target=Path(CONFIG['workspace'])/'b.txt';self.assertTrue(target.exists());target.unlink()
     h.store.add(chat,{'role':'user','content':'continue'})
-    h.engine.start(chat,continue_from=first);await h.engine.tasks[chat]
+    with patch.object(engine_module,'ROUND_LIMIT',4):
+     h.engine.start(chat,continue_from=first);await h.engine.tasks[chat]
    self.assertFalse(target.exists())
    writes=[a for a in h.store.actions(chat) if a['name']=='write_file']
    self.assertEqual(len(writes),2);self.assertIn('already succeeded',writes[1]['result']['text'])
-   run=h.engine.runs[chat];self.assertEqual(run['phase'],'Complete');self.assertEqual(run['continuations'],1);self.assertEqual(run['continuing'],first['started'])
+   run=h.engine.runs[chat];self.assertEqual(run['phase'],'Stopped');self.assertEqual(run['verification']['outcome'],'not_run')
+   self.assertEqual(run['continuations'],1);self.assertEqual(run['continuing'],first['started'])
   finally:h.close()
 
  async def test_failed_final_generation_still_reports_progress(self):

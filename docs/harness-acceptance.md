@@ -21,3 +21,16 @@ failure when a required outcome cannot be verified.
 The scripted plan cases in `tests/plan_runner.py` replay turns without a live model.
 `tests/plan_evidence.py` checks evidence and journal decisions with synthetic records.
 The acceptance runs above also exercise the UI, Windows process behavior, and a real model.
+
+For a new release, keep the comparison JSON with the build. Its `installer_sha256`
+map must identify the exact baseline and candidate installers by version. Its
+`cases` map must contain cases 01–10 and record a `PASS` or `FAIL` for both versions
+in each case. Verify the candidate before publishing:
+
+```powershell
+./scripts/verify-release-comparison.ps1 -Report comparison.json -BaselineInstaller baseline.exe -CandidateInstaller release/Luminaria-0.4.0-Setup.exe
+```
+
+After pushing the release commit, use `scripts/publish-release.ps1` with the GitHub
+repository, report, and baseline installer. It runs the same check before uploading
+the candidate. A rebuild needs a comparison report for the new installer hash.

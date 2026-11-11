@@ -287,7 +287,7 @@ async def research(question, queries=(), pages=4):
             if size > 1800: break
             keep.append(i); size += min(len(parts[i]), 700)
         excerpt = '\n\n'.join(parts[i][:700] for i in sorted(keep))
-        sources.append({'title': page.get('title') or item['title'], 'url': item['url'], 'excerpt': excerpt or item.get('snippet', '')})
+        sources.append({'title': page.get('title') or item['title'], 'url': item['url'], 'excerpt': excerpt or page['text'][:1800]})
     return {'status': 'ok', 'question': question, 'searches': phrasings, 'sources': sources,
             'more_results': [{'title': r['title'], 'url': r['url']} for r in rest[:6]],
             'next': 'Answer from these sources and cite them as [title](url). If they do not answer the question, research again with different words or read one of more_results.'}
