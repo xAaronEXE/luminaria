@@ -66,6 +66,9 @@ class UpdateTests(unittest.IsolatedAsyncioTestCase):
     script=(Path(folder)/'update-handoff.ps1').read_text('utf-8-sig')
     self.assertLess(script.index('WaitForExit(30000)'),script.index('Start-Process -FilePath $Installer'))
     self.assertIn('Process identity changed',script);self.assertIn('Installer checksum changed',script)
+    self.assertIn('robocopy.exe $app $backup',script);self.assertLess(script.index('$backup /MIR'),script.index('Start-Process -FilePath $Installer'))
+    self.assertIn("/XD (Join-Path $app 'data') (Join-Path $app 'models') (Join-Path $app 'Files')",script,'data, models and files are never copied or overwritten')
+    self.assertIn('rolled-back.txt',script)
  @unittest.skipUnless(__import__('os').name=='nt','Windows update handoff')
  def test_unowned_model_server_is_not_targeted(self):
   import sys
@@ -76,5 +79,17 @@ class UpdateTests(unittest.IsolatedAsyncioTestCase):
     update_handoff.launch(target)
     args=launch.call_args.args[0]
     self.assertEqual(args[args.index('-ManagerId')+1],'0')
+
+ def test_started_marker_and_rollback_notice(self):
+  from backend import updates
+  from backend.config import CONFIG
+  with tempfile.TemporaryDirectory() as folder, patch.object(updates,'DATA',Path(folder)), patch.dict(CONFIG,{'version':'0.4.0'}):
+   self.assertIsNone(updates.mark_started())
+   self.assertTrue((Path(folder)/'updates'/'started-0.4.0.ok').exists())
+   (Path(folder)/'updates'/'rolled-back.txt').write_text('0.4.1')
+   self.assertIn('0.4.1 did not start',updates.mark_started())
+   self.assertFalse((Path(folder)/'updates'/'rolled-back.txt').exists())
+   (Path(folder)/'updates'/'started-0.3.0.ok').write_text('ok'); updates.cleanup()
+   self.assertFalse((Path(folder)/'updates'/'started-0.3.0.ok').exists()); self.assertTrue((Path(folder)/'updates'/'started-0.4.0.ok').exists())
 
 if __name__=='__main__':unittest.main()

@@ -53,6 +53,17 @@ async def check():
             'installer': {k: installer[k] for k in ('name', 'size', 'sha256', 'url')}, 'signing': SIGNING,
             'message': f'Version {version} is available.' if available else f'You have the latest version ({CONFIG["version"]}).'}
 
+def mark_started():
+    """Tells the update handoff that this version started correctly, so it keeps it instead of rolling back.
+    Also reports a rollback that happened after the last update."""
+    folder = DATA / 'updates'; folder.mkdir(parents=True, exist_ok=True)
+    (folder / f"started-{CONFIG['version']}.ok").write_text('ok', encoding='utf-8')
+    note = folder / 'rolled-back.txt'
+    if note.exists():
+        failed = note.read_text(encoding='utf-8').strip()[:20]; note.unlink()
+        return f'Version {failed} did not start on this PC, so Luminaria put back version {CONFIG["version"]}.'
+    return None
+
 def cleanup():
     """After an update has installed, remove what it left behind: the downloaded installer for this or any
     older version, unfinished downloads, and the one-time handoff script. A newer installer is kept so an
@@ -65,7 +76,8 @@ def cleanup():
     for p in folder.iterdir():
         if not p.is_file(): continue
         m = re.fullmatch(r'Luminaria-(\d+\.\d+\.\d+)-Setup\.exe', p.name)
-        stale = p.name.endswith('.partial') or p.name == 'update-handoff.ps1' or (m and Version(m.group(1)) <= current)
+        ok = re.fullmatch(r'started-(\d+\.\d+\.\d+)\.ok', p.name)
+        stale = p.name.endswith('.partial') or p.name == 'update-handoff.ps1' or (m and Version(m.group(1)) <= current) or (ok and Version(ok.group(1)) < current)
         if stale:
             try: p.unlink(); removed.append(p.name)
             except OSError: pass
@@ -96,6 +108,6 @@ async def install():
     finally:
         if partial.exists(): partial.unlink()
     from .update_handoff import launch
-    closing=launch(target)
+    closing=launch(target,info['version'])
     return {'launched': True, 'version': info['version'],
             'closing':closing,'message': 'Update verified. Luminaria is closing before Setup starts.' if closing else 'Verified installer opened. Close Luminaria before continuing Setup.'}

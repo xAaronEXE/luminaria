@@ -75,8 +75,10 @@ async def lifespan(app):
     engine.tools.connector_installer=install_connector
     await engine.restore()
     with contextlib.suppress(Exception):
-        from .updates import cleanup
+        from .updates import cleanup,mark_started
         await asyncio.to_thread(cleanup)
+        rolled=mark_started()   # a new version that gets this far started correctly; the updater keeps it
+        if rolled: store.set_setting('update_notice',rolled)
     task=asyncio.create_task(scheduler());sync_task=asyncio.create_task(sync_loop())
     from . import sharing
     await sharing.resume()
@@ -132,7 +134,7 @@ async def bootstrap(): return {'token':TOKEN,'version':CONFIG['version'],'name':
 @app.get('/api/state')
 async def state(chat:str=''):
     if chat: require_chat(chat)
-    return {'cloud_sync_updated':store.setting('cloud_sync_updated',0),'chats':store.chats(),'chat':chat,'messages':store.messages(chat) if chat else [],'changes':_changes(chat),'actions':store.actions(chat) if chat else [],'summary':store.summary(chat) if chat else None,'summaries':store.rows('SELECT id,through_id,created FROM summaries WHERE chat=? ORDER BY id',(chat,)) if chat else [],'run':engine.public_run(chat),'context':store.setting('context:'+chat,{}),'plan':store.setting('plan:'+chat,None) if chat else None,'brief':brief_summary(chat) if chat else None,'orchestration':{'router':CONFIG.get('orchestrator_model',''),'enabled':bool(CONFIG.get('orchestrator_model')) and CONFIG.get('orchestration_enabled',True)},'memories':memory_entries(),'schedules':store.rows('SELECT * FROM schedules ORDER BY next_run'),'workspace':CONFIG['workspace'],'model':CONFIG['model'],'context_limit':CONFIG['context'],'connectors':{n:{'status':c.status,'tools':len(c.tools)} for n,c in connectors.items()},'tool_count':len(engine.tools.catalog()),'active_runs':[{'chat':k,'phase':v['phase']} for k,v in engine.runs.items() if not v.get('finished')]}
+    return {'cloud_sync_updated':store.setting('cloud_sync_updated',0),'chats':store.chats(),'chat':chat,'messages':store.messages(chat) if chat else [],'update_notice':_update_notice(),'changes':_changes(chat),'actions':store.actions(chat) if chat else [],'summary':store.summary(chat) if chat else None,'summaries':store.rows('SELECT id,through_id,created FROM summaries WHERE chat=? ORDER BY id',(chat,)) if chat else [],'run':engine.public_run(chat),'context':store.setting('context:'+chat,{}),'plan':store.setting('plan:'+chat,None) if chat else None,'brief':brief_summary(chat) if chat else None,'orchestration':{'router':CONFIG.get('orchestrator_model',''),'enabled':bool(CONFIG.get('orchestrator_model')) and CONFIG.get('orchestration_enabled',True)},'memories':memory_entries(),'schedules':store.rows('SELECT * FROM schedules ORDER BY next_run'),'workspace':CONFIG['workspace'],'model':CONFIG['model'],'context_limit':CONFIG['context'],'connectors':{n:{'status':c.status,'tools':len(c.tools)} for n,c in connectors.items()},'tool_count':len(engine.tools.catalog()),'active_runs':[{'chat':k,'phase':v['phase']} for k,v in engine.runs.items() if not v.get('finished')]}
 
 @app.get('/api/chats/{id}/work')
 async def work_events(id:str,runs:int=12):
@@ -660,6 +662,11 @@ async def chat_brief_change(id:str,request:Request):
     require_chat(id); b=await request.json()
     brief=apply(store,id,b.get('op'),'user',b.get('id'),b.get('section'),b.get('text'),b.get('pinned'))
     broadcast({'type':'changed','chat':id}); return {'brief':brief}
+
+def _update_notice():
+    notice=store.setting('update_notice',None)
+    if notice: store.execute('DELETE FROM settings WHERE key=?',('update_notice',))
+    return notice
 
 def _changes(chat):
     if not chat: return None

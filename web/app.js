@@ -13,7 +13,7 @@ function toast(text,error=false){const t=$('#toast');t.textContent=text;t.classL
 function safe(fn){return async(...a)=>{try{return await fn(...a)}catch(e){toast(e.message,true)}}}
 function markdown(text){return DOMPurify.sanitize(marked.parse(text||'',{breaks:false}),{FORBID_TAGS:['img','iframe','style','form','input','button'],FORBID_ATTR:['style']})}
 function decorateMarkdown(root){root.querySelectorAll('pre code').forEach(c=>{hljs.highlightElement(c);const b=document.createElement('button');b.className='code-copy';b.title='Copy code';b.innerHTML=icon('copy');b.onclick=safe(async()=>{await navigator.clipboard.writeText(c.textContent);toast('Code copied')});c.parentElement.append(b)});root.querySelectorAll('a').forEach(a=>{a.target='_blank';a.rel='noopener noreferrer'})}
-async function refresh(){const chosen=chat;let next;try{next=await api('/state?chat='+encodeURIComponent(chat))}catch(e){if(chat&&e.message==='Task not found'){chat='';localStorage.removeItem('mint-chat');return refresh()}throw e}if(chosen!==chat)return;state=next;render();window.dispatchEvent(new Event('studio-state'));}
+async function refresh(){const chosen=chat;let next;try{next=await api('/state?chat='+encodeURIComponent(chat));if(next.update_notice)toast(next.update_notice,true)}catch(e){if(chat&&e.message==='Task not found'){chat='';localStorage.removeItem('mint-chat');return refresh()}throw e}if(chosen!==chat)return;state=next;render();window.dispatchEvent(new Event('studio-state'));}
 function scheduleRefresh(){if(!refreshTimer)refreshTimer=setTimeout(()=>{refreshTimer=null;safe(refresh)()},160)}
 const planReady=run=>Boolean(run?.plan_only&&run.finished&&run.phase==='Complete');
 function render(){
