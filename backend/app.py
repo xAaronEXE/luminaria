@@ -1,4 +1,4 @@
-import asyncio, base64, contextlib, json, os, re, secrets, time
+import asyncio, base64, contextlib, json, logging, os, re, secrets, time
 from pathlib import Path
 from contextlib import asynccontextmanager
 from fastapi import FastAPI, Request, HTTPException, BackgroundTasks
@@ -490,6 +490,7 @@ async def settings():
     from .config import access_status
     public={k:v for k,v in CONFIG.items() if k not in ('mcp','model_api_key')}
     public['access_status']=access_status()
+    public['command_sandbox']=os.name=='nt'
     from .config import drive_of
     try:
         import ctypes;mask=ctypes.windll.kernel32.GetLogicalDrives();every=[f'{chr(65+i)}:' for i in range(26) if mask>>i&1]
@@ -500,6 +501,21 @@ async def settings():
     from .config import WORKSPACE_PROBLEM
     public['workspace_problem']=WORKSPACE_PROBLEM
     public['data_directory']=str(DATA); public['mcp_configured']=list(CONFIG.get('mcp',{})); return public
+
+@app.post('/api/settings/command-sandbox/check')
+async def check_command_sandbox():
+    if os.name!='nt':
+        return {'passed':False,'message':'The AppContainer check requires Windows.'}
+    from .windows_isolation import check
+    try:
+        passed=await check()
+    except OSError:
+        logging.exception('Windows command sandbox self-check failed')
+        passed=False
+    if passed:
+        return {'passed':True,'message':'The command read its staged input and Windows blocked its network connection.'}
+    return {'passed':False,'message':'The Windows command sandbox did not pass its self-check. See the desktop log for launch errors.'}
+
 
 @app.post('/api/workspace/browse')
 async def browse_workspace():

@@ -43,6 +43,21 @@ class WindowsIsolation(unittest.IsolatedAsyncioTestCase):
             with self.assertRaises(BlockingIOError):
                 listener.accept()
 
+    async def test_settings_self_check_verifies_staged_input_and_network_isolation(self):
+        from unittest.mock import patch
+        from httpx import ASGITransport, AsyncClient
+        from backend.app import app
+
+        port = os.environ.get('STUDIO_PORT', '3210')
+        async with AsyncClient(transport=ASGITransport(app=app), base_url=f'http://127.0.0.1:{port}') as client:
+            path = '/api/settings/command-sandbox/check'
+            self.assertEqual((await client.post(path)).status_code, 403)
+            boot = (await client.get('/api/bootstrap')).raise_for_status().json()
+            with patch('backend.identity.required', return_value=False):
+                response = await client.post(path, headers={'X-Studio-Token': boot['token']})
+        result = response.raise_for_status().json()
+        self.assertTrue(result['passed'], result)
+
     async def test_windows_powershell_starts_in_isolated_workspace(self):
         from backend.windows_isolation import powershell_command
         result = await self.execute(

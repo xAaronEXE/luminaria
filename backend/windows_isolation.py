@@ -258,3 +258,27 @@ async def execute(argv, timeout, *, script=None, inputs=(), python_bundle=None):
         stderr.seek(0)
         return {'exit_code': code.value, 'stdout': stdout.read(4 * 1024 * 1024).decode('utf-8', 'replace'),
                 'stderr': stderr.read(4 * 1024 * 1024).decode('utf-8', 'replace')}
+
+
+async def check():
+    """Verify that an isolated command can read its inputs and cannot reach loopback."""
+    staged = await execute(powershell_command('Get-Content -Raw probe.txt'), 10, inputs=[
+        (Path('probe.txt'), b'Luminaria sandbox probe'),
+    ])
+    if staged['exit_code'] != 0 or staged.get('stdout', '').strip() != 'Luminaria sandbox probe':
+        return False
+
+    accepted = asyncio.Event()
+
+    def on_connection(_reader, writer):
+        accepted.set()
+        writer.close()
+
+    server = await asyncio.start_server(on_connection, '127.0.0.1', 0)
+    async with server:
+        port = server.sockets[0].getsockname()[1]
+        curl = Path(os.environ['SystemRoot']) / 'System32' / 'curl.exe'
+        result = await execute(
+            [str(curl), '--noproxy', '*', '--max-time', '3', f'http://127.0.0.1:{port}/'], 10
+        )
+        return result['exit_code'] in (7, 28) and not accepted.is_set()

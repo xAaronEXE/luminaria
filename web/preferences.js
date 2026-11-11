@@ -71,6 +71,18 @@ async function studioSettingsSection(section,body){
    <div class="s-actions"><button type="button" class="text-button" id="tools-library">Manage integrations</button><button type="button" class="text-button" id="reset-permissions">Reset remembered approvals</button><span class="save-state" id="perm-save" role="status" aria-live="polite"></span><button class="btn primary" type="submit">Save</button></div></form>
    <details class="s-more"><summary>What Hands-free can do</summary><p>Hands-free can change or delete files, run commands and send data through connected tools without asking. Windows commands and code remain isolated. Browser, desktop and file tools use their own permissions.</p><p>Ask me first lets reads and searches run on their own and waits for your OK on changes, commands and network use. Approvals already waiting still need a decision after you switch.</p></details>`;
   const state=body.querySelector('#perm-save');body.querySelector('form').addEventListener('change',()=>{state.className='save-state dirty';state.textContent='Unsaved changes'});
+  if(s.command_sandbox){
+   const check=document.createElement('div');check.className='s-card s-pad';
+   check.innerHTML='<div class="setting-row"><div><h3>Windows command sandbox</h3><p>Checks whether a command can read its staged input and whether Windows blocks its network connection.</p></div><button type="button" class="btn">Check sandbox</button></div><p class="s-status" role="status" aria-live="polite" hidden></p>';
+   body.querySelector('#external-tools').closest('.s-card').after(check);
+   const button=check.querySelector('button'),result=check.querySelector('[role=status]');
+   button.onclick=safe(async()=>{
+    button.disabled=true;result.hidden=false;result.textContent='Checking Windows command isolation…';
+    try{const outcome=await api('/settings/command-sandbox/check','POST',{});result.textContent=outcome.message}
+    catch(error){result.textContent=error.message}
+    finally{button.disabled=false}
+   });
+  }
   submit(async()=>{const boxes=[...body.querySelectorAll('[data-drive]')],picked=boxes.filter(b=>b.checked).map(b=>b.dataset.drive),extra=boxes.length?{drives:picked.length===boxes.length?'all':picked}:{};if(s.admin_jobs)extra.admin_grants=[...body.querySelectorAll('[data-admin-grant]')].filter(b=>b.checked).map(b=>b.dataset.adminGrant);await api('/settings','POST',{access_mode:$('#access-mode').value,external_tools:$('#external-tools').checked,ask_reads:$('#ask-reads').checked,...extra});toast('Permissions saved');window.dispatchEvent(new Event('permission-changed'));await refresh();await studioSettingsSection(section,body)});$('#grant-full').onclick=safe(async()=>{if(!confirm('Turn on full access?\n\nLuminaria will run commands, change or delete files and use connected tools without asking you first. Windows commands and code still run in the offline sandbox. Browser, desktop and file tools can act outside that sandbox. You can switch back here at any time.'))return;await api('/settings','POST',{access_mode:'full',external_tools:true,ask_reads:false});toast('Full access is on');window.dispatchEvent(new Event('permission-changed'));await refresh();await studioSettingsSection(section,body)});$('#tools-library').onclick=safe(()=>openPanel('integrations'));$('#reset-permissions').onclick=safe(async()=>{await api('/permissions/reset','POST',{});toast('Remembered approvals cleared')});
  }else if(section==='Memory & context'){
   const presets=[[1024,'Short'],[2048,'Standard'],[4096,'Long'],[8192,'Very long']],out=s.output_tokens||4096,custom=!presets.some(([v])=>v===out),ctx=s.context||32768;
