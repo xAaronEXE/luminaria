@@ -450,8 +450,22 @@ class Engine:
         async with stack:
             yield response
 
+    def preset(self,run,messages):
+        """Sampling suited to the work: steady for code and tool use, freer for writing."""
+        if run is None: return 0.4
+        needs=((run.get('routing') or {}).get('profile') or {}).get('needs')
+        if not needs:
+            from .orchestration import keyword_profile
+            last=next((m for m in reversed(messages) if m.get('role')=='user'),{}); content=last.get('content','')
+            text='\n'.join(p.get('text','') for p in content if isinstance(p,dict) and p.get('type')=='text') if isinstance(content,list) else str(content or '')
+            needs=keyword_profile(text[:4000])['needs']
+        run['preset']=needs[0] if needs else 'chat'
+        if run.get('step_id') or needs[0] in ('coding','tools'): return 0.2
+        if needs[0]=='reasoning': return 0.3
+        if needs[0]=='writing': return 0.7
+        return 0.4
     async def completion(self,messages,tools=None,run=None,max_tokens=None):
-        body={'model':self.model_id(),'messages':messages,'stream':True,'stream_options':{'include_usage':True},'max_tokens':max_tokens or CONFIG['output_tokens'],'temperature':0.4,'repeat_penalty':1.08,
+        body={'model':self.model_id(),'messages':messages,'stream':True,'stream_options':{'include_usage':True},'max_tokens':max_tokens or CONFIG['output_tokens'],'temperature':self.preset(run,messages),'repeat_penalty':1.08,
               # DRY ("don't repeat yourself") sampling: llama.cpp's standard guard against looping text.
               'dry_multiplier':0.8,'dry_base':1.75,'dry_allowed_length':4,'chat_template_kwargs':{'enable_thinking':bool(run and run.get('reasoning'))}}
         if tools: body['tools']=tools; body['tool_choice']='auto'
