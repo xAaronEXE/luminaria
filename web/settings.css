@@ -185,3 +185,4 @@
 .pick-box{display:inline-grid;place-items:center;width:14px;height:14px;margin-right:7px;border:1.5px solid var(--control-line);border-radius:4px;font-size:10px;line-height:1;vertical-align:-2px;color:var(--accent-contrast)}
 .model-option.picked{border-color:var(--accent);background:var(--accent-soft)}
 .model-option.picked .pick-box{background:var(--accent);border-color:var(--accent)}
+.drive-list{display:flex;flex-wrap:wrap;gap:8px;margin-top:10px}.drive-chip{display:inline-flex;align-items:center;gap:6px;padding:6px 10px;border:1px solid var(--line);border-radius:8px}.drive-chip small{color:var(--muted)}

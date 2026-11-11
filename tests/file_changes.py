@@ -106,4 +106,17 @@ class Guards(unittest.TestCase):
         self.assertTrue(config.system_area(Path('/System Volume Information/a')))
         self.assertFalse(config.system_area(Path('/Projects/Recovery notes/a.txt')))
 
+
+class Drives(unittest.TestCase):
+    def test_unticked_drive_is_refused_and_required_drives_stay(self):
+        from pathlib import PureWindowsPath
+        with patch.object(config,'drive_of',lambda p:(PureWindowsPath(str(p)).drive or 'C:').upper()):
+            with patch.dict(config.CONFIG,{'drives':['D:'],'workspace':'C:\\Luminaria\\Files'}),patch.object(config,'DATA',Path('C:/Luminaria/data')):
+                self.assertEqual(config.allowed_drives(),{'D:','C:'},'the drive holding Luminaria always stays on')
+            with patch.dict(config.CONFIG,{'drives':'all'}): self.assertIsNone(config.allowed_drives())
+    def test_workspace_path_refuses_a_drive_that_is_off(self):
+        with tempfile.TemporaryDirectory() as d:
+            with patch.dict(config.CONFIG,{'workspace':d}),patch.object(config,'allowed_drives',lambda:{'Z:'}):
+                with self.assertRaises(PermissionError): config.workspace_path('notes.txt',roam=True)
+
 if __name__=='__main__':unittest.main()

@@ -112,7 +112,19 @@ def pc_places():
             drives=[f'{chr(65+i)}:\\' for i in range(26) if mask>>i&1]
         except Exception: drives=[]
     else: drives=['/']
+    allowed=allowed_drives()
+    if allowed is not None: drives=[d for d in drives if drive_of(d) in allowed]   # the assistant is only told about drives it may use
     return {'home':str(home),'drives':drives,'folders':places}
+
+def drive_of(path):
+    return (Path(path).drive or Path(path).anchor or '/').upper().rstrip('\\/') or '/'
+
+def allowed_drives():
+    """None means every drive. Otherwise the drive letters the user ticked; the drives holding Luminaria and the
+    default folder always stay available so the app keeps working."""
+    chosen=CONFIG.get('drives','all')
+    if chosen in (None,'all') or not isinstance(chosen,list): return None
+    return {str(d).upper().rstrip('\\/') for d in chosen}|{drive_of(Path(CONFIG['workspace']).resolve()),drive_of(DATA.resolve())}
 
 def access_status():
     mode='full' if full_access() else 'review'
@@ -213,6 +225,9 @@ def workspace_path(path='.',roam=False,write=False):
         if _inside(target,folder):
             if write: raise PermissionError('Skill folders are read-only. Save outputs in the default folder.')
             return target
+    drives=allowed_drives()
+    if drives is not None and drive_of(target) not in drives:
+        raise PermissionError(f'Drive {drive_of(target)} is turned off for Luminaria in Settings › Permissions. Tell the user if the task needs it.')
     if system_area(target): raise PermissionError('That place belongs to Windows or to another person on this PC and is off limits.')
     for protected in protected_roots():
         if _inside(target,protected):

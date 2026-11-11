@@ -477,6 +477,11 @@ async def settings():
     from .config import access_status
     public={k:v for k,v in CONFIG.items() if k not in ('mcp','model_api_key')}
     public['access_status']=access_status()
+    from .config import drive_of
+    try:
+        import ctypes;mask=ctypes.windll.kernel32.GetLogicalDrives();every=[f'{chr(65+i)}:' for i in range(26) if mask>>i&1]
+    except Exception: every=[]
+    public['drives']=CONFIG.get('drives','all'); public['drives_available']=every; public['drives_required']=sorted({drive_of(CONFIG['workspace']),drive_of(DATA)}-{'/'})
     from .config import WORKSPACE_PROBLEM
     public['workspace_problem']=WORKSPACE_PROBLEM
     public['data_directory']=str(DATA); public['mcp_configured']=list(CONFIG.get('mcp',{})); return public
@@ -490,7 +495,7 @@ async def browse_workspace():
 async def settings_save(request:Request):
     if any(not r.get('finished') for r in engine.runs.values()): raise ValueError('Finish or stop active tasks before changing settings')
     b=await request.json(); allowed={'workspace','endpoint','tokenizer','model','context','output_tokens','compact_ratio','python','node','llama_executable','model_file','projector_file','external_tools','ask_reads'}
-    allowed.update({'coder_model','planner_model','keep_model_loaded','access_mode','orchestrator_model','compact_keep_turns','orchestration_pool','orchestration_enabled'})
+    allowed.update({'drives','coder_model','planner_model','keep_model_loaded','access_mode','orchestrator_model','compact_keep_turns','orchestration_pool','orchestration_enabled'})
     if 'orchestration_pool' in b:
         from .orchestration import normalize_pool
         b['orchestration_pool']=normalize_pool(b['orchestration_pool'])
@@ -503,6 +508,10 @@ async def settings_save(request:Request):
         if role in b and (not isinstance(b[role],str) or len(b[role])>300): raise ValueError('Choose a model for this role')
     if 'keep_model_loaded' in b and b['keep_model_loaded'] not in (0,300,1800): raise ValueError('Choose how long to keep the model loaded')
     changes={k:v for k,v in b.items() if k in allowed}
+    if 'drives' in changes:
+        d=changes['drives']
+        if d!='all' and not (isinstance(d,list) and d and all(isinstance(x,str) and re.fullmatch(r'[A-Za-z]:',x) for x in d)): raise ValueError('Choose all drives or at least one drive')
+        if d!='all': changes['drives']=sorted({x.upper() for x in d})
     for key in ('external_tools','ask_reads'):
         if key in changes and not isinstance(changes[key],bool): raise ValueError('Boolean setting required')
     for key in ['endpoint','tokenizer']:
