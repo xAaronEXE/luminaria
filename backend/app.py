@@ -255,6 +255,22 @@ async def continue_chat(id:str):
     store.add(id,{'role':'user','content':'Continue the task from the checkpoint above. Steps that already succeeded are listed there; do not repeat them. If the same approach keeps failing, try a different one or explain what is blocking.'})
     return {'run_id':engine.start(id,bool(previous.get('reasoning')),continue_from=previous)}
 
+@app.post('/api/chats/{id}/steer')
+async def steer_chat(id:str,request:Request):
+    require_chat(id); return {'waiting':engine.steer(id,(await request.json()).get('text'))}
+
+@app.get('/api/chats/{id}/trace')
+async def chat_trace(id:str):
+    """Everything about this chat's recent runs in one file, for working out what went wrong."""
+    require_chat(id)
+    from .config import VERSION as version
+    from . import changes
+    actions=[{k:a.get(k) for k in ('id','name','args','tier','status','created','step')}|{'result':(a['result'].get('text') if isinstance(a.get('result'),dict) and isinstance(a['result'].get('text'),str) else json.dumps(a.get('result'),default=str))[:4000]} for a in store.actions(id)]
+    content={'luminaria':version,'exported':time.time(),'chat':id,'plan':store.setting('plan:'+id,None),'run':engine.public_run(id),
+             'events':engine.worklog.events(id,12),'actions':actions,'file_changes':changes.summary(store,id),
+             'messages':[{k:m.get(k) for k in ('role','content','tool_calls','name','plan_step','steer') if m.get(k) is not None} for m in store.messages(id)][-200:]}
+    return Response(json.dumps(content,ensure_ascii=False,indent=1,default=str),media_type='application/json',headers={'Content-Disposition':f'attachment; filename="luminaria-run-{id[:8]}.json"'})
+
 @app.post('/api/chats/{id}/stop')
 async def stop_chat(id:str):
     require_chat(id)

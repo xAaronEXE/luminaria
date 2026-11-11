@@ -166,6 +166,7 @@ class Engine:
     def __init__(self,store,toolbox,broadcast,checkpointer=None):
         self.store=store; self.tools=toolbox; self.broadcast=broadcast
         self.runs={}; self.tasks={}; self.approvals={}; self.gpu=asyncio.Lock()
+        self.steering={}   # messages the user sent while a task runs, read at the next round
         self.unload_timer=None; self.unload_at=None
         self.inference=ContextVar('inference',default=None)
         self.client=httpx.AsyncClient(timeout=httpx.Timeout(240,connect=10),trust_env=False,headers={'Authorization':'Bearer '+CONFIG.get('model_api_key','local-only')})
@@ -206,6 +207,15 @@ class Engine:
         self.work(run,'run.resumed',str(time.time()),label='Resumed',status='running')
         self.tasks[chat]=asyncio.create_task(self.execute(run,False,Command(resume=decision) if decision is not None else None,resuming=True))
         return run['id']
+
+    def steer(self,chat,text):
+        """Hand a message to the running task; it is read before the model's next round."""
+        text=str(text or '').strip()[:4000]
+        if not text: raise ValueError('Type a message first')
+        if chat not in self.tasks or self.tasks[chat].done(): raise ValueError('Nothing is running in this chat; send it as a normal message.')
+        queue=self.steering.setdefault(chat,[])
+        if len(queue)>=5: raise ValueError('It has not read your earlier messages yet. Wait for the next step.')
+        queue.append(text); self.emit('changed',chat=chat); return len(queue)
 
     def emit(self,kind,**payload): self.broadcast({'type':kind,**payload})
     def model_id(self):return (self.inference.get() or {}).get('id',CONFIG['model'])
@@ -563,6 +573,10 @@ class Engine:
         run=state['run']; chat=run['chat']
         self.runs[chat]=run
         run.pop('resume_available',None)
+        for text in self.steering.pop(chat,[]):
+            # Added between rounds, after every tool result of the last round, so the conversation stays well-formed.
+            self.store.add(chat,{'role':'user','content':'[Sent while you were working — take this into account now, then carry on]\n'+text,'steer':True})
+            self.work(run,'run.steered',str(time.time()),label='Message from you',status='done')
         if state['steps']>=ROUND_LIMIT or run.get('stalled'):
             self.checkpoint(run,'repeated' if run.get('stalled') else 'limit')
             return {'run':run,'calls':[],'steps':state['steps']}
