@@ -1,3 +1,4 @@
+import re
 import json, os, sys
 from pathlib import Path
 
@@ -142,12 +143,52 @@ def protected_roots():
     # Luminaria's own data (settings, tokens, history), the program itself, Windows, and credential folders.
     home=Path.home()
     roots=[DATA,BASE_DATA,APP_HOME,home/'.ssh',home/'.aws',home/'.gnupg',home/'.azure',home/'.config'/'gcloud',home/'.kube']
-    for name in ('WINDIR','SystemRoot','PROGRAMFILES','PROGRAMFILES(X86)','PROGRAMDATA'):
+    for name in ('WINDIR','SystemRoot'):
         if os.environ.get(name): roots.append(Path(os.environ[name]))
     if os.name!='nt': roots+=[Path('/etc'),Path('/proc'),Path('/sys'),Path('/boot'),Path('/root')]
     for name in ('APPDATA','LOCALAPPDATA'):
         if os.environ.get(name): roots+= [Path(os.environ[name])/'Microsoft'/'Credentials',Path(os.environ[name])/'Microsoft'/'Protect']
     return [r.resolve() for r in roots]
+
+def sensitive_roots():
+    """Installed programs and their shared data. Open to the assistant, but changing anything there always asks first,
+    in every access mode, until scripts run under their own locked-down Windows identity."""
+    return [Path(os.environ[n]).resolve() for n in ('PROGRAMFILES','PROGRAMFILES(X86)','PROGRAMW6432','PROGRAMDATA') if os.environ.get(n)]
+
+def always_ask(name,args):
+    """True when this tool call changes something under Program Files or ProgramData."""
+    if name not in ('write_file','edit_file','delete_file') or not isinstance(args,dict) or not args.get('path'): return False
+    try: target=(Path(CONFIG['workspace']).resolve()/os.path.expandvars(str(args['path']))).resolve()
+    except (OSError,ValueError): return False
+    return any(_inside(target,root) for root in sensitive_roots())
+
+SYSTEM_FOLDERS=('$recycle.bin','system volume information','recovery','$winreagent','$sysreset')
+def system_area(target):
+    """Other people's profiles and Windows' own housekeeping folders on any drive."""
+    parts=[p.lower() for p in target.parts]
+    if len(parts)>1 and parts[1] in SYSTEM_FOLDERS: return True
+    home=Path.home().resolve(); users=home.parent
+    if os.name=='nt' and _inside(target,users) and target!=users and not _inside(target,home):
+        return target.relative_to(users).parts[0].lower() not in ('public',)
+    return False
+
+def command_guard(text):
+    """Refuse a command or script that names a strictly off-limits place or asks for administrator rights.
+    This reads the text only, so it is a guard against mistakes, not a security boundary: a determined script could
+    still reach these places until scripts run under their own Windows identity."""
+    low=str(text or '').lower().replace('/','\\')
+    if re.search(r'-verb\s+runas|\brunas(\.exe)?\s|\bsudo\s|start-process[^\n|;]*-verb|\bgsudo\b|\[security\.principal\.windowsprincipal\]',low):
+        raise PermissionError('Luminaria does not run commands as administrator. Tell the user which step needs administrator rights so they can do it themselves.')
+    named=['%windir%','%systemroot%','$env:windir','$env:systemroot','\\system32','\\syswow64','\\microsoft\\credentials','\\microsoft\\protect',
+           '\\.ssh','\\.aws','\\.gnupg','\\.azure','\\.kube','cmdkey','vaultcmd']
+    for name in ('WINDIR','SystemRoot'):
+        if os.environ.get(name): named.append(os.environ[name].lower().rstrip('\\')+'\\')
+    work=Path(CONFIG['workspace']).resolve()
+    for root in (DATA,BASE_DATA):
+        # When the default folder sits inside the data folder (development runs), naming it must stay possible.
+        if not _inside(work,root.resolve()): named.append(str(root).lower().replace('/','\\')+'\\')
+    hit=next((n for n in named if n and n in low+'\\'),None)
+    if hit: raise PermissionError('This command touches a place that is strictly off limits to Luminaria (Windows itself, saved credentials or Luminaria\'s own data). Work somewhere else, or tell the user it cannot be done.')
 
 def skill_folders():
     """Where skills live. The assistant may read these (a skill's scripts and references) but never change them."""
@@ -172,6 +213,7 @@ def workspace_path(path='.',roam=False,write=False):
         if _inside(target,folder):
             if write: raise PermissionError('Skill folders are read-only. Save outputs in the default folder.')
             return target
+    if system_area(target): raise PermissionError('That place belongs to Windows or to another person on this PC and is off limits.')
     for protected in protected_roots():
         if _inside(target,protected):
             # A protected area that contains the default folder (the default folder sits inside Luminaria's own

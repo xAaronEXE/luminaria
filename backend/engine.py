@@ -676,9 +676,11 @@ class Engine:
                         raise ValueError('An earlier attempt has an uncertain outcome. Inspect its target using read-only tools, then ask the user if still unclear. This continuation will not repeat it automatically. Action '+uncertain['id'])
                     completed=next((p for p in matching if p['status']=='done'),None)
                     if completed: raise AlreadyDone(completed['id'])
+                from .config import always_ask
                 tier=definition['tier']
                 existing=self.store.rows('SELECT * FROM actions WHERE id=?',(id,))
                 if existing: tier=existing[0]['tier']
+                elif always_ask(name,args): tier='approve'   # Program Files and ProgramData: asks in every mode
                 elif tier=='approve' and self.store.setting('permission:'+name,False): tier='auto'
                 self.store.execute('INSERT OR IGNORE INTO actions(id,chat,name,args,tier,status,result,created) VALUES(?,?,?,?,?,?,?,?)',(id,run['chat'],name,json.dumps(args),tier,'pending' if tier!='auto' else 'ready',None,now()))
                 if run.get('step_id'): self.store.execute('UPDATE actions SET step=? WHERE id=? AND step IS NULL',(run['step_id'],id))

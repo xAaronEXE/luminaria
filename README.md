@@ -43,7 +43,7 @@
 - **An assistant that does the work.** Luminaria doesn't stop at telling you how to do something. It writes the file, runs the script, checks the result and tells you plainly whether it worked.
 - **Plug and play.** One installer. Python, Node.js, the model runtime, the browser and Windows connectors, and the WebView2 runtime are all included. You don't install anything else.
 - **Matched to your PC.** Every model in the library is rated against your own graphics card and memory before you download it, so you know what will run well.
-- **You're in control.** Choose whether it asks before making changes or works hands-free. Its private data, Windows and Program Files are always off limits to it.
+- **You're in control.** Choose whether it asks before making changes or works hands-free. Windows itself, saved credentials and its own private data are always off limits to it, and you can undo the file changes a task made.
 - **Thousands of extensions.** Thousands of free skills (step-by-step workflows) and connectors (tools for other apps) are built in. Luminaria can find and add the right one when a task needs it, with your approval.
 
 ## What you need
@@ -179,7 +179,13 @@ It knows where your Desktop, Documents, Downloads and drives are, so you don't h
 
 The **default folder** (Settings › Default folder) is simply where new files go when you don't say where, and what "this folder" means. If a folder has a `LUMINARIA.md` file, Luminaria reads it before working there (see [Memory](#memory)).
 
-**Always off limits:** Windows, Program Files, credential folders such as `.ssh`, and Luminaria's own private settings, history and sign-in data. Skill folders can be read but not changed.
+**Always off limits, in every mode:** the Windows folder, credential folders such as `.ssh`, Luminaria's own private settings, history and sign-in data, other people's profiles on this PC, the Recycle Bin and Windows' recovery folders. Commands and scripts that name these places are refused too. Skill folders can be read but not changed.
+
+**Program Files and ProgramData** are open to Luminaria, but changing anything there always asks you first, even in Full access.
+
+**No administrator commands.** Luminaria doesn't run commands as administrator. When a step needs it, it tells you so you can do that part.
+
+**Undo file changes.** After a task, **Undo file changes** in the status line shows every file the task changed, created or deleted, and puts them back. A file that you or another program changed afterwards is left alone, and anything a command or script did (an installed program, an online action) can't be undone; the list says so before you confirm.
 
 ## Permissions: how much it may do on its own
 
@@ -318,7 +324,7 @@ The files Luminaria creates for you go wherever you ask, anywhere on your PC.
 - **Local AI.** Models run on your PC. Your messages aren't sent to an AI provider.
 - **Local app.** Luminaria's interface talks to its own backend on your computer only. Every request is checked for a per-session security token.
 - **Encrypted secrets.** Connector tokens and keys are encrypted for your Windows account.
-- **Protected places.** Windows, Program Files, credential folders and Luminaria's private data are never available to the assistant.
+- **Protected places.** Windows, credential folders and Luminaria's private data are never available to the assistant. Changes under Program Files and ProgramData always ask first.
 - **Safe web reading.** Web fetch never opens private or local network addresses. Web pages and files are treated as information, never as instructions.
 - **Verified updates.** Installers are checked against a published checksum before they run.
 - **Untrusted extensions.** Skills and connectors from outside sources can steer what Luminaria does or run code. Read what you install.
@@ -338,7 +344,7 @@ Open **Windows Settings › Apps › Installed apps**, find **Luminaria**, and c
 | A skill says **Needs setup** | Open it in Extensions and follow its steps. |
 | A connector says **Not working** | Open it in Extensions › Connectors and click **Fix**, or **Disconnect** and connect again. |
 | Browser or Windows tools don't run | Turn on **Computer and command tools** in Settings › Permissions. |
-| "That location is protected" | Luminaria can't use Windows, Program Files, credential folders or its own private data. Choose another folder. |
+| "That location is protected" | Luminaria can't use Windows, credential folders, other people's profiles or its own private data. Choose another folder. |
 | The default folder can't be opened (for example an unplugged drive) | Luminaria uses a fallback folder for now. Choose a new one in **Settings › Default folder**. |
 
 ## FAQ
@@ -353,7 +359,7 @@ Yes. There's no subscription and no per-message cost. Models are free, openly li
 Only as your permission mode allows. In *Ask me first* it asks before every change. Deleting always asks and keeps a recovery copy.
 
 **Can it see my whole PC?**
-It can work in any folder you name, except Windows, Program Files, credential folders and Luminaria's own private data.
+It can work in any folder you name, except Windows, credential folders and Luminaria's own private data. Changes under Program Files and ProgramData always ask first.
 
 **What's the difference between a skill and a connector?**
 A skill teaches Luminaria *how* to do a kind of task. A connector gives it *tools* for another app or service.

@@ -132,7 +132,7 @@ async def bootstrap(): return {'token':TOKEN,'version':CONFIG['version'],'name':
 @app.get('/api/state')
 async def state(chat:str=''):
     if chat: require_chat(chat)
-    return {'cloud_sync_updated':store.setting('cloud_sync_updated',0),'chats':store.chats(),'chat':chat,'messages':store.messages(chat) if chat else [],'actions':store.actions(chat) if chat else [],'summary':store.summary(chat) if chat else None,'summaries':store.rows('SELECT id,through_id,created FROM summaries WHERE chat=? ORDER BY id',(chat,)) if chat else [],'run':engine.public_run(chat),'context':store.setting('context:'+chat,{}),'plan':store.setting('plan:'+chat,None) if chat else None,'brief':brief_summary(chat) if chat else None,'orchestration':{'router':CONFIG.get('orchestrator_model',''),'enabled':bool(CONFIG.get('orchestrator_model')) and CONFIG.get('orchestration_enabled',True)},'memories':memory_entries(),'schedules':store.rows('SELECT * FROM schedules ORDER BY next_run'),'workspace':CONFIG['workspace'],'model':CONFIG['model'],'context_limit':CONFIG['context'],'connectors':{n:{'status':c.status,'tools':len(c.tools)} for n,c in connectors.items()},'tool_count':len(engine.tools.catalog()),'active_runs':[{'chat':k,'phase':v['phase']} for k,v in engine.runs.items() if not v.get('finished')]}
+    return {'cloud_sync_updated':store.setting('cloud_sync_updated',0),'chats':store.chats(),'chat':chat,'messages':store.messages(chat) if chat else [],'changes':_changes(chat),'actions':store.actions(chat) if chat else [],'summary':store.summary(chat) if chat else None,'summaries':store.rows('SELECT id,through_id,created FROM summaries WHERE chat=? ORDER BY id',(chat,)) if chat else [],'run':engine.public_run(chat),'context':store.setting('context:'+chat,{}),'plan':store.setting('plan:'+chat,None) if chat else None,'brief':brief_summary(chat) if chat else None,'orchestration':{'router':CONFIG.get('orchestrator_model',''),'enabled':bool(CONFIG.get('orchestrator_model')) and CONFIG.get('orchestration_enabled',True)},'memories':memory_entries(),'schedules':store.rows('SELECT * FROM schedules ORDER BY next_run'),'workspace':CONFIG['workspace'],'model':CONFIG['model'],'context_limit':CONFIG['context'],'connectors':{n:{'status':c.status,'tools':len(c.tools)} for n,c in connectors.items()},'tool_count':len(engine.tools.catalog()),'active_runs':[{'chat':k,'phase':v['phase']} for k,v in engine.runs.items() if not v.get('finished')]}
 
 @app.get('/api/chats/{id}/work')
 async def work_events(id:str,runs:int=12):
@@ -628,6 +628,28 @@ async def chat_brief_change(id:str,request:Request):
     require_chat(id); b=await request.json()
     brief=apply(store,id,b.get('op'),'user',b.get('id'),b.get('section'),b.get('text'),b.get('pinned'))
     broadcast({'type':'changed','chat':id}); return {'brief':brief}
+
+def _changes(chat):
+    if not chat: return None
+    from . import changes
+    try: found=changes.summary(store,chat)
+    except Exception: return None
+    return found if found['files'] else None
+
+@app.get('/api/chats/{id}/changes')
+async def chat_changes(id:str):
+    require_chat(id)
+    from . import changes
+    return changes.summary(store,id)
+
+@app.post('/api/chats/{id}/undo')
+async def chat_undo(id:str):
+    require_chat(id)
+    if id in engine.runs and not engine.runs[id].get('finished'): raise ValueError('Finish or stop the current task first')
+    from . import changes
+    from .config import DATA
+    result=await asyncio.to_thread(changes.undo,store,DATA,id)
+    broadcast({'type':'changed','chat':id}); return result
 
 @app.get('/api/chats/{id}/plan')
 async def chat_plan(id:str):

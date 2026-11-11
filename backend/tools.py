@@ -223,10 +223,11 @@ class Toolbox:
         if name=='write_file':
             p=workspace_path(a['path'],write=True); p.parent.mkdir(parents=True,exist_ok=True)
             if len(a['content'])>2_000_000: raise ValueError('Write limit is 2 MB')
-            if p.exists():
-                backup=DATA/'backups'/run['id']; backup.mkdir(parents=True,exist_ok=True)
-                import shutil; shutil.copy2(p,backup/(str(__import__('time').time_ns())+'-'+p.name))
-            p.write_text(a['content'],encoding='utf-8'); return {'saved':str(p),'bytes':p.stat().st_size}
+            from . import changes
+            changes.before(self.store,DATA,run,p)          # keeps a copy so the change can be undone
+            changes.atomic_write(p,a['content'])           # the whole file or nothing, even if the PC loses power
+            changes.after(self.store,run,p)
+            return {'saved':str(p),'bytes':p.stat().st_size}
         if name=='edit_file':
             p=workspace_path(a['path'],write=True); text=p.read_text('utf-8')
             if not a['old_text'] or text.count(a['old_text'])!=1: raise ValueError('old_text must match exactly once; read the file and retry')
@@ -234,16 +235,22 @@ class Toolbox:
         if name=='delete_file':
             p=workspace_path(a['path'],write=True)
             if not p.is_file(): raise ValueError('Only individual files may be deleted')
-            import shutil,time
-            backup=DATA/'backups'/run['id']; backup.mkdir(parents=True,exist_ok=True)
-            shutil.copy2(p,backup/(str(time.time_ns())+'-'+p.name)); p.unlink(); return {'deleted':str(p),'backup':str(backup)}
+            from . import changes
+            if p.stat().st_size>changes.SNAPSHOT_LIMIT: raise ValueError('This file is larger than 50 MB, so deleting it could not be undone. Ask the user to delete it themselves.')
+            changes.before(self.store,DATA,run,p); p.unlink(); changes.after(self.store,run,p)
+            return {'deleted':str(p),'undo':'Undo file changes can put it back.'}
         if name=='search_files':
             from .sources import search_workspace
             return await search_workspace(workspace_path(a.get('path') or '.'),a['query'])
-        if name=='run_command': return with_hints(await self.process(['powershell.exe','-NoProfile','-NonInteractive','-Command',python_shims()+a['command']],a.get('timeout',60),extra_path=self.skill_paths(run)))
+        if name=='run_command':
+            from .config import command_guard
+            command_guard(a['command'])
+            return with_hints(await self.process(['powershell.exe','-NoProfile','-NonInteractive','-Command',python_shims()+a['command']],a.get('timeout',60),extra_path=self.skill_paths(run)))
         if name=='run_code':
             folder=DATA/'scripts'; folder.mkdir(parents=True,exist_ok=True)  # scratch scripts stay in Luminaria's folder, not the user's
             p=folder/(run['id']+'-'+str(__import__('time').time_ns())+('.py' if a['language']=='python' else '.js'))
+            from .config import command_guard
+            command_guard(a['code'])
             p.write_text(a['code'],encoding='utf-8')
             kind='python' if a['language']=='python' else 'node'
             exe=find_runtime(kind)
