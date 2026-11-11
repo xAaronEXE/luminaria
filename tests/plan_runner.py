@@ -119,7 +119,7 @@ class PlanRunner(unittest.TestCase):
             state={'n':0}
             def turn(store,run,instruction):
                 state['n']+=1
-                if state['n']==1: store.act(run['step_id'],'run_command',{'command':'python  -m pytest -q'},'error',{'text':'1 failed'})
+                if state['n']==1: store.act(run['step_id'],'run_command',{'command':'python -m pytest -q'},'error',{'text':'1 failed'})
                 else: self.write('fix.py')(store,run,instruction); store.act(run['step_id'],'run_command',{'command':'python -m pytest -q'},'done',{'text':'3 passed'})
             return turn
         turn=fails_then_passes()
@@ -127,10 +127,11 @@ class PlanRunner(unittest.TestCase):
         _,_,plan=self.run_plan(e)
         self.assertEqual((plan['steps'][0]['verdict'],plan['steps'][0]['attempts']),('passed',2))
         self.assertIn('python -m pytest -q',e.store.msgs[0]['content'],'the step is told its check up front')
-        # Never run at all: the step may end, but it is not called passed.
+        # A required command check that never ran blocks the plan.
         e=self.engine([{'id':'s1','title':'Make the tests pass','status':'pending','check':check}],[self.write('a.py'),self.write('b.py'),self.write('c.py')])
         _,_,plan=self.run_plan(e)
-        self.assertEqual(plan['steps'][0]['verdict'],'unverified'); self.assertIn('never run',plan['steps'][0]['reason'])
+        self.assertEqual((plan['steps'][0]['status'], plan['steps'][0]['verdict']), ('blocked', 'unverified'))
+        self.assertIn('was not run', plan['steps'][0]['reason'])
 
     def test_declined_action_blocks_and_nothing_else_is_tried(self):
         def declined(store,run,instruction): store.act(run['step_id'],'delete_file',{'path':'x'},'denied'); run['denied']=True
@@ -170,6 +171,80 @@ class PlanRunner(unittest.TestCase):
     def test_no_plan(self):
         e=Engine.__new__(Engine);e.store=Store(None)
         with self.assertRaises(ValueError): asyncio.run(e.run_plan({'chat':'c','id':'r'},self.models))
+
+    def test_forward_dependency_runs_first(self):
+        steps = [
+            {'id': 'docs', 'title': 'Write docs', 'status': 'pending', 'depends_on': ['build']},
+            {'id': 'build', 'title': 'Build', 'status': 'pending', 'check': {'type': 'file_exists', 'path': 'app.py'}},
+        ]
+        def docs(store, run, instruction):
+            self.assertTrue((self.dir / 'app.py').exists())
+            self.write('README.md')(store, run, instruction)
+        e = self.engine(steps, [self.write('app.py'), docs])
+        _, _, plan = self.run_plan(e)
+        self.assertEqual([s['status'] for s in plan['steps']], ['done', 'done'])
+
+    def test_unverified_dependency_blocks_following_work(self):
+        steps = [
+            {'id': 'build', 'title': 'Build', 'status': 'pending'},
+            {'id': 'docs', 'title': 'Write docs', 'status': 'pending', 'depends_on': ['build']},
+        ]
+        e = self.engine(steps, [self.write('app.py')])
+        _, _, plan = self.run_plan(e)
+        self.assertEqual(plan['steps'][1]['status'], 'blocked')
+        self.assertIn('Build', plan['steps'][1]['reason'])
+
+    def test_final_offline_command_reruns_with_the_same_check_and_blocks_on_failure(self):
+        import os
+        from types import SimpleNamespace
+        from unittest.mock import AsyncMock
+
+        if os.name != 'nt':
+            self.skipTest('Automatic command rechecks require Windows isolation.')
+        check={'type':'command','command':'Get-Content report.txt','inputs':['report.txt'],'expect':'ready'}
+        steps=[{'id':'s1','title':'Check report','status':'pending','check':check}]
+
+        def check_once(store,run,instruction):
+            store.act('s1','run_command',{'command':check['command'],'inputs':check['inputs']},
+                      result={'stdout':'ready','input_evidence':{'report.txt':'original'}})
+
+        for stdout, expected in [('ready','passed'),('broken','failed')]:
+            with self.subTest(stdout=stdout):
+                e=self.engine(steps,[check_once])
+                command=AsyncMock(return_value={'exit_code':0,'stdout':stdout,
+                                                'input_evidence':{'report.txt':'current'}})
+                e.tools=SimpleNamespace(call=command)
+                _,run,plan=self.run_plan(e)
+                command.assert_awaited_once_with('run_command',{'command':check['command'],'inputs':check['inputs']},run)
+                self.assertEqual(plan['steps'][0]['verdict'],expected)
+                if expected=='passed':
+                    self.assertEqual(plan['steps'][0]['check_result']['input_evidence'],{'report.txt':'current'})
+                else:
+                    self.assertTrue(run['plan_blocked'])
+
+    def test_continue_stops_until_a_prior_interrupted_action_is_reconciled(self):
+        steps=[{'id':'s1','title':'Edit report','status':'blocked',
+                'check':{'type':'file_exists','path':'report.txt'}}]
+        e=self.engine(steps,[self.write('report.txt','ready')])
+        e.store.act('s1','edit_file',{'path':'report.txt'},status='interrupted')
+        _,run,plan=self.run_plan(e)
+        self.assertTrue(run['plan_blocked'])
+        self.assertEqual(self.calls,[])
+        self.assertIn('Activity',plan['steps'][0]['reason'])
+        e.store.actions[0]['status']='retryable'
+        _,_,plan=self.run_plan(e)
+        self.assertEqual(plan['steps'][0]['verdict'],'passed')
+
+    def test_final_file_verification_detects_a_later_step_overwrite(self):
+        steps = [
+            {'id': 's1', 'title': 'Write a report', 'status': 'pending',
+             'check': {'type': 'file_contains', 'path': 'report.md', 'text': 'required'}},
+            {'id': 's2', 'title': 'Write a summary', 'status': 'pending'},
+        ]
+        e = self.engine(steps, [self.write('report.md', 'required'), self.write('report.md', 'summary')])
+        _, _, plan = self.run_plan(e)
+        self.assertEqual(plan['steps'][0]['status'], 'blocked')
+        self.assertIn('Final verification', plan['steps'][0]['reason'])
 
 class Rules(unittest.TestCase):
     def test_go_ahead_starts_the_runner_only_with_steps_left(self):

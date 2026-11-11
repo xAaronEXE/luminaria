@@ -83,6 +83,21 @@ class Store:
     def set_setting(self,key,value): self.execute('INSERT OR REPLACE INTO settings VALUES(?,?)',(key,json.dumps(value)))
     def actions(self,chat):
         return [dict(r,args=json.loads(r['args']),result=json.loads(r['result']) if r['result'] else None) for r in self.rows('SELECT * FROM actions WHERE chat=? ORDER BY created',(chat,))]
+    def reconcile_action(self, chat, action, outcome):
+        from .plan_runner import unknown_outcome
+
+        rows=self.rows('SELECT name,status,result FROM actions WHERE chat=? AND id=?',(chat,action))
+        if not unknown_outcome(rows):
+            raise ValueError('This action no longer has an unknown outcome.')
+        if outcome not in ('applied','no_effect'):
+            raise ValueError('Choose whether the interrupted action took effect.')
+        status='done' if outcome=='applied' else 'retryable'
+        text='You confirmed that this action took effect.' if outcome=='applied' else 'You confirmed that this action had no effect.'
+        evidence=json.loads(rows[0]['result']) if rows[0]['result'] else {}
+        evidence={**evidence,'text':text,'replayed':True,'reconciled':outcome,'reconciled_at':now()}
+        self.execute('UPDATE actions SET status=?,result=? WHERE chat=? AND id=?',
+                     (status,json.dumps(evidence),chat,action))
+
     def action_history(self,status='',query='',limit=200):
         sql='SELECT a.id,a.chat,a.name,a.args,a.tier,a.status,a.result,a.created,c.title,c.archived FROM actions a JOIN chats c ON c.id=a.chat WHERE 1=1'
         params=[]

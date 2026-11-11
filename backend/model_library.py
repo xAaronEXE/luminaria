@@ -349,6 +349,9 @@ def library(store):
                                     'downloadable': False, 'managed': installed and _inside_models(path), 'sha256': ''}]})
         entries[-1]['quants'][0]['fit'] = fit_for(entries[-1], entries[-1]['quants'][0], hw, benchmarks)
         entries[-1]['quants'][0]['launch'] = item.get('launch') or {}
+    from .public_scores import public_score
+    for entry in entries:
+        entry['public_score']=None if entry['local'] else public_score(entry)
     storage = models.model_storage(records)
     storage['partial_bytes'] = _partial_bytes()
     spent = _catalog_spent()

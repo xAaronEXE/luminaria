@@ -9,12 +9,27 @@ async function renderCloudSync(body){
   <div class="s-card s-pad"><h3>Sync through a folder you already sync</h3><p>Pick your OneDrive, Google Drive or Dropbox folder, or a shared folder on your network. Luminaria puts its encrypted sync data in a <strong>Luminaria Sync</strong> folder inside it, and your sync app carries it to your other PCs. No new account, no server.</p>
    <label class="s-label" for="sync-folder">Folder</label><div class="input-row"><input id="sync-folder" placeholder="For example C:\\Users\\you\\OneDrive" autocomplete="off"><button class="btn" id="sync-browse" type="button">Browse…</button></div>
    <label class="s-label" for="sync-join">Joining from another PC? Enter its sync key <small>(leave empty on your first PC)</small></label><input id="sync-join" placeholder="ABCD-EFGH-…" autocomplete="off" spellcheck="false">
-   <div class="form-actions"><button class="btn primary" id="sync-setup">Start syncing</button></div><p id="sync-result" class="small-note" role="status"></p></div>${why}`;
+   <div class="form-actions"><button class="btn primary" id="sync-setup">Start syncing</button></div><p id="sync-result" class="small-note" role="status"></p></div><details class="s-card s-pad"><summary>Use your own Cloudflare Worker</summary>
+   <p>Cloudflare is a separate company. This option requires a Worker with D1 and an R2 subscription in your account. R2 checkout requires a payment method. Check the free allowances and available payment methods before deploying.</p>
+   <p>After deploying the private sync Worker, enter its address and this PC’s device key. Use your existing sync key when adding a device.</p>
+   <label class="s-label" for="sync-service">Worker address</label><input id="sync-service" type="url" autocomplete="off" placeholder="https://your-worker.your-account.workers.dev">
+   <label class="s-label" for="sync-device">Device key</label><input id="sync-device" type="password" autocomplete="off">
+   <div class="form-actions"><button class="btn" id="sync-private" type="button">Verify and connect</button></div><p id="sync-private-result" role="status"></p></details>${why}`;
   body.querySelector('#sync-browse').onclick=safe(async()=>{const r=await api('/workspace/browse','POST',{});if(!r.cancelled&&body.isConnected)body.querySelector('#sync-folder').value=r.path});
   body.querySelector('#sync-setup').onclick=safe(async()=>{const out=body.querySelector('#sync-result');out.textContent='Setting up…';
    const r=await api('/cloud-sync/setup','POST',{mode:'folder',folder:body.querySelector('#sync-folder').value,key:body.querySelector('#sync-join').value});
    if(!body.querySelector('#sync-join').value.trim())showSyncKey(r.key,true);
    const done=await api('/cloud-sync/run','POST',{}).catch(e=>({message:e.message}));toast(done.message);await renderCloudSync(body)});
+  body.querySelector('#sync-private').onclick=safe(async()=>{
+   const button=body.querySelector('#sync-private'),out=body.querySelector('#sync-private-result');
+   const key=body.querySelector('#sync-join').value.trim();
+   button.disabled=true;out.textContent='Checking your Worker…';
+   try{
+    const r=await api('/cloud-sync/setup','POST',{mode:'private',service:body.querySelector('#sync-service').value,device_key:body.querySelector('#sync-device').value,key});
+    if(!key)showSyncKey(r.key,true);
+    await renderCloudSync(body);
+   }catch(error){out.textContent=error.message}finally{button.disabled=false}
+  });
   return}
  body.innerHTML=`<h3 class="settings-page-title">Cloud sync</h3><p class="settings-intro">End-to-end encrypted sync ${s.mode==='folder'?'through <strong>'+esc(s.folder||'your sync folder')+'</strong>':'through your sync service'}. Only your devices can read it.</p><div class="setting-row"><div><h3>${s.enabled?'Sync is on':'Sync is paused'}</h3><p>${s.last_sync?'Last completed: '+esc(new Date(s.last_sync*1000).toLocaleString()):'No sync has completed yet.'}</p></div><span class="badge">${s.running?'Syncing':s.paused_until>Date.now()/1000?'Paused for a while':s.enabled?'Every five minutes while idle':'Paused'}</span></div>${s.error?`<p role="alert" class="warn-note">${esc(s.error)}</p>`:''}
  <div class="form-actions"><button class="btn" id="sync-preview">Review what syncs</button><button class="btn" id="sync-key">Show sync key</button>${s.enabled?'<button class="btn" id="sync-pause">Pause</button><button class="btn primary" id="sync-now">Sync now</button>':'<button class="btn primary" id="sync-enable">Resume</button>'}</div><div id="sync-review"></div><p id="sync-result" class="small-note" role="status"></p>

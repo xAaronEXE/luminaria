@@ -67,7 +67,7 @@
    if(!result.text){label('Listening · no speech recognized');return}
    if(mode==='dictation'){$('#prompt').value+=($('#prompt').value?' ':'')+result.text;$('#prompt').dispatchEvent(new Event('input'));end();$('#prompt').focus();return}
    // A voice turn uses exactly the normal agent route; it cannot grant approvals.
-   await api('/chats/'+target+'/run','POST',{text:result.text,reasoning:$('#reasoning').checked});await refresh();label('Thinking · you can interrupt');
+   await api('/chats/'+target+'/run','POST',{text:result.text,voice:true,reasoning:$('#reasoning').checked});await refresh();label('Thinking · you can interrupt');
   }finally{transcribing=false;voiceTurn(false,target)}
  }
  const spokenText=text=>text.replace(/```[\s\S]*?```/g,' Code is shown in the chat. ').replace(/\[([^\]]+)\]\([^)]+\)/g,'$1').replace(/https?:\/\/\S+/g,'link in the chat').replace(/[*#`_>|]/g,'').trim();

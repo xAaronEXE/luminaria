@@ -244,7 +244,7 @@ async def run_chat(id:str,request:Request):
     from .plan_runner import wants_plan_run
     plan_only=bool(b.get('plan_only',False))
     plan_run=not plan_only and (bool(b.get('plan_run',False)) or (not attachments and wants_plan_run(text,store.setting('plan:'+id,None))))
-    return {'run_id':engine.start(id,bool(b.get('reasoning',False)),plan_only=plan_only,plan_run=plan_run)}
+    return {'run_id':engine.start(id,bool(b.get('reasoning',False)),plan_only=plan_only,plan_run=plan_run,voice=b.get('voice') is True)}
 
 MAX_CONTINUATIONS=5
 
@@ -401,6 +401,17 @@ async def action_history(status:str='',q:str='',limit:int=200):
     if status not in ('','problems','done','error','denied','interrupted','pending','running'): raise ValueError('Unknown status filter')
     return store.action_history(status,q[:200],limit)
 
+@app.post('/api/chats/{chat}/actions/{id}/reconcile')
+async def reconcile_action(chat:str,id:str,request:Request):
+    require_chat(chat)
+    body=await request.json()
+    task=engine.tasks.get(chat)
+    if task and not task.done():
+        raise ValueError('Stop the active task before confirming an interrupted action.')
+    store.reconcile_action(chat,id,body.get('outcome'))
+    broadcast({'type':'changed'})
+    return {'ok':True}
+
 @app.get('/api/actions/{id}/output')
 async def output(id:str):
     if not re.fullmatch('[a-f0-9]{32}',id): raise HTTPException(404)
@@ -499,7 +510,7 @@ async def browse_workspace():
 async def settings_save(request:Request):
     if any(not r.get('finished') for r in engine.runs.values()): raise ValueError('Finish or stop active tasks before changing settings')
     b=await request.json(); allowed={'workspace','endpoint','tokenizer','model','context','output_tokens','compact_ratio','python','node','llama_executable','model_file','projector_file','external_tools','ask_reads'}
-    allowed.update({'admin_grants','drives','coder_model','planner_model','keep_model_loaded','access_mode','orchestrator_model','compact_keep_turns','orchestration_pool','orchestration_enabled'})
+    allowed.update({'admin_grants','drives','coder_model','planner_model','voice_model','keep_model_loaded','access_mode','orchestrator_model','compact_keep_turns','orchestration_pool','orchestration_enabled'})
     if 'orchestration_pool' in b:
         from .orchestration import normalize_pool
         b['orchestration_pool']=normalize_pool(b['orchestration_pool'])
@@ -510,6 +521,13 @@ async def settings_save(request:Request):
     if 'access_mode' in b and b['access_mode'] not in ('review','full'): raise ValueError('Choose review or full access')
     for role in ('planner_model','coder_model'):
         if role in b and (not isinstance(b[role],str) or len(b[role])>300): raise ValueError('Choose a model for this role')
+    if 'voice_model' in b:
+        from .models import registry
+        selected=b['voice_model']
+        if not isinstance(selected,str) or (selected and not any(
+            m['id']==selected and Path(m.get('model_file','')).is_file() for m in registry()
+        )):
+            raise ValueError('Choose an installed model for spoken replies.')
     if 'keep_model_loaded' in b and b['keep_model_loaded'] not in (0,300,1800): raise ValueError('Choose how long to keep the model loaded')
     changes={k:v for k,v in b.items() if k in allowed}
     if 'admin_grants' in changes:
@@ -1176,14 +1194,28 @@ async def cloud_sync_status():
 @app.post('/api/cloud-sync/setup')
 async def cloud_sync_setup(request:Request):
     payload=await request.json()
-    result=cloud_sync.setup(str(payload.get('mode','')),str(payload.get('folder','')),str(payload.get('key','')))
+    mode=str(payload.get('mode',''))
+    args=(mode,str(payload.get('folder','')),str(payload.get('key','')))
+    if mode=='service' and cloud_sync.settings()['mode']!='service':
+        raise ValueError('New sync setups use a synced folder or your own Worker.')
+    if mode=='private':
+        service=str(payload.get('service','')); device=str(payload.get('device_key',''))
+        await cloud_sync.probe_private(service,device)
+        result=cloud_sync.setup(*args,service=service,device_key=device)
+    else:
+        result=cloud_sync.setup(*args)
     return result
 @app.post('/api/cloud-sync/key')
 async def cloud_sync_key():return cloud_sync.show_key()
 @app.post('/api/cloud-sync/stop')
 async def cloud_sync_stop():
     """Stop syncing on this PC and forget where it synced. Synced copies and the data on this PC stay."""
-    await cloud_sync.enable(False); save_config({'sync':{'mode':'off','folder':'','service':''}}); return {'ok':True}
+    await cloud_sync.enable(False)
+    if cloud_sync.settings()['mode']=='private':
+        from .integrations import forget
+        forget('sync_device')
+    save_config({'sync':{'mode':'off','folder':'','service':''}})
+    return {'ok':True}
 @app.post('/api/cloud-sync/preview')
 async def cloud_sync_preview():return await cloud_sync.preview()
 @app.post('/api/cloud-sync/enable')

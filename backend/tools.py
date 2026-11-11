@@ -45,10 +45,10 @@ BUILTINS=[
  schema('edit_file','Replace exactly one occurrence of old_text in a file. '+PATH_NOTE,{'path':S,'old_text':S,'new_text':S},['path','old_text','new_text'],'approve'),
  schema('delete_file','Delete one file (never folders). '+PATH_NOTE+' Always asks.',{'path':S},['path'],'always'),
  schema('search_files','Search text files for a literal string, in the default folder or in path (a folder anywhere on this PC).',{'query':S,'path':S},['query']),
- schema('run_command','Run a PowerShell command (starts in the default folder; use full paths or cd for other places). Full PC access after approval; not a sandbox. python, pip, node and npx are available; pip installs into the Python that run_code uses. timeout is in seconds (default 60, up to 600; give installs 300).',{'command':S,'timeout':I},['command'],'always','execution'),
+ schema('run_command','Run PowerShell. On Windows it runs offline in a temporary workspace. List required workspace files in inputs and use relative paths. Changes to these copies are discarded. Use file tools for lasting edits. timeout is in seconds, up to 600.',{'command':S,'timeout':I,'python':{'type':'boolean','description':'Make bundled Python available offline.'},'inputs':{'type':'array','items':S,'maxItems':128}},['command'],'always','execution'),
  schema('screenshot_page','Take a screenshot of a web page or UI you built, to check how it looks: a file on this PC (HTML) or a localhost address (a dev server you started). If the current model can see images, the screenshot is shown to you next; look for layout problems, overlapping or cut-off text, missing styles and errors, then fix them. Not for other websites.',{'address':S,'width':I,'height':I},['address'],'auto','workspace'),
  schema('admin_task','Do one job that needs administrator rights, from a fixed list. Never run administrator commands any other way. operation: install_program or uninstall_program (package = exact winget id, e.g. Git.Git; find it with run_command "winget search <name>"), enable_windows_feature (feature), service_start, service_stop or service_startup (service; startup = automatic|manual|disabled), firewall_allow_port (port 1024-65535, protocol TCP|UDP, name; private networks only), firewall_remove_rule (name). Windows shows an administrator prompt the user must accept.',{'operation':{'type':'string','enum':['install_program','uninstall_program','enable_windows_feature','service_start','service_stop','service_startup','firewall_allow_port','firewall_remove_rule']},'package':S,'feature':S,'service':S,'startup':S,'port':I,'protocol':S,'name':S},['operation'],'always','execution'),
- schema('run_code','Execute a Python or JavaScript script (starts in the default folder; use full paths for other places). Saved as a file; no hidden REPL state.',{'language':{'type':'string','enum':['python','javascript']},'code':S,'timeout':I},['language','code'],'always','execution'),
+ schema('run_code','Execute Python or JavaScript. On Windows it runs offline in a temporary workspace. List required workspace files in inputs and use relative paths. Changes to these copies are discarded. Use file tools for lasting edits.',{'language':{'type':'string','enum':['python','javascript']},'code':S,'timeout':I,'inputs':{'type':'array','items':S,'maxItems':128}},['language','code'],'always','execution'),
  schema('research','Research a question on the web: searches several phrasings, reads the best pages from different sites and returns the relevant passages with their sources. Use it first for plans, comparisons, current facts and anything unfamiliar. Network requests require approval.',{'question':S,'extra_queries':{'type':'array','items':S,'maxItems':2}},['question'],'approve','research'),
  schema('web_search','Search the public web. Returns status, titles, snippets and source URLs. An empty result means no matches for these words, not that the information does not exist.',{'query':S},['query'],'auto','research'),
  schema('web_fetch','Fetch a public web page or PDF as text. Network request requires approval. browser_fallback allows opening it in the connected browser when it needs JavaScript or sign-in; it never logs in or bypasses blocks.',{'url':S,'refresh':{'type':'boolean'},'browser_fallback':{'type':'boolean'}},['url'],'approve','research'),
@@ -57,7 +57,7 @@ BUILTINS=[
  schema('memory_search','Search the user\'s memory (MEMORY.md) and earlier conversations by literal text.',{'query':S},['query'],'auto','memory'),
  schema('history_read','Retrieve bounded verbatim saved message or tool-output JSON by ID, offset and limit in characters. Small results include parsed original data; large results return excerpts with stable references. Original history remains on disk.',{'message_id':I,'action_id':S,'offset':I,'limit':I},[],'auto','memory'),
  schema('remember','Add a lasting fact or preference to the user\'s memory (MEMORY.md, under Notes). title is a short label. Requires approval.',{'title':S,'content':S},['title','content'],'approve','memory'),
- schema('update_plan','Save or revise the plan for a multi-step task; the user sees it in its own card. Send the full plan each time and use depends_on only for real dependencies. Luminaria, not you, records when a step is finished: while a plan is being carried out you can only add steps.',{'goal':{'type':'string','description':'One sentence: what the finished work achieves.'},'steps':{'type':'array','minItems':1,'maxItems':24,'items':{'type':'object','properties':{'id':S,'title':S,'detail':{'type':'string','description':'What will be done and how it will be checked.'},'status':{'type':'string','enum':['pending','active','done','blocked','skipped']},'depends_on':{'type':'array','items':S},'check':{'type':'object','description':'How Luminaria proves this step worked. command: a command that only succeeds when the work is right (tests, running the program). file_exists / file_contains: a result file. Give one for every step that makes or changes something.','properties':{'type':{'type':'string','enum':['command','file_exists','file_contains']},'command':S,'expect':{'type':'string','description':'Text the command output must contain.'},'path':S,'text':S},'required':['type'],'additionalProperties':False}},'required':['id','title','status'],'additionalProperties':False}}},['steps'],'auto','planning'),
+ schema('update_plan','Save or revise the plan for a multi-step task; the user sees it in its own card. Send the full plan each time and use depends_on only for real dependencies. Luminaria, not you, records when a step is finished: while a plan is being carried out you can only add steps.',{'goal':{'type':'string','description':'One sentence: what the finished work achieves.'},'protected_paths':{'type':'array','items':S,'maxItems':24,'description':'User-specified files or folders the plan must leave untouched.'},'steps':{'type':'array','minItems':1,'maxItems':24,'items':{'type':'object','properties':{'id':S,'title':S,'detail':{'type':'string','description':'What will be done and how it will be checked.'},'status':{'type':'string','enum':['pending','active','done','blocked','skipped']},'depends_on':{'type':'array','items':S},'check':{'type':'object','description':'How Luminaria proves this step worked. command: a command that only succeeds when the work is right (tests, running the program). file_exists / file_contains: a result file. Give one for every step that makes or changes something.','properties':{'type':{'type':'string','enum':['command','file_exists','file_contains']},'command':S,'python':{'type':'boolean'},'inputs':{'type':'array','items':S,'maxItems':128},'expect':{'type':'string','description':'Text the command output must contain.'},'path':S,'text':S},'required':['type'],'additionalProperties':False}},'required':['id','title','status'],'additionalProperties':False}}},['steps'],'auto','planning'),
  schema('update_brief','Propose changes to the pinned working brief for this chat when the user states a goal, constraint, decision, pending item or reference to keep. The user sees and can edit it. You cannot add permissions or change entries the user wrote. Never copy passwords, keys or tokens; record where they are kept instead.',{'changes':{'type':'array','minItems':1,'maxItems':8,'items':{'type':'object','properties':{'op':{'type':'string','enum':['add','replace','remove']},'id':{'type':'string','description':'Entry id for replace or remove.'},'section':{'type':'string','enum':['goals','constraints','decisions','pending','references']},'text':{'type':'string','description':'One short sentence, under 300 characters.'}},'required':['op'],'additionalProperties':False}}},['changes'],'auto','planning'),
  schema('create_schedule','Schedule a recurring prompt while Studio is running. Every side effect still needs its normal approval. Minimum interval 5 minutes.',{'title':S,'prompt':S,'interval_minutes':I},['title','prompt','interval_minutes'],'approve','automation'),
 ]
@@ -111,6 +111,45 @@ class Toolbox:
             for p in (Path(folder),Path(folder)/'scripts'):
                 if p.is_dir(): out.append(str(p))
         return out
+    @staticmethod
+    def isolated_inputs(paths):
+        """Copy only explicitly named, bounded, local files from the default workspace."""
+        from .windows_isolation import drive_type
+        root=Path(CONFIG['workspace']).resolve()
+        limit=16*1024*1024
+        snapshots={}
+        for name in paths:
+            raw=Path(name)
+            if raw.anchor and drive_type(raw.anchor) not in (2, 3, 5, 6):
+                raise ValueError('Command inputs must be on a local drive.')
+            path=workspace_path(name)
+            relative=path.relative_to(root)
+            if drive_type(path.anchor) not in (2, 3, 5, 6) or not path.is_file():
+                raise ValueError('Command inputs must be regular local files in the default workspace.')
+            if relative in snapshots:
+                continue
+            with path.open('rb') as source:
+                data=source.read(limit+1)
+            if len(data)>limit:
+                raise ValueError('Command inputs are limited to 16 MiB in total.')
+            limit-=len(data)
+            snapshots[relative]=data
+        return tuple(snapshots.items())
+
+    @staticmethod
+    def input_evidence(inputs):
+        from hashlib import sha256
+        return {path.as_posix():sha256(data).hexdigest() for path,data in inputs}
+
+    async def isolated_process(self,argv,args,*,script=None,python_bundle=None):
+        from .windows_isolation import execute
+        try:
+            inputs=await asyncio.to_thread(self.isolated_inputs,args.get('inputs',[]))
+            result=await execute(argv,min(max(int(args.get('timeout') or 60),1),600),script=script,inputs=inputs,python_bundle=python_bundle)
+            return {**result,'input_evidence':self.input_evidence(inputs)}
+        except (OSError,ValueError) as error:
+            return {'status':'error','category':'isolation','message':str(error)}
+
     async def process(self,argv,timeout=60,extra_path=()):
         flags=subprocess.CREATE_NO_WINDOW if os.name=='nt' else 0
         proc=await asyncio.create_subprocess_exec(*argv,cwd=CONFIG['workspace'],stdout=asyncio.subprocess.PIPE,stderr=asyncio.subprocess.PIPE,creationflags=flags,env={**os.environ,**luminaria_api_env(),'PATH':os.pathsep.join(runtime_path_dirs()+[os.environ.get('PATH','')]),'PYTHONIOENCODING':'utf-8',**({'PYTHONPATH':os.pathsep.join([*extra_path,os.environ.get('PYTHONPATH','')]).rstrip(os.pathsep)} if extra_path else {})})
@@ -159,6 +198,8 @@ class Toolbox:
             raise ValueError('Computer and command tools are disabled. Enable them in Settings first.')
         if name=='update_plan':
             from .work import plan_steps
+            from .plan_runner import protected_paths
+            protected_paths(a)
             steps=plan_steps(a)
             return {'recorded':len(steps),'active':next((x['id'] for x in steps if x['status']=='active'),None)}
         if name=='update_brief':
@@ -261,17 +302,34 @@ class Toolbox:
         if name=='run_command':
             from .config import command_guard
             command_guard(a['command'])
+            if os.name=='nt':
+                from .windows_isolation import powershell_command
+                from .config import bundled_runtime
+                python_bundle=bundled_runtime('python') if a.get('python') else None
+                if a.get('python') and not python_bundle:
+                    return {'status':'error','category':'needs_setup','message':'The offline command needs Luminaria’s bundled Python.'}
+                return await self.isolated_process(powershell_command(a['command']),a,python_bundle=python_bundle)
             return with_hints(await self.process(['powershell.exe','-NoProfile','-NonInteractive','-Command',python_shims()+a['command']],a.get('timeout',60),extra_path=self.skill_paths(run)))
         if name=='run_code':
-            from .config import task_folder
-            folder=task_folder(run['id'])  # scratch scripts go to Luminaria's sandbox, one folder per task, never among the user's files
-            p=folder/(run['id']+'-'+str(__import__('time').time_ns())+('.py' if a['language']=='python' else '.js'))
-            from .config import command_guard
+            from .config import command_guard, task_folder
             command_guard(a['code'])
-            p.write_text(a['code'],encoding='utf-8')
             kind='python' if a['language']=='python' else 'node'
-            exe=find_runtime(kind)
+            if os.name=='nt' and kind=='python':
+                from .config import bundled_runtime
+                exe=bundled_runtime('python')
+            else:
+                exe=find_runtime(kind)
             if not exe: return {'status':'error','category':'needs_setup','message':runtime_missing_message(kind)}
+            suffix='.py' if kind=='python' else '.js'
+            if os.name=='nt':
+                argv=[str(Path(exe).resolve())]
+                if kind=='node':
+                    argv.extend(['--preserve-symlinks-main','--preserve-symlinks'])
+                return await self.isolated_process(argv,a,script=(suffix,a['code']),
+                                                   python_bundle=argv[0] if kind=='python' else None)
+            folder=task_folder(run['id'])
+            p=folder/(run['id']+'-'+str(__import__('time').time_ns())+suffix)
+            p.write_text(a['code'],encoding='utf-8')
             return with_hints(await self.process([exe,str(p)],a.get('timeout',60),extra_path=self.skill_paths(run)))
         if name=='research':
             from .retrieval import research

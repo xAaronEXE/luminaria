@@ -5,6 +5,7 @@ where the user chooses: a folder they already sync (OneDrive, Google Drive, Drop
 """
 import asyncio,contextlib,hashlib,json,os,re,time,uuid,zipfile,io
 from pathlib import Path,PurePosixPath
+from urllib.parse import urlsplit
 import httpx
 from . import identity,config,profiles,preferences,sync_secure
 MAX_BLOB=20*1024*1024
@@ -45,10 +46,13 @@ class CloudSync:
         from .integrations import read_secrets
         text=read_secrets('sync_key').get('key','')
         return sync_secure.parse_key(text) if text else None
-    def setup(self,mode,folder='',key_text=''):
+    def setup(self,mode,folder='',key_text='',service='',device_key=''):
         """Choose where synced data lives. A new sync key is made unless the user enters the key from another device."""
         from .integrations import write_secrets
-        if mode not in ('folder','service'):raise ValueError('Choose a sync folder or a sync service')
+        if self.lock.locked(): raise ValueError('Wait for sync to finish before changing its storage.')
+        if mode not in ('folder','service','private'):raise ValueError('Choose a sync folder or a sync service')
+        if mode=='private':
+            service,device_key=self.private_settings(service,device_key)
         if mode=='folder':
             target=Path(str(folder or '')).expanduser()
             if not str(folder).strip() or not target.is_dir():raise ValueError('Choose a folder that exists, for example your OneDrive folder')
@@ -56,27 +60,63 @@ class CloudSync:
             if any(target==p or target.is_relative_to(p) for p in config.protected_roots()):raise ValueError('That folder is off limits. Choose your OneDrive, Google Drive or Dropbox folder.')
         key=sync_secure.parse_key(key_text) if str(key_text or '').strip() else (self.key() or sync_secure.new_key())
         write_secrets('sync_key',{'key':sync_secure.format_key(key)})
-        config.save_config({'sync':{'mode':mode,'folder':str(target) if mode=='folder' else '','service':''}})
-        space=sync_secure.key_id(key);self.store.set_setting('cloud_sync_owner',space)
+        if mode=='private': write_secrets('sync_device',{'key':device_key})
+        config.save_config({'sync':{'mode':mode,'folder':str(target) if mode=='folder' else '',
+                                    'service':service if mode=='private' else ''}})
+        space=self.local_scope(key,mode,service);self.store.set_setting('cloud_sync_owner',space)
         state=self.state(space);state['enabled']=True;self.pause_requested=False;self.save(space,state)
         return {'enabled':True,'mode':mode,'key':sync_secure.format_key(key)}
+    @staticmethod
+    def private_settings(service,device_key):
+        parsed=urlsplit(str(service).strip())
+        if (parsed.scheme!='https' or parsed.netloc!=parsed.hostname or parsed.path not in ('','/')
+            or parsed.query or parsed.fragment
+            or not re.fullmatch(r'[a-z0-9-]+[.][a-z0-9-]+[.]workers[.]dev',parsed.hostname or '')):
+            raise ValueError('Enter the HTTPS workers.dev address of your own sync Worker.')
+        key=str(device_key).strip().lower()
+        if not re.fullmatch(r'[a-f0-9]{64}',key): raise ValueError('Enter the 64-character device key for that Worker.')
+        return 'https://'+parsed.hostname,key
+
+    async def probe_private(self,service,device_key):
+        origin,key=self.private_settings(service,device_key)
+        try:
+            async with self.client_factory(timeout=15,headers={'Authorization':'Bearer '+key},
+                                           follow_redirects=False,trust_env=False) as client:
+                status=await sync_secure.ServiceStore(client,origin).status()
+        except httpx.HTTPError as error:
+            raise ValueError('Could not reach your sync Worker.') from error
+        if not status.get('available') or status.get('account_id')!='private-sync':
+            raise ValueError('That address did not identify itself as a private sync Worker.')
+
     def show_key(self):
         key=self.key()
         if not key:raise ValueError('Sync is not set up on this PC')
         return {'key':sync_secure.format_key(key)}
+    @staticmethod
+    def local_scope(key,mode,service):
+        space=sync_secure.key_id(key)
+        return fingerprint([space,service]) if mode=='private' else space
+
     async def account(self):
         """(space id, None). The space is derived from the sync key, so every device with the key shares it."""
-        mode=self.settings()['mode']
+        settings=self.settings();mode=settings['mode']
         if mode=='off':raise ValueError('Sync is off. Set it up in Settings › Cloud sync.')
         key=self.key()
         if not key:raise ValueError('This PC has no sync key yet. Set up sync again, or enter the key from your other device.')
-        return sync_secure.key_id(key),None
+        return self.local_scope(key,mode,settings['service']),None
     @contextlib.asynccontextmanager
     async def open(self):
         """The encrypted store for the chosen place."""
         settings=self.settings();key=self.key();space=sync_secure.key_id(key)
         if settings['mode']=='folder':
             yield sync_secure.EncryptedStore(key,sync_secure.FolderStore(settings['folder'],space));return
+        if settings['mode']=='private':
+            from .integrations import read_secrets
+            origin,token=self.private_settings(settings['service'],read_secrets('sync_device').get('key',''))
+            async with self.client_factory(timeout=60,headers={'Authorization':'Bearer '+token,'User-Agent':'Luminaria-Sync'},
+                                           follow_redirects=False,trust_env=False) as client:
+                yield sync_secure.EncryptedStore(key,sync_secure.ServiceStore(client,origin))
+            return
         info=await identity.status();token=identity.read_session()
         if not info.get('signed_in') or not token:raise ValueError('Sign in to your sync service first')
         async with self.client_factory(timeout=60,headers={'Authorization':'Bearer '+token,'User-Agent':'Luminaria-Sync'},follow_redirects=False) as client:
@@ -141,7 +181,7 @@ class CloudSync:
         return records,blobs,excluded_count
     async def status(self):
         account,_=await self.account();state=self.state(account);settings=self.settings()
-        return {'enabled':state['enabled'],'mode':settings['mode'],'folder':settings['folder'],'last_sync':state.get('last_sync'),'error':self.last.get(account),
+        return {'enabled':state['enabled'],'mode':settings['mode'],'folder':settings['folder'],'service':settings['service'],'last_sync':state.get('last_sync'),'error':self.last.get(account),
                 'conflicts':[{'key':k,**v} for k,v in state.get('conflicts',{}).items()],'running':self.lock.locked(),'paused_until':state.get('not_before'),
                 'storage':state.get('storage'),'excluded':state.get('excluded',0),'encrypted':True}
     async def enable(self,enabled):

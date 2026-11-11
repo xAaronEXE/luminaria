@@ -8,7 +8,7 @@ Everything here is deterministic and reads only the plan and the action journal.
 """
 import hashlib, json, re
 from pathlib import Path
-from .checkpoint import SIDE_EFFECTS, CHANGES, call_key, result_data
+from .checkpoint import SIDE_EFFECTS, CHANGES, call_key, may_change, result_data
 
 ATTEMPTS = 3            # tries per step before it is blocked
 CHECK_TYPES = ('command', 'file_exists', 'file_contains')
@@ -25,6 +25,33 @@ def unfinished(plan):
     return [s for s in (plan or {}).get('steps', []) if s.get('status') not in ('done', 'skipped')]
 
 
+def protected_paths(args):
+    paths=args.get('protected_paths', [])
+    if not isinstance(paths, list) or len(paths)>24 or any(not isinstance(path,str) or not path.strip() or len(path)>500 for path in paths):
+        raise ValueError('Supply up to 24 protected file or folder paths.')
+    return list(dict.fromkeys(path.strip() for path in paths))
+
+
+def step_order(steps):
+    """Preserve plan order among eligible steps, including forward dependencies."""
+    remaining = {step['id']: set(step.get('depends_on', [])) for step in steps}
+    ordered = []
+    while remaining:
+        ready = next((sid for sid, deps in remaining.items() if not deps), None)
+        if ready is None:
+            raise ValueError('Plan dependencies contain a cycle or reference a missing step.')
+        ordered.append(ready)
+        del remaining[ready]
+        for deps in remaining.values():
+            deps.discard(ready)
+    return ordered
+
+
+def unmet_dependencies(step, steps):
+    passed = {s['id'] for s in steps if s.get('status') == 'done' and s.get('verdict') == 'passed'}
+    return [s['title'] for s in steps if s['id'] in step.get('depends_on', []) and s['id'] not in passed]
+
+
 def wants_plan_run(text, plan):
     """A short "go ahead" starts the step runner only when this chat has a plan with steps left."""
     return bool(unfinished(plan)) and len(text or '') <= 120 and bool(GO_AHEAD.match(text or ''))
@@ -39,7 +66,13 @@ def clean_check(check):
     if kind == 'command':
         command = str(check.get('command') or '').strip()
         if not command or TRIVIAL.match(command): raise ValueError('A check command must actually test the result (not echo, exit 0 or true)')
-        out = {'type': kind, 'command': command[:400]}
+        if len(command)>400: raise ValueError('A check command is limited to 400 characters.')
+        out = {'type': kind, 'command': command}
+        inputs = check.get('inputs', [])
+        if not isinstance(inputs, list) or len(inputs)>128 or any(not isinstance(path, str) or not path.strip() for path in inputs):
+            raise ValueError('Command check inputs must be a list of up to 128 workspace file paths.')
+        if inputs: out['inputs'] = list(dict.fromkeys(inputs))
+        if check.get('python') is True: out['python'] = True
         if str(check.get('expect') or '').strip(): out['expect'] = str(check['expect']).strip()[:200]
         return out
     path = str(check.get('path') or '').strip()
@@ -68,7 +101,11 @@ def merge_plan(saved, proposed, plan_run):
     steps = []
     for step in proposed:
         before = old.get(step['id'])
-        if before and before.get('verdict') and before.get('title') == step['title']:
+        revision_fields = ('title', 'detail', 'check')
+        if before and (any(before.get(key) != step.get(key) for key in revision_fields)
+                       or before.get('depends_on', []) != step.get('depends_on', [])):
+            step = {**step, 'status': 'pending'}
+        elif before and before.get('verdict'):
             step = {**step, **{k: before[k] for k in HARNESS_FIELDS if k in before}}
         elif step['status'] == 'done':
             step = {**step, 'verdict': 'unverified', 'reason': 'Marked done by the model; not checked'}
@@ -97,14 +134,28 @@ def plan_actions(store, chat, step_ids):
     return rows
 
 
-def _same_command(a, b):
-    norm = lambda s: re.sub(r'\s+', ' ', str(s or '')).strip().lower()
-    return norm(a) == norm(b)
+def check_command_matches(check, args):
+    return (str(args.get('command') or '').strip() == check['command']
+            and bool(args.get('python')) == bool(check.get('python'))
+            and set(args.get('inputs', [])) == set(check.get('inputs', [])))
+
+
+def check_command_instruction(check):
+    command = check['command']
+    options = {key: check[key] for key in ('inputs', 'python') if key in check}
+    return f'{command} (options: {json.dumps(options, ensure_ascii=False)})' if options else command
 
 
 def _text(result):
     data = result_data({'result': result}) if isinstance(result, dict) else {}
     return ' '.join(str(data.get(k, '')) for k in ('stdout', 'stderr', 'output', 'text', 'message', 'error'))[:4000] or json.dumps(result)[:2000] if result else ''
+
+
+def matching_check_actions(check, actions):
+    return [(i, action) for i, action in enumerate(actions)
+            if action['name']=='run_command' and action['status'] in ('done', 'error')
+            and not (action.get('result') or {}).get('replayed')
+            and check_command_matches(check, action['args'])]
 
 
 def run_check(check, actions, resolve):
@@ -122,9 +173,15 @@ def run_check(check, actions, resolve):
         try: body = path.read_text(encoding='utf-8', errors='replace')
         except OSError as error: return 'failed', str(error)[:200]
         return ('passed', f'{check["path"]} contains the expected text') if check['text'] in body else ('failed', f'{check["path"]} does not contain: {check["text"][:80]}')
-    ran = [a for a in actions if a['name'] == 'run_command' and _same_command(a['args'].get('command'), check['command']) and a['status'] in ('done', 'error')]
-    if not ran: return 'not_run', 'The check command was not run'
-    last = ran[-1]; output = _text(last['result'])
+    matched = matching_check_actions(check, actions)
+    if not matched: return 'not_run', 'The check command was not run'
+    index, last = matched[-1]
+    if last['status'] == 'done' and any(
+        may_change(action) and action['status'] in ('done', 'error')
+        and not (action.get('result') or {}).get('replayed') for action in actions[index + 1:]
+    ):
+        return 'not_run', 'Work changed after the check command ran. Run the check again.'
+    output = _text(last['result'])
     if last['status'] != 'done': return 'failed', ('Check failed: ' + output.strip())[:400]
     if check.get('expect') and check['expect'].lower() not in output.lower(): return 'failed', f'Check ran but its output did not contain: {check["expect"][:80]}'
     return 'passed', 'Check command succeeded'
@@ -186,7 +243,7 @@ def judge(step, actions, flags, check_outcome, check_detail, previous_fingerprin
         return 'blocked', None, f'The step {why} and made no further progress.'
     worked = [a for a in actions if a['status'] == 'done']
     if check_outcome == 'not_run':
-        return ('retry', None, check_detail) if can_retry else ('done', 'unverified', 'The step ended but its check was never run.')
+        return ('retry', None, check_detail) if can_retry else ('blocked', 'unverified', check_detail)
     if not worked:
         return ('retry', None, 'No action was taken in this step.') if attempt == 1 else ('done', 'unverified', 'No action was taken in this step; only a reply was given.')
     return 'done', 'unverified', 'Work was done, but this step had no check to prove it.'
@@ -194,7 +251,7 @@ def judge(step, actions, flags, check_outcome, check_detail, previous_fingerprin
 
 def retry_instruction(step, reason, check, attempt):
     lines = [f'[Step not finished, attempt {attempt + 1} of {ATTEMPTS}] {step["title"]}', f'Why it is not finished: {reason}']
-    if check and check['type'] == 'command': lines.append(f'The check for this step is the command: {check["command"]}\nRun it with run_command and fix the work until it succeeds.')
+    if check and check['type'] == 'command': lines.append(f'The check for this step is the command: {check_command_instruction(check)}\nRun it with run_command and fix the work until it succeeds.')
     elif check: lines.append('The check for this step: ' + (f'{check["path"]} must exist' if check['type'] == 'file_exists' else f'{check["path"]} must contain "{check["text"][:80]}"') + '.')
     lines.append('Use a different approach from what was already tried. Do the work with tools now; do not describe it. '
                  'If the step truly needs no action, say exactly why in one sentence.')

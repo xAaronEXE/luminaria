@@ -1,4 +1,4 @@
-import asyncio, base64, json, re, time
+import asyncio, base64, json, os, re, time
 from contextlib import AsyncExitStack,asynccontextmanager
 from pathlib import Path
 from typing import TypedDict
@@ -10,18 +10,20 @@ from .config import CONFIG, DATA, full_access, find_runtime, whole_pc, APP_HOME,
 from .store import uid,now
 from .work import WorkLog,region_for,plan_steps
 from .orchestration import NoEligibleModel
-from .checkpoint import ROUND_LIMIT,REPEAT_LIMIT,SIDE_EFFECTS,call_key,report
+from .checkpoint import CHANGES,ROUND_LIMIT,REPEAT_LIMIT,SIDE_EFFECTS,call_key,report
 from .usage import Usage
 
 class AlreadyDone(Exception):pass
 
 PLAN_TOOLS=frozenset({'list_skills','load_skill','find_capability','inspect_file','list_files','read_file','search_files','web_search','research','memory_search','history_read','update_plan','update_brief'})
+RESEARCH_TOOLS=frozenset({'research','web_search','web_fetch'})
+REVIEW_TOOLS=frozenset({'inspect_file','list_files','read_file','search_files','history_read'})
 PLAN_ONLY_PROMPT=('Planning-only mode is on: you and the user shape a plan together through conversation. Nothing is carried out. '
  'Read the user\'s latest message and respond to what it actually says. '
  'If they are brainstorming, adding ideas or correcting you: reply briefly with short notes on what you understood or changed, '
  'and ask at most two questions when something important is unclear. Apply real changes to the saved plan with update_plan. '
  'If they ask for the plan, or there is enough to plan: call update_plan with a one-sentence goal and specific, ordered steps, each with a '
- 'short detail saying what will be done, and a check that proves it worked: a command that only succeeds when the work is right (tests, running the program) or a result file that must exist or contain something. Base steps on facts: when the plan depends on files, versions or '
+ 'short detail saying what will be done, and a check that proves it worked: a command that only succeeds when the work is right (tests, running the program) or a result file that must exist or contain something. Record paths the user wants left untouched in protected_paths. Base steps on facts: when the plan depends on files, versions or '
  'how something works, read the files or search the web first (a few targeted lookups), and never invent facts. '
  'Every step stays pending. The user sees the saved plan in its own card, so never print the plan, its JSON or tool calls in your reply, '
  'and never repeat an earlier reply; summarize in a few lines what changed instead. '
@@ -151,6 +153,7 @@ def routing_evidence(model_id):
 
 def plan_text(plan):
     lines=[('Goal: '+plan['goal']) if plan.get('goal') else '']
+    if plan.get('protected_paths'): lines.append('Leave untouched: '+', '.join(plan['protected_paths']))
     for i,s in enumerate(plan.get('steps',[]),1):
         lines.append(f"{i}. [{s['status']}] {s['title']}"+(f" — {s['detail']}" if s.get('detail') else '')+(f" (after {', '.join(s['depends_on'])})" if s.get('depends_on') else ''))
     return '\n'.join(l for l in lines if l)
@@ -200,7 +203,8 @@ class Engine:
             if not snap.next:
                 # A plan cut off between two steps has nothing half-done, but still has steps left.
                 plan=self.store.setting('plan:'+run['chat'],None) or {}
-                if not (run.get('plan_run') and any(s.get('status')=='active' for s in plan.get('steps',[]))): continue
+                from .plan_runner import unfinished
+                if not (run.get('plan_run') and (run.get('plan_review') or unfinished(plan))): continue
                 run['plan_resume_clean']=True
             run['phase']='Interrupted — resume available'; run['resume_available']=True
             self.runs[run['chat']]=run
@@ -255,10 +259,8 @@ class Engine:
             ids=[m['id'] for m in registry() if Path(m['model_file']).is_file()]
         except Exception: ids=[]
         if not ids: return ''
-        return ("Installed local models (these are the only ones; never invent model names): " + ', '.join(ids[:20]) + '. '
-                "Programs you write can use them through Luminaria's local OpenAI-compatible API: base URL from the environment variable "
-                "LUMINARIA_API_BASE, key from LUMINARIA_API_KEY, model from LUMINARIA_MODEL (set when you run them with run_command or run_code). "
-                "Use plain HTTP (requests or the openai package) against that API; do not load these models with transformers or download other models. ")
+        return "Installed local models: " + ', '.join(ids[:20]) + '. '
+
 
     @staticmethod
     def environment():
@@ -275,8 +277,10 @@ class Engine:
                 + Engine.settings_note() +
                 f"Skills: built-in in {built_in}, installed in {installed}; you can read and list them (including scripts) but not change them. "
                 f"Models: {BASE_DATA.parent/'models'}. " + Engine.model_note() +
-                f"Your sandbox for scratch scripts, temporary files and experiments: {sandbox_root()} (make a folder per task there); never leave scratch files among the user's files. "
-                f"Off limits to file tools, commands and scripts: Windows, credential folders and Luminaria's settings, history and sign-in data ({BASE_DATA}). "
+                (("On Windows, commands and scripts run offline in a temporary workspace. Pass workspace files in inputs, use relative paths, and use file tools to make lasting edits. "
+                  "For a PowerShell command that invokes bundled Python, set python=true. ")
+                 if os.name=='nt' else f"Use {sandbox_root()} for scratch scripts and temporary files. ")
+                + f"Do not access Windows system files, credentials, or Luminaria's private data ({BASE_DATA}). "
                 f"Changes under Program Files and ProgramData always need the user's approval. Never run anything as administrator; tell the user which step needs it. ")
     def system(self,private=False):
         """Ordered for the prompt cache: fixed instructions first, then this PC's layout, then the memory files.
@@ -340,6 +344,8 @@ class Engine:
             state.append('Saved plan for this chat (version '+str(plan.get('version',1))+'). The user can see it in its own card. Keep it current '
             'with update_plan; only write it out in full when the user asks to see it.\n'+plan_text(plan))
         if run and run.get('plan_only') and run.get('plan_finalize'): state.append(PLAN_FINALIZE)
+        if run and run.get('lane')=='research':
+            state.append('Research the request with the available web tools. Cite only pages you actually read.')
         if summary: messages[0]['content']+='\n\nWorking summary of prior conversation. Original messages are retrievable by ID.\n'+summary['content']
         recent=self.store.messages(chat,summary['through_id'] if summary else 0)
         if run and run.get('step_from'):
@@ -480,9 +486,12 @@ class Engine:
         if needs[0]=='writing': return 0.7
         return 0.4
     async def completion(self,messages,tools=None,run=None,max_tokens=None):
-        body={'model':self.model_id(),'messages':messages,'stream':True,'stream_options':{'include_usage':True},'max_tokens':max_tokens or CONFIG['output_tokens'],'temperature':self.preset(run,messages),'repeat_penalty':1.08,
+        from .model_profiles import generation_options
+        model=self.model_id()
+        options=generation_options(self.inference.get() or {'id':model}, bool(run and run.get('reasoning')))
+        body={'model':model,'messages':messages,'stream':True,'stream_options':{'include_usage':True},'max_tokens':max_tokens or CONFIG['output_tokens'],'temperature':self.preset(run,messages),'repeat_penalty':1.08,
               # DRY ("don't repeat yourself") sampling: llama.cpp's standard guard against looping text.
-              'dry_multiplier':0.8,'dry_base':1.75,'dry_allowed_length':4,'chat_template_kwargs':{'enable_thinking':bool(run and run.get('reasoning'))}}
+              'dry_multiplier':0.8,'dry_base':1.75,'dry_allowed_length':4,**options}
         if tools: body['tools']=tools; body['tool_choice']='auto'
         text=''; reasoning=''; calls={}; usage={}; timings=None; started=time.monotonic(); first=None; finish=None; checked=0
         async with self.model_stream(body) as response:
@@ -634,6 +643,11 @@ class Engine:
             allowed={'update_plan'} if run['plan_finalize'] else PLAN_TOOLS
             if run['plan_finalize'] and run.get('plan_version'): allowed=set()
             defs=[d for d in defs if d['function']['name'] in allowed]
+        if run.get('lane')=='answer': defs=[]
+        if run.get('lane')=='research':
+            defs=[d for d in defs if d['function']['name'] in RESEARCH_TOOLS]
+        if run.get('plan_review'):
+            defs=[d for d in defs if d['function']['name'] in REVIEW_TOOLS]
         messages=with_nudge(self.context(chat,run),run)
         from .services import may_see_files
         if not may_see_files(self.model_id()):
@@ -726,11 +740,33 @@ class Engine:
                 if not definition: raise ValueError('Unknown tool. Use discover_tools first.')
                 from .services import may_see_files
                 if name not in TEXT_ONLY_TOOLS and not may_see_files(self.model_id()): raise ValueError('This outside model service may not use tools that touch your files.')
+                if run.get('lane')=='answer' or (run.get('lane')=='research' and name not in RESEARCH_TOOLS):
+                    raise ValueError('This request is limited to answering or researching the question.')
+                if run.get('plan_review') and name not in REVIEW_TOOLS: raise ValueError('Final review can inspect results. Report any fixes needed.')
                 if run.get('plan_only') and name not in PLAN_TOOLS: raise ValueError('Planning-only mode: this tool is not available. Finish the plan with update_plan; the user decides whether to carry it out.')
                 if run.get('plan_finalize') and name!='update_plan': raise ValueError('Planning-only mode: the investigation budget is used up. Present the plan now.')
                 if not isinstance(args,dict): raise ValueError('Tool arguments must be an object')
                 from jsonschema import validate
                 validate(args,definition['parameters'])
+                if run.get('plan_run') and name in CHANGES:
+                    from .config import workspace_path
+                    protected=(self.store.setting('plan:'+run['chat'],None) or {}).get('protected_paths',[])
+                    if protected:
+                        target=workspace_path(args['path'],roam=True,write=True)
+                        if any(target.is_relative_to(workspace_path(path,roam=True)) for path in protected):
+                            run['denied']=True
+                            raise PermissionError('The approved plan requires leaving this path untouched.')
+                if run.get('plan_run') and run.get('step_id') and (name in SIDE_EFFECTS or '__' in name):
+                    from . import plan_runner as PR
+                    saved_plan=self.store.setting('plan:'+run['chat'],None) or {}
+                    actions=PR.step_actions(self.store,run['chat'],run['step_id'],saved_plan.get('created',0))
+                    unknown=PR.unknown_outcome(a for a in actions if a['id']!=id)
+                    if unknown:
+                        run['denied']=True
+                        raise ValueError('Confirm the outcome of interrupted action '+unknown['id']+' in Activity before continuing.')
+                    confirmed=next((a for a in actions if a['id']!=id and a['name']==name and
+                                    (a.get('result') or {}).get('reconciled')=='applied' and a['args']==args),None)
+                    if confirmed: raise AlreadyDone(confirmed['id'])
                 if run.get('continuing') and (name in SIDE_EFFECTS or '__' in name):
                     prior=self.store.rows("SELECT id,args,status,step FROM actions WHERE chat=? AND name=? AND created>=? AND id<>? ORDER BY created",(run['chat'],name,run['continuing'],id))
                     if run.get('plan_run'): prior=[p for p in prior if p.get('step')==run.get('step_id') and run.get('resumed_step')==run.get('step_id')]
@@ -765,8 +801,8 @@ class Engine:
                 old=self.store.rows('SELECT * FROM actions WHERE id=?',(id,))[0]
                 if old['status'] in ('done','error','denied'):
                     continue
-                if old['status']=='interrupted':
-                    result={'error':'Action was interrupted during execution. Its outcome is unknown; inspect the workspace before requesting another action.'}; status='error'; run['denied']=True
+                if old['status']=='interrupted' or (old['status']=='running' and (name in SIDE_EFFECTS or '__' in name)):
+                    result={'error':'Action was interrupted during execution. Its outcome is unknown; inspect the workspace before requesting another action.'}; status='interrupted'; run['denied']=True
                 elif not allowed:
                     result={'denied':True,'message':'User declined or approval expired. Do not bypass this decision.'}; status='denied'
                     run['denied']=True
@@ -807,7 +843,11 @@ class Engine:
                     lightweight={**result,'content':[p if p.get('type')!='image' else {'type':'text','text':'Screenshot saved; image follows.'} for p in result['content']]}
                     preview=render(lightweight)
             excerpt=preview[:10000]+(f'\n[Truncated for context. Full output: history_read action_id={id}]' if len(preview)>10000 else '')
-            self.store.execute('UPDATE actions SET status=?,result=? WHERE id=?',(status,json.dumps({'text':excerpt,'images':images}),id))
+            journal={'text':excerpt,'images':images}
+            if duration=='skipped': journal['replayed']=True
+            if name=='run_command' and isinstance(result,dict) and 'input_evidence' in result:
+                journal['input_evidence']=result['input_evidence']
+            self.store.execute('UPDATE actions SET status=?,result=? WHERE id=?',(status,json.dumps(journal),id))
             self.record_tool_outcome(run,id,call,name,status,args if status=='done' and name=='update_plan' else None)
             self.measure('tool',run,id,name,'skipped' if duration=='skipped' else status,None if duration=='skipped' else duration,args.get('name') if name=='load_skill' and isinstance(args,dict) else None)
             self.track_repeats(run,name,call['function']['arguments'],status)
@@ -856,10 +896,13 @@ class Engine:
             run['active_step']=next((s['id'] for s in steps if s['status']=='active'),None)
             self.work(run,'plan.created' if version==1 else 'plan.revised',id,node='plan'+str(version),version=version,steps=steps,source='model-provided',label='Plan from the model' if version==1 else f'Plan revision {version}',evidence={'action':id},region='planning')
             saved=self.store.setting('plan:'+run['chat'],None) or {}
-            from .plan_runner import merge_plan
+            from .plan_runner import merge_plan, protected_paths
             steps=merge_plan(saved,steps,bool(run.get('plan_run')))
+            protected=saved.get('protected_paths',[])
+            if not run.get('plan_run') and 'protected_paths' in plan_args:
+                protected=protected_paths(plan_args)
             goal=saved.get('goal','') if run.get('plan_run') and saved.get('goal') else str(plan_args.get('goal') or '').strip()[:300] or saved.get('goal','')
-            self.store.set_setting('plan:'+run['chat'],{'goal':goal,'steps':steps,'version':saved.get('version',0)+1,'run':run['id'],'planning_only':bool(run.get('plan_only')),'updated':now()})
+            self.store.set_setting('plan:'+run['chat'],{'goal':goal,'steps':steps,'protected_paths':protected,'version':saved.get('version',0)+1,'run':run['id'],'planning_only':bool(run.get('plan_only')),'created':saved.get('created') or run.get('started') or now(),'updated':now()})
 
     # ---- Model lifecycle: once nothing is running, the model is unloaded from the graphics card. ----
     @staticmethod
@@ -890,16 +933,24 @@ class Engine:
         try: r=await self.client.post('http://127.0.0.1:8098/models/unload',timeout=20); return r.status_code<400
         except httpx.HTTPError: return False
 
-    def start(self,chat,reasoning=False,compact_only=False,plan_only=False,continue_from=None,plan_run=False):
+    def start(self,chat,reasoning=False,compact_only=False,plan_only=False,continue_from=None,plan_run=False,voice=False):
         self.cancel_unload()
         if chat in self.runs and not self.runs[chat].get('finished'): raise ValueError('Finish, resume or stop the existing run first')
         if chat in self.tasks and not self.tasks[chat].done(): raise ValueError('This task is already running')
-        run={'id':uid(),'chat':chat,'phase':'Queued','live':'','reasoning_text':'','enabled':set(),'reasoning':reasoning,'started':now(),'context':self.store.setting('context:'+chat,{}),'compact_only':compact_only,'plan_only':bool(plan_only and not compact_only),'plan_run':bool(plan_run and not plan_only and not compact_only)}
+        from .triage import classify
+        lane='do'
+        if plan_only: lane='plan'
+        elif not (compact_only or plan_run or continue_from):
+            latest=next((m.get('content') for m in reversed(self.store.messages(chat)) if m.get('role')=='user'),None)
+            lane=classify(latest,spoken=voice)
+        plan_only=lane=='plan'
+        run={'id':uid(),'chat':chat,'phase':'Queued','live':'','reasoning_text':'','enabled':set(),'reasoning':reasoning,'started':now(),'context':self.store.setting('context:'+chat,{}),'compact_only':compact_only,'lane':lane,'voice_answer':bool(voice and lane=='answer'),'plan_only':bool(plan_only and not compact_only),'plan_run':bool(plan_run and not plan_only and not compact_only)}
         if continue_from:
             run['continuing']=continue_from.get('continuing') or continue_from['started']
             run['continuations']=continue_from.get('continuations',0)+1
         previous=self.store.rows('SELECT id FROM runs WHERE chat=? ORDER BY updated DESC LIMIT 1',(chat,))
-        self.work(run,'run.started',label='Compaction' if compact_only else 'Planning run' if run['plan_only'] else 'Task run',status='running',previous_run=previous[0]['id'] if previous else None)
+        label={'answer':'Quick answer','research':'Research','plan':'Planning run','do':'Task run'}[lane]
+        self.work(run,'run.started',label='Compaction' if compact_only else label,status='running',previous_run=previous[0]['id'] if previous else None)
         self.runs[chat]=run; self.tasks[chat]=asyncio.create_task(self.execute(run,compact_only)); self.emit('changed',chat=chat)
         self.store.save_run(run)
         return run['id']
@@ -910,7 +961,14 @@ class Engine:
             async with self.gpu:
                 from .models import registry
                 from .services import remote_models
-                models=registry()+remote_models();selected=next((m for m in models if m['id']==run.get('model_id')),None)
+                local=registry()
+                models=local+remote_models();selected=next((m for m in models if m['id']==run.get('model_id')),None)
+                voice_model=CONFIG.get('voice_model')
+                if run.get('voice_answer') and voice_model and not selected:
+                    selected=next((m for m in local if m['id']==voice_model and Path(m.get('model_file','')).is_file()),None)
+                    if selected:
+                        run['reasoning']=False
+                        run['routing']={'model_id':selected['id'],'reason':'Quick spoken reply uses your local voice model.'}
                 router=CONFIG.get('orchestrator_model','') if CONFIG.get('orchestration_enabled',True) else ''
                 routed=False
                 if run.get('plan_only') and not compact_only and not selected:
@@ -1012,6 +1070,10 @@ class Engine:
         step['note']=clip_reply(last.get('content',''),limit=900); step['attempts']=state['attempt']; step['reason']=reason
         if outcome!='none': step['check_result']={'outcome':outcome,'detail':detail[:300]}
         if decision=='done' and verdict=='passed':
+            if step['check']['type']=='command':
+                _, action=PR.matching_check_actions(step['check'],actions)[-1]
+                inputs=(action.get('result') or {}).get('input_evidence')
+                if inputs is not None: step['check_result']['input_evidence']=inputs
             step['evidence']=PR.evidence(step.get('check'),PR.plan_actions(self.store,chat,[s.get('id') for s in plan.get('steps',[])]),resolve)
         if decision=='done': step['status']='done'; step['verdict']=verdict
         elif decision=='blocked': step['status']='blocked'; step['verdict']=verdict
@@ -1038,6 +1100,20 @@ class Engine:
         self.store.save_run(run); self.emit('changed',chat=chat)
         result=await self.graph.ainvoke({'run':run,'calls':[],'steps':0},{'recursion_limit':42,'configurable':{'thread_id':run['id']}})
         return bool(result.get('__interrupt__'))
+    async def recheck_offline_command(self, run, check):
+        """Repeat a previously executed plan check using the offline Windows tool."""
+        from . import plan_runner as PR
+        args = {key: check[key] for key in ('command', 'inputs', 'python') if key in check}
+        try:
+            result = await self.tools.call('run_command', args, run)
+        except (OSError, ValueError) as error:
+            return 'failed', str(error), None
+        completed = result.get('exit_code') == 0 and 'input_evidence' in result
+        action = {'name': 'run_command', 'status': 'done' if completed else 'error',
+                  'args': args, 'result': result}
+        outcome, detail = PR.run_check(check, [action], None)
+        return outcome, detail, result.get('input_evidence')
+
     async def run_plan(self,run,models,judge_first=False):
         """Carry out the saved plan one step at a time. Each step starts with a clean context (the plan, notes from earlier
         steps and its own messages) and the right model. After every attempt Luminaria itself decides, from what was actually
@@ -1050,11 +1126,24 @@ class Engine:
         if not plan or not plan.get('steps'): raise ValueError('There is no saved plan to carry out. Make one with Plan only first.')
         chat_model=next((m for m in models if m['id']==CONFIG['model']),None)
         coder=pick_coder(models,CONFIG.get('coder_model','auto'),routing_evidence) or chat_model
-        order=[s['id'] for s in PR.unfinished(plan)]
+        order=PR.step_order(plan['steps'])
+        review_finished=bool(run.pop('plan_review',None) and judge_first)
         for sid in order:
             plan=self.store.setting('plan:'+chat,None) or plan
             current=next((s for s in plan['steps'] if s.get('id')==sid),None)
             if not current or current.get('status') in ('done','skipped'): continue   # removed or settled by the user meanwhile
+            unknown=PR.unknown_outcome(PR.step_actions(self.store,chat,sid,plan.get('created',0)))
+            if unknown:
+                current.update(status='blocked',reason='Confirm the outcome of interrupted action '+unknown['id']+' in Activity before continuing.')
+                current.pop('verdict',None)
+                self.save_plan(chat,plan)
+                break
+            waiting=PR.unmet_dependencies(current,plan['steps'])
+            if waiting:
+                current.update(status='blocked',reason='These steps must pass first: '+', '.join(waiting))
+                current.pop('verdict',None)
+                self.save_plan(chat,plan)
+                break
             state=run.get('step_state') if judge_first and (run.get('step_state') or {}).get('id')==sid else None
             resumed=bool(state)
             if not state:
@@ -1068,7 +1157,7 @@ class Engine:
             n=plan['steps'].index(current)+1; check=current.get('check')
             coding='coding' in keyword_profile(current['title']+' '+current.get('detail',''))['needs']
             worker=coder if coding else chat_model
-            proof=('' if not check else '\nThis step is finished only when '+(f'this command succeeds: {check["command"]} (run it with run_command)' if check['type']=='command'
+            proof=('' if not check else '\nThis step is finished only when '+(f'this command succeeds: {PR.check_command_instruction(check)} (run it with run_command)' if check['type']=='command'
                    else f'{check["path"]} exists' if check['type']=='file_exists' else f'{check["path"]} contains "{check["text"][:80]}"')+'.')
             instruction=(f'[Plan step {n} of {len(plan["steps"])}] {current["title"]}'+(f'\n{current["detail"]}' if current.get('detail') else '')+proof
                          +'\nDo this step now with tools, and check it. Put code in files and run it; do not paste it in your reply. '
@@ -1094,8 +1183,34 @@ class Engine:
         if not PR.unfinished(plan):
             planner=pick_planner(models,CONFIG.get('planner_model','auto'),routing_evidence) or chat_model
             run['phase']='Checking the work'
-            if await self.run_step(run,planner,'[Final check] Check the finished work against the goal'+(f': {plan.get("goal")}' if plan.get('goal') else '')
-                                   +'. Verify the results with tools (run it, run tests, inspect files). Fix small problems; report what works, what does not and what is left.',reasoning=True): return True
+            if not review_finished:
+                run['plan_review']=True
+                if await self.run_step(run,planner,'[Final check] Inspect the finished work against the goal'+(f': {plan.get("goal")}' if plan.get('goal') else '')
+                                       +'. Use the inspection tools and recorded check results. Report problems and any work that remains.',reasoning=True): return True
+                run.pop('plan_review',None)
+            from .config import workspace_path
+            changed=False
+            for step in plan['steps']:
+                check=step.get('check')
+                if step.get('verdict')!='passed' or not check: continue
+                if check['type']=='command':
+                    recorded=(step.get('check_result') or {}).get('input_evidence')
+                    if os.name!='nt' or recorded is None: continue
+                    outcome,detail,inputs=await self.recheck_offline_command(run,check)
+                    if outcome=='passed':
+                        step['check_result']={'outcome':outcome,'detail':detail,'input_evidence':inputs,'final':True}
+                        changed=True
+                    self.work(run,'plan.step','final-'+step['id'],step=step['id'],label=step['title'],
+                              region='planning',status='done' if outcome=='passed' else 'error',
+                              evidence={'decision':'final check','outcome':outcome,'detail':detail[:300]})
+                else:
+                    outcome,detail=PR.run_check(check,[],lambda path:workspace_path(path,roam=True))
+                if outcome!='passed':
+                    step.update(status='blocked',verdict='failed',reason='Final verification: '+detail,
+                                check_result={'outcome':outcome,'detail':detail[:300]})
+                    step.pop('evidence',None)
+                    changed=True
+            if changed: self.save_plan(chat,plan)
         self.plan_report(run)
         return False
 

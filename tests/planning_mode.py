@@ -36,11 +36,34 @@ class PlanningModeTests(unittest.IsolatedAsyncioTestCase):
   h=Harness([stream([{'choices':[{'delta':{'content':'ok'}}]}])])
   bodies=self.capture(h)
   try:
-   chat=h.store.create_chat();h.store.add(chat,{'role':'user','content':'hi'})
+   chat=h.store.create_chat();h.store.add(chat,{'role':'user','content':'Make a list of project files'})
    h.engine.start(chat);await h.engine.tasks[chat]
    self.assertIn('write_file',{t['function']['name'] for t in bodies[0]['tools']})
    self.assertNotIn('Planning-only',json.dumps(bodies[0]['messages']))
    self.assertFalse(h.engine.runs[chat]['plan_only'])
+  finally:h.close()
+
+ async def test_greeting_uses_fast_lane_without_tools(self):
+  h=Harness([stream([{'choices':[{'delta':{'content':'Hello'}}]}])])
+  bodies=self.capture(h)
+  try:
+   chat=h.store.create_chat();h.store.add(chat,{'role':'user','content':'hi'})
+   h.engine.start(chat);await h.engine.tasks[chat]
+   self.assertFalse(bodies[0].get('tools'))
+   self.assertEqual(h.engine.runs[chat]['lane'],'answer')
+  finally:h.close()
+
+ async def test_local_voice_model_is_used_only_for_quick_spoken_replies(self):
+  from unittest.mock import patch
+  h=Harness([stream([{'choices':[{'delta':{'content':'A word that reads the same backwards.'}}]}])])
+  bodies=self.capture(h)
+  try:
+   chat=h.store.create_chat();h.store.add(chat,{'role':'user','content':'What is a palindrome?'})
+   local={'id':'voice-local','model_file':str(Path(CONFIG['workspace'])/'a.txt'),'context':16384}
+   with patch.dict(CONFIG,voice_model=local['id']),patch('backend.models.registry',return_value=[local]):
+    h.engine.start(chat,voice=True);await h.engine.tasks[chat]
+   self.assertEqual(bodies[0]['model'],'voice-local')
+   self.assertFalse(bodies[0].get('tools'))
   finally:h.close()
 
  async def test_plan_is_saved_with_goal_and_offered_on_later_turns(self):

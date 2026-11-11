@@ -1,3 +1,4 @@
+param([switch]$OfflineCatalog)
 $ErrorActionPreference='Stop'
 Set-Location $PSScriptRoot
 $version=(Get-Content "$PSScriptRoot/VERSION" -Raw).Trim()
@@ -24,6 +25,11 @@ if(!(Test-Path "$PSScriptRoot/runtime/local-ai/runtime-vulkan/llama-server.exe")
 if(!(Test-Path "$PSScriptRoot/runtime/agent-tools/python/python.exe") -or !(Test-Path "$PSScriptRoot/runtime/agent-tools/node/node.exe") -or !(Test-Path "$PSScriptRoot/runtime/prereqs/MicrosoftEdgeWebview2Setup.exe")){& "$PSScriptRoot/scripts/fetch-agent-tools.ps1"}
 # Built-in catalog of skills (openly licensed GitHub repositories) and connectors (official MCP Registry), refreshed each build.
 # The skill catalog reads GitHub with the same signed-in gh account that publishes releases.
+if($OfflineCatalog){
+  if(!(Test-Path "$PSScriptRoot/catalog/skills.json.gz") -or !(Test-Path "$PSScriptRoot/.build/community-skills")){
+    throw 'Offline build needs an existing skills catalog and pre-installed skill snapshot.'
+  }
+} else {
 if(!$env:GITHUB_TOKEN -and (Get-Command gh -ErrorAction SilentlyContinue)){
   $ghToken=(& gh auth token 2>$null | Out-String).Trim()
   if($ghToken){$env:GITHUB_TOKEN=$ghToken}else{Write-Host 'gh is installed but not signed in:'; & gh auth status 2>&1 | Write-Host}
@@ -38,6 +44,9 @@ foreach($kind in 'skills','connectors'){
 }
 & $python "$PSScriptRoot/scripts/build-catalog.py" preinstall "$PSScriptRoot/.build/community-skills"
 if($LASTEXITCODE){throw 'Could not prepare the pre-installed skills'}
+  & $python "$PSScriptRoot/scripts/refresh-public-scores.py"
+  if($LASTEXITCODE -and !(Test-Path "$PSScriptRoot/catalog/epoch-eci.json")){throw 'Could not refresh public model scores'}
+}
 # Microsoft C++ runtime files next to the model server and the built-in Python, so they start without the Visual C++ Redistributable.
 foreach($dll in 'msvcp140.dll','msvcp140_1.dll','msvcp140_2.dll','vcruntime140.dll','vcruntime140_1.dll'){
   $src=Join-Path $env:SystemRoot "System32\$dll"

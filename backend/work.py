@@ -53,6 +53,8 @@ def plan_steps(args):
     for step in out:
         unknown = [d for d in step['depends_on'] if d not in ids or d == step['id']]
         if unknown: raise ValueError('Unknown plan dependency: ' + ', '.join(unknown))
+    from .plan_runner import step_order
+    step_order(out)
     return out
 
 class WorkLog:

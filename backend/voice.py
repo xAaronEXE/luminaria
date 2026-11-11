@@ -8,7 +8,9 @@ VOICE = FOLDER / 'en_US-lessac-medium.onnx'
 _recognizer = None
 _speaker = None
 _speaker_id = None
+_kokoro = None
 VOICES={
+ 'kokoro-heart':{'name':'Heart (Kokoro)','character':'Female · US English','quality':'Neural','file':'kokoro-v1.0.int8'},
  'lessac':{'name':'Lessac','character':'Female · US English','quality':'Medium','path':'en/en_US/lessac/medium','file':'en_US-lessac-medium'},
  'amy':{'name':'Amy','character':'Female · US English','quality':'Medium','path':'en/en_US/amy/medium','file':'en_US-amy-medium'},
  'ryan':{'name':'Ryan','character':'Male · US English','quality':'High','path':'en/en_US/ryan/high','file':'en_US-ryan-high'},
@@ -18,8 +20,16 @@ def voice_path(id):
     if id not in VOICES: raise ValueError('Unknown voice')
     return FOLDER/(VOICES[id]['file']+'.onnx')
 
+def voice_installed(ident):
+    if ident == 'kokoro-heart':
+        from .voice_assets import ASSETS
+        return all((FOLDER / asset['name']).is_file() for asset in ASSETS[ident])
+    path=voice_path(ident)
+    return path.is_file() and path.with_suffix('.onnx.json').is_file()
+
+
 def voice_catalog():
-    return [{'id':id,**v,'installed':voice_path(id).exists() and voice_path(id).with_suffix('.onnx.json').exists()} for id,v in VOICES.items()]
+    return [{'id':ident,**voice,'installed':voice_installed(ident)} for ident,voice in VOICES.items()]
 
 _download_lock = threading.Lock()
 
@@ -68,7 +78,7 @@ _tts_lock = threading.Lock()
 
 def status():
     return {'ready': all((STT/f).exists() for f in ['model.bin','config.json','tokenizer.json','vocabulary.txt']) and VOICE.exists() and VOICE.with_suffix('.onnx.json').exists(),
-            'recognition':'Whisper base.en · CPU INT8', 'speech':'Piper Lessac · CPU',
+            'recognition':'Whisper base.en · CPU INT8', 'speech':'Piper or Kokoro · CPU',
             'local':True, 'audio_saved':False,'voices':voice_catalog()}
 
 def install_models():
@@ -96,12 +106,17 @@ def transcribe(raw):
     return {'text':text,'seconds':round(time.monotonic()-start,3)}
 
 def synthesize(text,voice_id='lessac'):
-    global _speaker,_speaker_id
+    global _speaker,_speaker_id,_kokoro
     text=str(text).strip()
     if not text or len(text)>1600: raise ValueError('Speech requires 1–1600 characters')
     path=voice_path(voice_id)
-    if not path.exists(): raise ValueError('Download this voice in Voice settings first')
+    if not voice_installed(voice_id): raise ValueError('Download this voice in Voice settings first')
     with _tts_lock:
+        if voice_id=='kokoro-heart':
+            if _kokoro is None:
+                from .kokoro_voice import KokoroVoice
+                _kokoro=KokoroVoice(FOLDER)
+            return _kokoro.synthesize(text)
         if _speaker is None or _speaker_id!=voice_id:
             from piper import PiperVoice
             _speaker=PiperVoice.load(str(path));_speaker_id=voice_id

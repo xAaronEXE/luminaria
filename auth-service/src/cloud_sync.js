@@ -13,11 +13,14 @@ async function spend(env,kind){
  }
  return true;
 }
-export async function cloudSync(request,env){
+async function sessionAccount(token,env,time){
+ return await env.DB.prepare('SELECT m.account_id FROM sessions s JOIN account_members m ON m.identity_id=s.identity_id WHERE s.token_hash=? AND s.expires>? AND (s.created IS NULL OR s.created>?)').bind(await digest(token),time,time-90*86400).first();
+}
+export async function cloudSync(request,env,accountFor=sessionAccount){
  const path=new URL(request.url).pathname,time=Math.floor(Date.now()/1000);
  const token=request.headers.get('Authorization')?.match(/^Bearer ([a-f0-9]{64})$/)?.[1];
  if(!token)return reply({error:'Sign-in required'},401);
- const me=await env.DB.prepare('SELECT m.account_id FROM sessions s JOIN account_members m ON m.identity_id=s.identity_id WHERE s.token_hash=? AND s.expires>? AND (s.created IS NULL OR s.created>?)').bind(await digest(token),time,time-90*86400).first();
+ const me=await accountFor(token,env,time);
  if(!me)return reply({error:'Session expired or revoked'},401);
  if(env.SYNC_ENABLED!=='true')return reply({error:'Cloud sync is not enabled by the service owner',code:'sync_disabled'},503);
  if(!env.SYNC_BUCKET)return reply({error:'Cloud sync storage is not configured'},503);

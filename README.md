@@ -201,12 +201,12 @@ Open **Settings › Permissions**, or click the mode chip at the top of the wind
 | **Hands-free** | Run on their own | Run on their own |
 
 - **Grant full access** turns on Hands-free and every tool in one click.
-- **Computer and command tools** turns on PowerShell, code, the browser and Windows desktop tools. These act with your Windows permissions.
+- **Computer and command tools** turns on PowerShell, code, the browser and Windows desktop tools.
 - **Ask before reads too** makes *Ask me first* also ask before reading files and searching.
 - **Delete** always asks first and keeps a recovery copy.
 - **Reset remembered approvals** clears any "always allow" choices.
 
-Luminaria isn't an operating-system sandbox. Anything you allow it to do runs as your Windows user.
+On Windows, PowerShell and scripts run offline in temporary workspaces. They can use copies of selected workspace files, and any changes to those copies are discarded. Luminaria’s file tools save lasting changes with your Windows permissions. Desktop and trusted connector tools also use your Windows permissions.
 
 ## Memory
 
@@ -300,6 +300,8 @@ To stop, choose **Unpair** on the paired PC's card, or turn off **Let other PCs 
 **Settings › Appearance**: light, dark or follow Windows, an accent color, every color editable for each mode, the background glow color profiles (**Aurora**, **Ember**, **Ocean**, **Forest**, **Mono** or off), the living orb, motion level, and a reduced-graphics mode for older PCs. Your color profile carries across light and dark mode, and every page, including Model services and Paired PCs, uses its colors. Luminaria also follows Windows' *reduce motion* setting.
 
 ## Profiles, sign-in and cloud sync
+
+To use your own Cloudflare Worker, follow the [private sync setup guide](auth-service/PRIVATE-SYNC.md).
 
 - **Profiles** keep separate chats, memory, settings and files for each person who uses the PC.
 - **Sign-in** with Google, GitHub or Discord happens in your browser. You can link several sign-in methods to one account in **Settings › Sign-in & devices**, and require sign-in when Luminaria opens.
