@@ -49,7 +49,9 @@ try {
   if($LASTEXITCODE -ne 0){throw 'Could not back up installer registration. Setup was not opened.'}
  }
  'Processes exited; opening verified installer.' | Add-Content -LiteralPath $log
- $setup=Start-Process -FilePath $Installer -ArgumentList @('/SP-','/VERYSILENT','/SUPPRESSMSGBOXES','/NORESTART','/DIR="'+$app+'"','/LOG="'+(Join-Path (Split-Path -Parent $Installer) 'setup.log')+'"') -PassThru
+ $setupLog=Join-Path (Split-Path -Parent $Installer) 'setup.log'
+ $setupArgs=@('/SP-','/VERYSILENT','/SUPPRESSMSGBOXES','/NORESTART',('/DIR="{0}"' -f $app),('/LOG="{0}"' -f $setupLog))
+ $setup=Start-Process -FilePath $Installer -ArgumentList $setupArgs -PassThru
  $setup.WaitForExit()
  if($setup.ExitCode -eq 0) {
  Start-Sleep -Seconds 10
