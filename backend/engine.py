@@ -602,6 +602,16 @@ class Engine:
         run=state['run']; chat=run['chat']
         self.runs[chat]=run
         run.pop('resume_available',None)
+        shots=run.pop('pending_images',[])
+        if shots:
+            model=self.inference.get() or {}
+            sees=bool(model.get('projector_file') and Path(model['projector_file']).is_file()) or model.get('vision')
+            if sees:
+                parts=[{'type':'text','text':'[Automatic, not from the user] Screenshot'+('s' if len(shots)>1 else '')+' you asked for: '+', '.join(s['address'] for s in shots)+'. Check it against what was asked; fix anything that looks wrong.'}]
+                parts+=[{'type':'image_ref','id':s['id']} for s in shots[-2:]]
+                self.store.add(chat,{'role':'user','content':parts,'screenshot':True})
+            else:
+                self.store.add(chat,{'role':'user','content':'[Automatic, not from the user] The screenshot was saved, but the current model cannot see images, so it was not checked visually. Say so in your report.','screenshot':True})
         for text in self.steering.pop(chat,[]):
             # Added between rounds, after every tool result of the last round, so the conversation stays well-formed.
             self.store.add(chat,{'role':'user','content':'[Sent while you were working — take this into account now, then carry on]\n'+text,'steer':True})

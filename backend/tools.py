@@ -46,6 +46,7 @@ BUILTINS=[
  schema('delete_file','Delete one file (never folders). '+PATH_NOTE+' Always asks.',{'path':S},['path'],'always'),
  schema('search_files','Search text files for a literal string, in the default folder or in path (a folder anywhere on this PC).',{'query':S,'path':S},['query']),
  schema('run_command','Run a PowerShell command (starts in the default folder; use full paths or cd for other places). Full PC access after approval; not a sandbox. python, pip, node and npx are available; pip installs into the Python that run_code uses. timeout is in seconds (default 60, up to 600; give installs 300).',{'command':S,'timeout':I},['command'],'always','execution'),
+ schema('screenshot_page','Take a screenshot of a web page or UI you built, to check how it looks: a file on this PC (HTML) or a localhost address (a dev server you started). If the current model can see images, the screenshot is shown to you next; look for layout problems, overlapping or cut-off text, missing styles and errors, then fix them. Not for other websites.',{'address':S,'width':I,'height':I},['address'],'auto','workspace'),
  schema('admin_task','Do one job that needs administrator rights, from a fixed list. Never run administrator commands any other way. operation: install_program or uninstall_program (package = exact winget id, e.g. Git.Git; find it with run_command "winget search <name>"), enable_windows_feature (feature), service_start, service_stop or service_startup (service; startup = automatic|manual|disabled), firewall_allow_port (port 1024-65535, protocol TCP|UDP, name; private networks only), firewall_remove_rule (name). Windows shows an administrator prompt the user must accept.',{'operation':{'type':'string','enum':['install_program','uninstall_program','enable_windows_feature','service_start','service_stop','service_startup','firewall_allow_port','firewall_remove_rule']},'package':S,'feature':S,'service':S,'startup':S,'port':I,'protocol':S,'name':S},['operation'],'always','execution'),
  schema('run_code','Execute a Python or JavaScript script (starts in the default folder; use full paths for other places). Saved as a file; no hidden REPL state.',{'language':{'type':'string','enum':['python','javascript']},'code':S,'timeout':I},['language','code'],'always','execution'),
  schema('research','Research a question on the web: searches several phrasings, reads the best pages from different sites and returns the relevant passages with their sources. Use it first for plans, comparisons, current facts and anything unfamiliar. Network requests require approval.',{'question':S,'extra_queries':{'type':'array','items':S,'maxItems':2}},['question'],'approve','research'),
@@ -247,6 +248,11 @@ class Toolbox:
         if name=='search_files':
             from .sources import search_workspace
             return await search_workspace(workspace_path(a.get('path') or '.'),a['query'])
+        if name=='screenshot_page':
+            from . import screenshot
+            shot=await screenshot.take(a['address'],lambda p:workspace_path(p),DATA/'attachments',a.get('width'),a.get('height'))
+            run.setdefault('pending_images',[]).append({'id':shot.name,'address':a['address']})
+            return {'saved':shot.name,'message':'Screenshot taken. It is shown to you in the next message if the current model can see images.'}
         if name=='admin_task':
             from . import admin_helper
             from .config import task_folder
