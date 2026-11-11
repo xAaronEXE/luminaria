@@ -112,9 +112,12 @@ class Toolbox:
     async def process(self,argv,timeout=60,extra_path=()):
         flags=subprocess.CREATE_NO_WINDOW if os.name=='nt' else 0
         proc=await asyncio.create_subprocess_exec(*argv,cwd=CONFIG['workspace'],stdout=asyncio.subprocess.PIPE,stderr=asyncio.subprocess.PIPE,creationflags=flags,env={**os.environ,**luminaria_api_env(),'PATH':os.pathsep.join(runtime_path_dirs()+[os.environ.get('PATH','')]),'PYTHONIOENCODING':'utf-8',**({'PYTHONPATH':os.pathsep.join([*extra_path,os.environ.get('PYTHONPATH','')]).rstrip(os.pathsep)} if extra_path else {})})
+        from .jobs import Job,keep_alive
+        job=Job(); job.add(proc.pid)   # everything this command starts ends with it, even if Luminaria closes
         try:
             limit=min(max(int(timeout or 60),1),600)
             out,err=await asyncio.wait_for(proc.communicate(),limit)
+            keep_alive(job)   # something it left running on purpose (a dev server) keeps running until Luminaria closes
             return {'exit_code':proc.returncode,'stdout':out.decode('utf-8','replace'),'stderr':err.decode('utf-8','replace')}
         except BaseException as stopped:
             timed_out=isinstance(stopped,asyncio.TimeoutError)
@@ -124,6 +127,7 @@ class Toolbox:
                     await killer.wait()
                 else: proc.kill()
                 await proc.wait()
+            job.close()
             if timed_out:
                 return {'exit_code':None,'timed_out':True,'error':f'Stopped after {limit} seconds without finishing. Installs and long jobs need a longer timeout (up to 600).'}
             raise
