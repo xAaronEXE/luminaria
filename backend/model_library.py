@@ -356,9 +356,10 @@ def library(store):
         rated = [q['fit'] for q in entry['quants'] if q.get('fit')]
         best = min(rated, key=lambda f: fit.ORDER.index(f['rating']), default=None)
         entry['fit'] = best and {k: best[k] for k in ('rating', 'label', 'meaning')}
-        # Highlight the highest-quality quantization that still earns the best rating.
+        # Highlight the highest-quality quantization that still earns the best rating. When even the best rating
+        # means it runs slowly or worse, bigger is only slower, so the smallest one is the best fit.
         top = [q for q in entry['quants'] if q.get('fit') and best and q['fit']['rating'] == best['rating']]
-        if top: max(top, key=lambda q: q.get('bytes') or 0)['best_fit'] = True
+        if top: (max if best['rating'] in ('recommended', 'good') else min)(top, key=lambda q: q.get('bytes') or 0)['best_fit'] = True
     machine = {k: hw[k] for k in ('gpu', 'vram_total', 'vram_free', 'integrated', 'ram_total', 'source')}
     return {'active': CONFIG.get('model'), 'context': CONFIG.get('context'), 'storage': storage, 'machine': machine,
             'budget': {'limit': BUDGET, 'used': spent, 'remaining': max(0, BUDGET - spent)},

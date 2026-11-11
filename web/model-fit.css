@@ -98,7 +98,7 @@
 .model-group.abliterated h4{background:linear-gradient(100deg,var(--unbound-1),var(--unbound-2));-webkit-background-clip:text;background-clip:text;color:transparent}
 .model-group.abliterated h4 span{-webkit-text-fill-color:var(--muted)}
 
-#model-detail.abliterated-card{position:relative;background-image:none!important;padding-top:0!important;border-radius:20px;
+#model-detail.abliterated-card{background-image:none!important;padding-top:0!important;border-radius:20px;
   box-shadow:inset 0 0 0 1px color-mix(in srgb,var(--unbound-1) 30%,transparent),0 30px 70px -40px var(--unbound-glow)}
 #model-detail.abliterated-card::before{content:'';position:absolute;left:0;right:0;top:0;height:140px;border-radius:20px 20px 0 0;pointer-events:none;
   background:radial-gradient(60% 100% at 15% 0%,color-mix(in srgb,var(--unbound-1) 22%,transparent),transparent 70%),radial-gradient(50% 100% at 85% 0%,color-mix(in srgb,var(--unbound-2) 22%,transparent),transparent 70%)}
@@ -144,3 +144,5 @@ body.motion-off .model-option.abliterated::after,body.motion-off #model-detail.a
 /* Light mode: the same hues, deep enough to read on white. */
 :root[data-theme=light]{--fit-recommended:#13804A;--fit-good:#4D7C0F;--fit-slow:#8A6100;--fit-unstable:#B4530F;--fit-too_large:#B42323}
 .option-flag.ai-score.old{color:var(--dim);border-style:dashed}
+/* The selected-model panel stays in view while the list scrolls (sticky also anchors the card's glow). */
+@media(max-width:850px){#model-detail.abliterated-card{position:relative}}
