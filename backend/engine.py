@@ -104,7 +104,19 @@ def text_only(messages,full_system,private_system):
     return out
 
 def with_nudge(messages,run):
-    return messages+[{'role':'user','content':NUDGES.get(run.get('nudge_kind'),NUDGE_TEXT)}] if run.get('nudge_pending') else messages
+    return messages+[{'role':'user','content':run.get('nudge_text') or NUDGES.get(run.get('nudge_kind'),NUDGE_TEXT)}] if run.get('nudge_pending') else messages
+
+URL=re.compile(r'https?://[^\s)\]>"\'`]+',re.I)
+def _url_key(url):
+    return re.sub(r'^https?://(www\.)?','',url.rstrip('.,;:!?').rstrip('/').lower())
+def unsupported_links(reply,tool_texts):
+    """Links in a reply that never appeared in anything the assistant actually read during this task."""
+    seen={_url_key(u) for t in tool_texts for u in URL.findall(t or '')}
+    out=[]
+    for u in URL.findall(str(reply or '')):
+        k=_url_key(u)
+        if k and k not in seen and not any(s.startswith(k) or k.startswith(s) for s in seen) and u not in out: out.append(u.rstrip('.,;:!?'))
+    return out[:8]
 
 SKILL_COMMAND=re.compile(r'^\s*/skill\s+([A-Za-z0-9][\w.:-]{0,80})',re.I)
 WANTS_WORK=re.compile(r"\b(?:build|code|make|create|write|implement|put (?:it|this|everything|it all) together|do (?:it|this|that|the whole|it all)|set (?:it|this) up|fix|run (?:it|this)|how do i run)\b",re.I)
@@ -644,13 +656,25 @@ class Engine:
         raw=run.pop('usage_raw',None) or {}
         self.measure('generation',run,message_id,self.model_id(),run.get('metrics',{}),raw.get('usage') or {},raw.get('timings'),run.get('reasoning'))
         self.store.save_run(run); self.emit('changed',chat=chat)
-        run.pop('nudge_pending',None)
+        run.pop('nudge_pending',None); run.pop('nudge_text',None)
         run['announced']=bool(not msg.get('tool_calls') and defs and self.announces(msg.get('content')))
         run['nudge_kind']='announced'
         if not msg.get('tool_calls') and defs and not run['announced'] and not run.get('plan_only'):
             asked=last_user_text(self.store.messages(chat))
             if WANTS_WORK.search(asked) and code_lines(msg.get('content'))>=12: run['announced']=True; run['nudge_kind']='code'
             elif HANDOFF.search(str(msg.get('content') or '')) and WANTS_WORK.search(asked): run['announced']=True; run['nudge_kind']='handoff'
+        if not msg.get('tool_calls') and not run['announced'] and URL.search(str(msg.get('content') or '')):
+            # Sources must be pages it actually read in this task. A link that appeared nowhere in its tool results was made up or remembered.
+            recent=[m for m in self.store.messages(chat) if m.get('created',0)>=run.get('started',0)]
+            texts=[m.get('content') if isinstance(m.get('content'),str) else json.dumps(m.get('content')) for m in recent if m.get('role')=='tool']
+            if texts:
+                # Links the user gave, or that came up earlier in the chat, count as known too.
+                known=[m.get('content') if isinstance(m.get('content'),str) else json.dumps(m.get('content')) for m in self.store.messages(chat) if m.get('role') in ('user','tool')]
+                made_up=unsupported_links(msg.get('content'),known)
+                if made_up:
+                    run['announced']=True; run['nudge_kind']='sources'
+                    run['nudge_text']=('[Automatic check, not from the user] These links in your reply were not in any page or search result you read in this task: '
+                                       +', '.join(made_up)+'. Remove them, or open them with your research tools and cite only what they actually say. Then give the corrected answer.')
         self.work(run,'generation.completed',turn,node=node,status='done',region='generation',tool_calls=len(msg.get('tool_calls',[])),evidence={'message':message_id},metrics={k:run.get('metrics',{}).get(k) for k in ('completion_tokens','tokens_per_second','elapsed')})
         return {'run':run,'calls':msg.get('tool_calls',[]),'steps':state['steps']+1}
 
