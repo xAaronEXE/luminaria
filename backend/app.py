@@ -481,6 +481,8 @@ async def settings():
     try:
         import ctypes;mask=ctypes.windll.kernel32.GetLogicalDrives();every=[f'{chr(65+i)}:' for i in range(26) if mask>>i&1]
     except Exception: every=[]
+    from .admin_helper import OPERATIONS as admin_jobs
+    public['admin_jobs']=admin_jobs; public['admin_grants']=CONFIG.get('admin_grants') or []
     public['drives']=CONFIG.get('drives','all'); public['drives_available']=every; public['drives_required']=sorted({drive_of(CONFIG['workspace']),drive_of(DATA)}-{'/'})
     from .config import WORKSPACE_PROBLEM
     public['workspace_problem']=WORKSPACE_PROBLEM
@@ -495,7 +497,7 @@ async def browse_workspace():
 async def settings_save(request:Request):
     if any(not r.get('finished') for r in engine.runs.values()): raise ValueError('Finish or stop active tasks before changing settings')
     b=await request.json(); allowed={'workspace','endpoint','tokenizer','model','context','output_tokens','compact_ratio','python','node','llama_executable','model_file','projector_file','external_tools','ask_reads'}
-    allowed.update({'drives','coder_model','planner_model','keep_model_loaded','access_mode','orchestrator_model','compact_keep_turns','orchestration_pool','orchestration_enabled'})
+    allowed.update({'admin_grants','drives','coder_model','planner_model','keep_model_loaded','access_mode','orchestrator_model','compact_keep_turns','orchestration_pool','orchestration_enabled'})
     if 'orchestration_pool' in b:
         from .orchestration import normalize_pool
         b['orchestration_pool']=normalize_pool(b['orchestration_pool'])
@@ -508,6 +510,11 @@ async def settings_save(request:Request):
         if role in b and (not isinstance(b[role],str) or len(b[role])>300): raise ValueError('Choose a model for this role')
     if 'keep_model_loaded' in b and b['keep_model_loaded'] not in (0,300,1800): raise ValueError('Choose how long to keep the model loaded')
     changes={k:v for k,v in b.items() if k in allowed}
+    if 'admin_grants' in changes:
+        from .admin_helper import OPERATIONS
+        g=changes['admin_grants']
+        if not isinstance(g,list) or any(x not in OPERATIONS for x in g): raise ValueError('Unknown admin helper job')
+        changes['admin_grants']=sorted(set(g))
     if 'drives' in changes:
         d=changes['drives']
         if d!='all' and not (isinstance(d,list) and d and all(isinstance(x,str) and re.fullmatch(r'[A-Za-z]:',x) for x in d)): raise ValueError('Choose all drives or at least one drive')

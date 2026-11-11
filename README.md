@@ -183,7 +183,11 @@ The **default folder** (Settings › Default folder) is simply where new files g
 
 **Program Files and ProgramData** are open to Luminaria, but changing anything there always asks you first, even in Full access.
 
-**No administrator commands.** Luminaria doesn't run commands as administrator. When a step needs it, it tells you so you can do that part.
+**No administrator commands, but an admin helper.** Luminaria never runs administrator commands itself. For a fixed list of jobs (install or uninstall a program with winget, turn on a Windows feature, start, stop or configure a service, allow a port on private networks) it uses a small helper that only does that job. It asks you first and Windows shows its own administrator prompt. **Settings › Permissions** lets Hands-free do chosen jobs without asking.
+
+**Sandbox.** Scripts Luminaria writes for itself and its temporary files go in a **Luminaria Sandbox** folder in your user folder, one folder per task.
+
+**Drives.** Luminaria can see and work on every drive. Untick drives in **Settings › Permissions** to keep it off them.
 
 **Undo file changes.** After a task, **Undo file changes** in the status line shows every file the task changed, created or deleted, and puts them back. A file that you or another program changed afterwards is left alone, and anything a command or script did (an installed program, an online action) can't be undone; the list says so before you confirm.
 

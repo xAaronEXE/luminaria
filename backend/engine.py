@@ -712,6 +712,11 @@ class Engine:
                 existing=self.store.rows('SELECT * FROM actions WHERE id=?',(id,))
                 if existing: tier=existing[0]['tier']
                 elif always_ask(name,args): tier='approve'   # Program Files and ProgramData: asks in every mode
+                elif name=='admin_task':
+                    # Asks every time, in every mode, unless the user granted this exact kind of job to Hands-free.
+                    from .admin_helper import build
+                    build(args.get('operation'),{k:v for k,v in args.items() if k!='operation'})   # refuse anything off the list before asking
+                    tier='auto' if full_access() and args.get('operation') in (CONFIG.get('admin_grants') or []) else 'approve'
                 elif tier=='approve' and self.store.setting('permission:'+name,False): tier='auto'
                 self.store.execute('INSERT OR IGNORE INTO actions(id,chat,name,args,tier,status,result,created) VALUES(?,?,?,?,?,?,?,?)',(id,run['chat'],name,json.dumps(args),tier,'pending' if tier!='auto' else 'ready',None,now()))
                 if run.get('step_id'): self.store.execute('UPDATE actions SET step=? WHERE id=? AND step IS NULL',(run['step_id'],id))
