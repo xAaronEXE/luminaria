@@ -56,6 +56,17 @@ def main():
         window=webview.create_window('Luminaria',url,width=1440,height=940,min_size=(780,620),background_color='#141A17',text_select=True)
         from backend.window_placement import center_before_show
         window.events.before_show += center_before_show
+        def report_drops():
+            # Tell the page the full paths of files and folders dropped on the window, so they are attached where they are.
+            try:
+                from webview.dom import DOMEventHandler
+                def dropped(event):
+                    files=((event or {}).get('dataTransfer') or {}).get('files') or []
+                    paths=[f.get('pywebviewFullPath') for f in files if isinstance(f,dict) and f.get('pywebviewFullPath')]
+                    if paths: window.evaluate_js('window.luminariaDropped&&window.luminariaDropped('+json.dumps(paths)+')')
+                window.dom.document.events.drop+=DOMEventHandler(dropped,True,False)
+            except Exception as error: logging.warning('Drop paths unavailable; dropped files will be uploaded instead: %s',error)
+        window.events.loaded += report_drops
         from backend.lifecycle import shutdown
         def close_for_update():
             shutdown.wait()

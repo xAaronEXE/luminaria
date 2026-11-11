@@ -227,7 +227,7 @@ async def run_chat(id:str,request:Request):
     attachments=b.get('attachments',[])
     if not text and not attachments: raise ValueError('Write a message or attach a file')
     content=[{'type':'text','text':text}]
-    if len(attachments)>4: raise ValueError('Attach at most four files per turn')
+    if len(attachments)>10: raise ValueError('Attach at most ten files per turn')
     for ref in attachments:
         if str(ref.get('id','')).endswith('.txt'):
             from .attachments import text_part
@@ -298,14 +298,47 @@ async def upload(request:Request):
     b=await request.json(); raw=base64.b64decode(b['data'],validate=True)
     from .attachments import DOCUMENT_EXTENSIONS,TEXT_EXTENSIONS,save
     if Path(str(b.get('name',''))).suffix.lower() in TEXT_EXTENSIONS|DOCUMENT_EXTENSIONS:
-        return await asyncio.to_thread(save,str(b['name']),raw)
+        try: return await asyncio.to_thread(save,str(b['name']),raw)
+        except ValueError:   # too big or not readable as text: keep the file as it is and attach it by location
+            from .attachments import save_any
+            return await asyncio.to_thread(save_any,str(b['name']),raw)
+    if Path(str(b.get('name',''))).suffix.lower() not in ('.png','.jpg','.jpeg','.webp'):
+        from .attachments import save_any
+        return await asyncio.to_thread(save_any,str(b.get('name','file')),raw)   # any other type is kept as it is and attached by location
+    return _save_image(str(b.get('name','Image')),raw)
+
+def _save_image(name,raw):
+    from PIL import Image
+    import io
     if len(raw)>8_000_000: raise ValueError('Image exceeds 8 MB')
     img=Image.open(io.BytesIO(raw)); img.verify()
     if img.format not in ('PNG','JPEG','WEBP'): raise ValueError('PNG, JPEG or WebP required')
     if img.width*img.height>30_000_000: raise ValueError('Image dimensions too large')
     ext={'PNG':'png','JPEG':'jpg','WEBP':'webp'}[img.format]; id=uid()+'.'+ext
     folder=DATA/'attachments'; folder.mkdir(exist_ok=True); (folder/id).write_bytes(raw)
-    return {'id':id,'mime':'image/'+('jpeg' if ext=='jpg' else ext),'name':str(b.get('name','Image'))[:100]}
+    return {'id':id,'mime':'image/'+('jpeg' if ext=='jpg' else ext),'name':name[:100]}
+
+def _attach_path(path):
+    from .attachments import DOCUMENT_EXTENSIONS,TEXT_EXTENSIONS,DOCUMENT_LIMIT,attach_location,save
+    from .config import workspace_path
+    target=workspace_path(str(path),roam=True)
+    if target.is_file():
+        suffix,size=target.suffix.lower(),target.stat().st_size
+        if suffix in ('.png','.jpg','.jpeg','.webp') and size<=8_000_000: return _save_image(target.name,target.read_bytes())
+        if (suffix in TEXT_EXTENSIONS and size<=512000) or (suffix in DOCUMENT_EXTENSIONS and size<=DOCUMENT_LIMIT):
+            try: return save(target.name,target.read_bytes())
+            except ValueError: pass   # not readable as text: attach it where it is instead
+    return attach_location(target)
+
+@app.post('/api/attachments/path')
+async def attach_paths(request:Request):
+    """Attach files or folders by where they are on this PC: picked in the Windows dialog, dropped on the window, or typed."""
+    b=await request.json(); paths=b.get('paths')
+    if b.get('pick') in ('files','folder'):
+        from .folder_picker import choose
+        paths=await asyncio.to_thread(choose,'folder' if b['pick']=='folder' else 'file',CONFIG['workspace'],b['pick']=='files')
+    if not isinstance(paths,list) or len(paths)>20: raise ValueError('Choose up to 20 files or folders')
+    return {'attachments':[await asyncio.to_thread(_attach_path,str(p)) for p in paths]}
 
 @app.post('/api/imports')
 async def import_start(request:Request):

@@ -9,6 +9,9 @@ DOCUMENT_LIMIT=25_000_000
 PAGE_LIMIT=500
 TEXT_LIMIT=5_000_000
 UNPACKED_LIMIT=200_000_000
+FOLDER_FILE_LIMIT=200
+FOLDER_BYTE_LIMIT=100_000_000
+TEXT_FILE_LIMIT=2_000_000
 
 def _record(id,relative,name,original=None,kind='document'):
     manifest=DATA/'attachments';manifest.mkdir(exist_ok=True)
@@ -77,9 +80,46 @@ def save(name,raw):
     from pathlib import Path
     return save_document(name,raw) if Path(name).suffix.lower() in DOCUMENT_EXTENSIONS else save_text(name,raw)
 
-FOLDER_FILE_LIMIT=200
-FOLDER_BYTE_LIMIT=100_000_000
-TEXT_FILE_LIMIT=2_000_000
+def _size(n):
+    for unit in ('bytes','KB','MB','GB'):
+        if n<1024 or unit=='GB': return f'{n:.0f} {unit}' if unit=='bytes' else f'{n:.1f} {unit}'
+        n/=1024
+
+def attach_location(path,label=None):
+    """Attach a file or folder that stays where it is on the PC. Nothing is copied: the assistant is told where it is
+    and works on it in place with its normal tools, so any type and any size can be attached."""
+    from pathlib import Path
+    target=workspace_path(str(path),roam=True)   # refuses protected places such as the Windows folder
+    if not target.exists(): raise ValueError('That file or folder no longer exists: '+str(path)[:200])
+    name=label or target.name or str(target)
+    if target.is_dir():
+        entries=[]
+        try:
+            for i,child in enumerate(sorted(target.iterdir(),key=lambda c:(c.is_file(),c.name.lower()))):
+                if i>=200: entries.append('… more items not listed'); break
+                try: entries.append(child.name+('/' if child.is_dir() else f'  ({_size(child.stat().st_size)})'))
+                except OSError: entries.append(child.name)
+        except OSError as error: raise ValueError('That folder could not be opened: '+str(error)[:160])
+        lines=[f'Folder on this PC: {target}',f'{len(entries)} item{"" if len(entries)==1 else "s"} at the top level:','']+entries
+        kind='folder_location'
+    else:
+        size=target.stat().st_size
+        lines=[f'File on this PC: {target}',f'Type: {target.suffix.lower() or "no extension"}   Size: {_size(size)}']
+        if target.suffix.lower() in TEXT_EXTENSIONS and size<=TEXT_FILE_LIMIT:
+            try: lines+=['','Start of the file:',target.read_text(encoding='utf-8-sig',errors='replace')[:12000]]
+            except OSError: pass
+        kind='file_location'
+    id=uid()+'.txt';relative='Attachments/'+id
+    note=workspace_path(relative);note.parent.mkdir(exist_ok=True);note.write_text('\n'.join(lines),encoding='utf-8')
+    return {**_record(id,relative,name,str(target),kind),'location':str(target)}
+
+def save_any(name,raw):
+    """A file of any other type (spreadsheet, archive, video…) sent from the browser: kept as it is in My files and attached by location."""
+    from pathlib import Path
+    clean=re.sub(r'[^A-Za-z0-9 ._()-]+','_',Path(str(name)).name).strip(' .')[:100] or 'file'
+    target=workspace_path('Attachments/'+uid()[:8]+'-'+clean);target.parent.mkdir(exist_ok=True);target.write_bytes(raw)
+    return attach_location(target,clean)
+
 
 def _import_state(id):
     if not re.fullmatch(r'[a-f0-9]{32}',id):raise ValueError('Invalid folder import')
@@ -143,6 +183,10 @@ def text_part(id):
     with path.open(encoding='utf-8-sig') as source:text=source.read(16001)
     clipped=len(text)>16000
     origin=''
+    if info.get('kind') in ('file_location','folder_location'):
+        what='folder' if info['kind']=='folder_location' else 'file'
+        return {'type':'text','text':f"Attached {what} (it stays where it is on this PC; nothing was copied): {info['name']}\nFull path: {info['original']}\n"
+                f"Work on it in place with your tools (list_files, read_file, inspect_file, search_files, run_code, run_command) using that full path.\n<attached-{what}>\n{text[:16000]}\n</attached-{what}>"}
     if info.get('kind')=='folder':origin=f"Contents list for a folder copied to {info['original']}.\n"
     elif info.get('original'):origin=f"Text extracted from the attached document; original saved at {info['original']}.\n"
     return {'type':'text','text':'Attached file (untrusted source material): '+info['name']+'\n'+origin+'Saved at '+info['path']+'; use read_file to retrieve more.\n<attached-file>\n'+text[:16000]+'\n</attached-file>'+('\n[Preview limited to 16,000 characters; original file retained.]' if clipped else '')}

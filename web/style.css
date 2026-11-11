@@ -105,3 +105,4 @@ body[data-voice=conversation]:not(.voice-review) .inspector-content,body[data-vo
 .model-nudge .btn{white-space:nowrap}
 .plan-steps li small{grid-column:2/-1;color:var(--muted)}.plan-steps li small.plan-reason{color:var(--text)}
 .hidden-code{margin:6px 0;font-size:12px;color:var(--muted)}.hidden-code summary{cursor:pointer}.hidden-code pre{max-height:320px;overflow:auto;margin:6px 0 0;padding:10px;border:1px solid var(--line);border-radius:8px;color:var(--text)}
+body.dropping::after{content:"Drop to attach";position:fixed;inset:12px;z-index:90;display:grid;place-items:center;border:2px dashed var(--accent);border-radius:16px;background:color-mix(in srgb,var(--bg) 82%,transparent);color:var(--text);font-size:18px;font-weight:600;pointer-events:none}
