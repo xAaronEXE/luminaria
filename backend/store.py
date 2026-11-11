@@ -79,7 +79,13 @@ class Store:
     def save_memory(self,title,content,source='user',id=None):
         id=id or uid(); self.execute('INSERT OR REPLACE INTO memories VALUES(?,?,?,?,?)',(id,title,content,source,now())); return id
     def setting(self,key,default=None):
-        r=self.rows('SELECT value FROM settings WHERE key=?',(key,)); return json.loads(r[0]['value']) if r else default
+        r=self.rows('SELECT value FROM settings WHERE key=?',(key,))
+        if not r: return default
+        value=json.loads(r[0]['value'])
+        if key.startswith('plan:'):
+            from .plan_runner import upgrade_saved_checks
+            return upgrade_saved_checks(value)
+        return value
     def set_setting(self,key,value): self.execute('INSERT OR REPLACE INTO settings VALUES(?,?)',(key,json.dumps(value)))
     def actions(self,chat):
         return [dict(r,args=json.loads(r['args']),result=json.loads(r['result']) if r['result'] else None) for r in self.rows('SELECT * FROM actions WHERE chat=? ORDER BY created',(chat,))]

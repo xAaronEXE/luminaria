@@ -311,6 +311,14 @@ class PlanRunner(unittest.TestCase):
         self.assertIn('Final verification', plan['steps'][0]['reason'])
 
 class Rules(unittest.TestCase):
+    def test_legacy_saved_checks_keep_commands_without_trusting_old_verdicts(self):
+        plan={'steps':[{'id':'a','status':'pending','check_command':'python verify.py'},
+                       {'id':'b','status':'done','check_command':'Get-Content result.txt','verdict':'passed'},
+                       {'id':'c','status':'pending','check_command':'exit 0'}]}
+        first,second,third=PR.upgrade_saved_checks(plan)['steps']
+        self.assertEqual(first['check'],{'type':'command','command':'python verify.py'})
+        self.assertEqual((second['status'],second['verdict']),('done','unverified'))
+        self.assertTrue(third['legacy_check_invalid'])
     def test_go_ahead_starts_the_runner_only_with_steps_left(self):
         plan={'steps':[{'id':'a','title':'x','status':'done'},{'id':'b','title':'y','status':'pending'}]}
         for text in ('go ahead','Go ahead.','ok do it','yes, go ahead please','Proceed','continue','carry out the plan','Carry out the saved plan, one step at a time.','lets go','implement it','keep going','Okay, start'):

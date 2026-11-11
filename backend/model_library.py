@@ -36,6 +36,30 @@ def partial_file(quant_id):
 def state_path():
     return models.BASE_DATA / 'model-downloads.json'
 
+
+def download_budget():
+    path = models.BASE_DATA / 'model-download-budget.json'
+    try:
+        gb = json.loads(path.read_text(encoding='utf-8'))
+    except (OSError, ValueError):
+        return BUDGET
+    return gb * 1024**3 if type(gb) is int and 100 <= gb <= 1024**2 else BUDGET
+
+
+def set_download_budget(gb):
+    if type(gb) is not int or not 100 <= gb <= 1024**2:
+        raise ValueError('Enter a whole-number download budget from 100 to 1,048,576 GB.')
+    load_state()
+    path = models.BASE_DATA / 'model-download-budget.json'
+    limit = gb * 1024**3
+    with _lock:
+        reserved_full, _ = _reservations()
+        if limit < download_budget() and limit < _catalog_spent() + reserved_full:
+            raise ValueError('The budget must cover downloaded models and active or queued downloads.')
+        temporary = path.with_suffix('.tmp')
+        temporary.write_text(json.dumps(gb), encoding='utf-8')
+        temporary.replace(path)
+
 def quant_by_id(quant_id):
     """Find a catalog file by id. Projectors are shared, so the first family that lists one owns the lookup."""
     for entry in CATALOG:
@@ -88,7 +112,7 @@ def check_room(needed, already, free, spent, reserved_additional, reserved_full,
     if free < additional + HEADROOM + reserved_additional:
         raise ValueError(f'Not enough free space for this {format_bytes(needed)} download. Keep at least 1 GB free afterward. Nothing new was saved.')
     if spent + reserved_full + needed > limit:
-        raise ValueError(f'This {format_bytes(needed)} download would pass the 100 GB additional-model budget. Remove a downloaded model or choose a smaller quantization. Nothing new was saved.')
+        raise ValueError(f'This {format_bytes(needed)} download would pass the download budget ({format_bytes(limit)}). Increase it in the Model library or choose a smaller quantization.')
 
 def _digest(header):
     raw = re.sub(r'^W/', '', (header or '').strip()).strip('"').lower()
@@ -364,8 +388,9 @@ def library(store):
         top = [q for q in entry['quants'] if q.get('fit') and best and q['fit']['rating'] == best['rating']]
         if top: (max if best['rating'] in ('recommended', 'good') else min)(top, key=lambda q: q.get('bytes') or 0)['best_fit'] = True
     machine = {k: hw[k] for k in ('gpu', 'vram_total', 'vram_free', 'integrated', 'ram_total', 'source')}
+    limit = download_budget()
     return {'active': CONFIG.get('model'), 'context': CONFIG.get('context'), 'storage': storage, 'machine': machine,
-            'budget': {'limit': BUDGET, 'used': spent, 'remaining': max(0, BUDGET - spent)},
+            'budget': {'limit': limit, 'used': spent, 'remaining': max(0, limit - spent)},
             'downloads': list(downloads.values()), 'models': entries}
 
 def _start_worker():
@@ -391,7 +416,7 @@ def enqueue(quant_id):
     free = shutil.disk_usage(models_folder() if models_folder().exists() else models.BASE_DATA).free
     with _lock:
         reserved_full, reserved_additional = _reservations(quant_id)
-        check_room(quant['bytes'], already, free, _catalog_spent(), reserved_additional, reserved_full)
+        check_room(quant['bytes'], already, free, _catalog_spent(), reserved_additional, reserved_full, download_budget())
         _jobs[quant_id] = {'id': quant_id, 'status': 'queued', 'received': already, 'total': quant['bytes'], 'error': '',
                            'filename': quant['filename'], 'url': meta['url'], 'sha256': meta['sha256']}
         if quant_id not in _queue: _queue.append(quant_id)
@@ -487,8 +512,9 @@ def _run(generation):
             already = partial.stat().st_size if partial.exists() else 0
             probe = partial.parent if partial.parent.exists() else models.BASE_DATA
             free = shutil.disk_usage(probe).free
-            with _lock: reserved_full, reserved_additional = _reservations(quant_id)
-            check_room(total, already, free, _catalog_spent(), reserved_additional, reserved_full)
+            with _lock:
+                reserved_full, reserved_additional = _reservations(quant_id)
+                check_room(total, already, free, _catalog_spent(), reserved_additional, reserved_full, download_budget())
             result = transfer(url, partial, total, digest, cancel_event, lambda amount: _progress(quant_id, amount))
             if generation != _generation: return
             if result['status'] == 'complete': _finish(entry, quant, partial)

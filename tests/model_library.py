@@ -86,8 +86,15 @@ class ModelLibraryTests(unittest.TestCase):
     def test_disk_and_budget_stop_before_any_download(self):
         with self.assertRaisesRegex(ValueError, 'Not enough free space'):
             model_library.check_room(100, 0, 50, 0, 0, 0)
-        with self.assertRaisesRegex(ValueError, '100 GB'):
+        with self.assertRaisesRegex(ValueError, 'download budget'):
             model_library.check_room(80, 0, 1 << 40, 40, 0, 0, budget=100)
+    def test_adjustable_budget_persists_and_accounts_for_reservations(self):
+        model_library.set_download_budget(200)
+        self.assertEqual(model_library.library(None)['budget']['limit'], 200 * 1024**3)
+        with patch.object(model_library, '_reservations', return_value=(60 * 1024**3, 0)), patch.object(model_library, '_catalog_spent', return_value=60 * 1024**3):
+            with self.assertRaisesRegex(ValueError, 'active or queued'):
+                model_library.set_download_budget(100)
+        self.assertEqual(model_library.download_budget(), 200 * 1024**3)
     def test_redirect_host_must_stay_with_the_publisher(self):
         self.assertTrue(model_library.host_allowed('https://cdn-lfs.huggingface.co/file', 'https://huggingface.co/org/repo/resolve/main/file.gguf'))
         self.assertFalse(model_library.host_allowed('https://example.com/file', 'https://huggingface.co/org/repo/resolve/main/file.gguf'))
@@ -178,7 +185,7 @@ class ModelLibraryTests(unittest.TestCase):
         with patch.object(model_library, 'BUDGET', 1000), \
              patch.object(model_library, 'quant_by_id', lambda ident: (entry, quant) if ident == quant['id'] else (None, None)), \
              patch.object(model_library, 'resolve', lambda entry, quant: {'url': 'http://127.0.0.1/file', 'size': quant['bytes'], 'sha256': quant['sha256']}):
-            with self.assertRaisesRegex(ValueError, '100 GB'):
+            with self.assertRaisesRegex(ValueError, 'download budget'):
                 model_library.enqueue(quant['id'])
         self.assertFalse((self.root / 'models' / '.partial').exists())
     def test_remove_requires_confirmation_and_stops_the_active_model_first(self):

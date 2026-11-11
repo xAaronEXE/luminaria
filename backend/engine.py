@@ -1301,6 +1301,10 @@ class Engine:
             plan=self.store.setting('plan:'+chat,None) or plan
             current=next((s for s in plan['steps'] if s.get('id')==sid),None)
             if not current or current.get('status') in ('done','skipped'): continue   # removed or settled by the user meanwhile
+            if current.get('legacy_check_invalid'):
+                current.update(status='blocked',verdict='unverified')
+                self.save_plan(chat,plan)
+                break
             if current.get('parallel_draft') and not judge_first:
                 await self.draft_independent_steps(run,plan,models)
             unknown=PR.unknown_outcome(PR.step_actions(self.store,chat,sid,plan.get('created',0)))

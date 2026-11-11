@@ -1122,6 +1122,14 @@ async def model_library():
     from .model_library import library
     return await asyncio.to_thread(library, store)
 
+@app.post('/api/model-library/budget')
+async def model_download_budget(request: Request):
+    from .model_library import library, set_download_budget
+    body = await request.json()
+    await asyncio.to_thread(set_download_budget, body.get('gb') if isinstance(body, dict) else None)
+    return await asyncio.to_thread(library, store)
+
+
 @app.post('/api/model-library/{id}/download')
 async def model_download(id:str):
     from .model_library import enqueue, library

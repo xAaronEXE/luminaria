@@ -28,40 +28,59 @@ try {
  if((Get-FileHash -LiteralPath $Installer -Algorithm SHA256).Hash.ToLower() -ne $Digest){throw 'Installer checksum changed; nothing opened.'}
  # Safe update: keep a copy of the current program (not its data, models or files, which are separate) so a new
  # version that cannot start is replaced by the old one automatically.
- $app=Split-Path -Parent $ParentPath; $exe=Split-Path -Leaf $ParentPath; $backup=$app+'.previous'
- $haveBackup=$false
- if($Version -and $Marker) {
-  & robocopy.exe $app $backup /MIR /XJ /XD (Join-Path $app 'data') (Join-Path $app 'models') (Join-Path $app 'Files') /R:1 /W:1 /NFL /NDL /NJH /NJS /NP | Out-Null
-  $haveBackup = $LASTEXITCODE -lt 8
-  ('Backup of the current version: '+$(if($haveBackup){'made'}else{'failed, update continues without rollback'})) | Add-Content -LiteralPath $log
+ $app=Split-Path -Parent $ParentPath
+ $backup=$app+'.previous-'+[guid]::NewGuid().ToString('N')
+ $registration='HKCU\Software\Microsoft\Windows\CurrentVersion\Uninstall\{C1DD4A29-1B64-433C-A69E-352D1DB9E575}_is1'
+ $registryCopy=$backup+'.reg'
+ if(!$Version -or !$Marker){throw 'Update version or startup marker directory is missing.'}
+ $ok=Join-Path $Marker ('started-'+$Version+'.ok')
+ if(Test-Path -LiteralPath $ok){Remove-Item -LiteralPath $ok -Force}
+ function Remove-UpdateBackup {
+  if((Resolve-Path -LiteralPath $backup).Path -ne $backup){throw 'Unexpected update backup path.'}
+  Remove-Item -LiteralPath $backup -Recurse -Force -ErrorAction SilentlyContinue
+  if(Test-Path -LiteralPath $registryCopy){Remove-Item -LiteralPath $registryCopy -Force}
+ }
+ & robocopy.exe $app $backup /MIR /XJ /XD (Join-Path $app 'data') (Join-Path $app 'models') (Join-Path $app 'Files') /R:1 /W:1 /NFL /NDL /NJH /NJS /NP | Out-Null
+ if($LASTEXITCODE -ge 8 -or !(Test-Path -LiteralPath (Join-Path $backup (Split-Path -Leaf $ParentPath)) -PathType Leaf)){
+  throw ('Backup failed; Setup was not opened. Backup location: '+$backup)
+ }
+ if(Test-Path -LiteralPath ('Registry::'+$registration.Replace('HKCU','HKEY_CURRENT_USER'))){
+  & reg.exe export $registration $registryCopy /y | Out-Null
+  if($LASTEXITCODE -ne 0){throw 'Could not back up installer registration. Setup was not opened.'}
  }
  'Processes exited; opening verified installer.' | Add-Content -LiteralPath $log
- $setup=Start-Process -FilePath $Installer -ArgumentList @('/LOG="'+(Join-Path (Split-Path -Parent $Installer) 'setup.log')+'"') -PassThru
- if(!$haveBackup){exit 0}
+ $setup=Start-Process -FilePath $Installer -ArgumentList @('/SP-','/VERYSILENT','/SUPPRESSMSGBOXES','/NORESTART','/DIR="'+$app+'"','/LOG="'+(Join-Path (Split-Path -Parent $Installer) 'setup.log')+'"') -PassThru
  $setup.WaitForExit()
- if($setup.ExitCode -ne 0) {
-  'Setup was cancelled or failed; the current version was not changed.' | Add-Content -LiteralPath $log
-  Remove-Item -LiteralPath $backup -Recurse -Force -ErrorAction SilentlyContinue; exit 0
- }
- $ok=Join-Path $Marker ('started-'+$Version+'.ok')
+ if($setup.ExitCode -eq 0) {
  Start-Sleep -Seconds 10
- if(!(Get-Process | Where-Object { $_.Path -eq $ParentPath })){Start-Process -FilePath $ParentPath}
+ if(!(Get-Process | Where-Object { $_.Path -eq $ParentPath })){
+  try {Start-Process -FilePath $ParentPath} catch {$_.Exception.Message | Add-Content -LiteralPath $log}
+ }
  $deadline=(Get-Date).AddSeconds(150)
  while((Get-Date) -lt $deadline -and !(Test-Path -LiteralPath $ok)){Start-Sleep -Seconds 3}
  if(Test-Path -LiteralPath $ok) {
   ('Version '+$Version+' started correctly.') | Add-Content -LiteralPath $log
-  Remove-Item -LiteralPath $backup -Recurse -Force -ErrorAction SilentlyContinue; exit 0
+  Remove-UpdateBackup; exit 0
  }
  ('Version '+$Version+' did not start within 150 seconds; restoring the previous version.') | Add-Content -LiteralPath $log
- Get-Process | Where-Object { $_.Path -and $_.Path.StartsWith($app,[StringComparison]::OrdinalIgnoreCase) } | Stop-Process -Force -ErrorAction SilentlyContinue
+ } else {
+  ('Setup exited with '+$setup.ExitCode+'; restoring the previous version.') | Add-Content -LiteralPath $log
+ }
+ $prefix=$app.TrimEnd('\')+'\'
+ Get-Process | Where-Object { $_.Path -and $_.Path.StartsWith($prefix,[StringComparison]::OrdinalIgnoreCase) } | Stop-Process -Force -ErrorAction SilentlyContinue
  Start-Sleep -Seconds 2
- & robocopy.exe $backup $app /MIR /XJ /XD (Join-Path $app 'data') (Join-Path $app 'models') (Join-Path $app 'Files') /R:2 /W:2 /NFL /NDL /NJH /NJS /NP | Out-Null
+ $savedDirectories=@('data','models','Files' | ForEach-Object {Join-Path $app $_; Join-Path $backup $_})
+ & robocopy.exe $backup $app /MIR /XJ /XD @savedDirectories /R:2 /W:2 /NFL /NDL /NJH /NJS /NP | Out-Null
  if($LASTEXITCODE -lt 8) {
+  if(Test-Path -LiteralPath $registryCopy){
+   & reg.exe import $registryCopy | Out-Null
+   if($LASTEXITCODE -ne 0){throw ('Installer registration could not be restored. Backup kept at '+$backup)}
+  }
   'Previous version restored.' | Add-Content -LiteralPath $log
   Set-Content -LiteralPath (Join-Path $Marker 'rolled-back.txt') -Value $Version
-  Remove-Item -LiteralPath $backup -Recurse -Force -ErrorAction SilentlyContinue
+  Remove-UpdateBackup
   Start-Process -FilePath $ParentPath
- } else { 'Restoring failed; the copy of the previous version is kept in '+$backup | Add-Content -LiteralPath $log }
+ } else { throw ('Restoring failed; the copy of the previous version is kept in '+$backup) }
 } catch {
  $_.Exception.Message | Add-Content -LiteralPath $log
  exit 1

@@ -84,6 +84,30 @@ def clean_check(check):
     return {'type': kind, 'path': path[:400]}
 
 
+def upgrade_saved_checks(plan):
+    if not isinstance(plan, dict):
+        return plan
+    for step in plan.get('steps', []):
+        if not isinstance(step, dict) or 'check_command' not in step or step.get('check'):
+            continue
+        command = step.get('check_command')
+        if not isinstance(command, str) or not command.strip():
+            continue
+        try:
+            step['check'] = clean_check({'type': 'command', 'command': command})
+        except ValueError:
+            step['legacy_check_invalid'] = True
+            step['reason'] = 'Revise the saved plan to replace its invalid legacy check.'
+        else:
+            step.pop('check_command')
+        for key in ('check_result', 'evidence', 'verdict'):
+            step.pop(key, None)
+        if step.get('status') == 'done':
+            step['verdict'] = 'unverified'
+            step.setdefault('reason', 'Legacy completion has no current verification evidence.')
+    return plan
+
+
 def merge_plan(saved, proposed, plan_run):
     """Combine the model's plan update with the saved plan.
 
