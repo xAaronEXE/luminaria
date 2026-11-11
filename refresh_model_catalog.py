@@ -190,6 +190,7 @@ def discover():
             except (KeyError, TypeError, ZeroDivisionError): print('skip', repo, 'incomplete header', file=sys.stderr); continue
             from backend.model_catalog import display_name
             name = display_name(repo)  # the name inside a GGUF file is often a hash or a training path
+            if not re.search(r'[A-Za-z]{2,}', name): name = repo.split('/')[0] + ' ' + name   # 'D1 3B' alone says nothing
             size_label = str(meta.get('general.size_label') or '')
             low = repo.lower()
             variant = 'abliterated' if ('abliterat' in low or 'uncensored' in low) else 'standard'
