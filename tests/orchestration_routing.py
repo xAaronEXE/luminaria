@@ -149,7 +149,8 @@ class EngineTests(unittest.IsolatedAsyncioTestCase):
   self.assertEqual(run['phase'],'Error');self.assertTrue(last['error']);self.assertIn('outside your orchestration selection',last['content']);self.assertEqual(left,2)
  async def test_failure_uses_the_selected_model_when_it_is_in_the_pool(self):
   run,last,left=await self.routing_error(AsyncMock(side_effect=KeyError('broken')),{'model':'qwen3-4b','orchestration_pool':{'mode':'standard','models':[]}})
-  self.assertEqual(run['model_id'],'qwen3-4b');self.assertIn('in your orchestration selection',run['routing']['reason']);self.assertEqual(last['content'],'ok')
+  self.assertEqual(run['model_id'],'qwen3-4b');self.assertIn('in your orchestration selection',run['routing']['reason'])
+  self.assertEqual(run['phase'],'Stopped');self.assertTrue(last['content'].startswith('Work is not verified.'))
  async def test_no_eligible_model_stops_with_the_explanation(self):
   run,last,left=await self.routing_error(AsyncMock(side_effect=o.NoEligibleModel('No model in your orchestration selection can handle this task')),{'model':'qwen3-4b'})
   self.assertEqual(run['phase'],'Error');self.assertIn('No model in your orchestration selection',last['content']);self.assertEqual(left,2)

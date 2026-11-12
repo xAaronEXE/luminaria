@@ -10,6 +10,40 @@ from backend.config import CONFIG
 def text(content):return stream([{'choices':[{'delta':{'content':content}}]}])
 
 class CheckpointTests(unittest.IsolatedAsyncioTestCase):
+ async def test_direct_request_cannot_finish_with_no_actions(self):
+  h=Harness([text('Done. I fixed it.'),text('Done.')])
+  try:
+   chat=h.store.create_chat();h.store.add(chat,{'role':'user','content':'Fix the bug in app.py.'})
+   h.engine.start(chat);await h.engine.tasks[chat]
+   run=h.engine.runs[chat]
+   self.assertEqual(run['phase'],'Stopped')
+   self.assertEqual(run['verification']['outcome'],'not_run')
+   self.assertEqual(h.store.actions(chat),[])
+   self.assertEqual(h.responses,[])
+   self.assertTrue(h.store.messages(chat)[-1]['content'].startswith('Work is not verified.'))
+  finally:h.close()
+
+ async def test_promised_file_search_retries_and_checks_the_tool_journal(self):
+  h=Harness([text("First I'll locate the relevant files. Let's proceed by searching for them."),
+   stream([tool_call(0,'list','list_files',{'path':'.'})]),text('The workspace contains a.txt.')])
+  try:
+   chat=h.store.create_chat();h.store.add(chat,{'role':'user','content':'Look through the workspace files.'})
+   h.engine.start(chat);await h.engine.tasks[chat]
+   self.assertEqual(h.engine.runs[chat]['phase'],'Complete')
+   self.assertEqual(h.engine.runs[chat]['verification']['outcome'],'passed')
+   self.assertEqual([(a['name'],a['status']) for a in h.store.actions(chat)],[('list_files','done')])
+  finally:h.close()
+
+ async def test_genuine_refusal_stays_visible_without_a_retry(self):
+  h=Harness([text("I can't make that change without the source file.")])
+  try:
+   chat=h.store.create_chat();h.store.add(chat,{'role':'user','content':'Fix the bug in app.py.'})
+   h.engine.start(chat);await h.engine.tasks[chat]
+   self.assertEqual(h.engine.runs[chat]['phase'],'Stopped')
+   self.assertTrue(h.store.messages(chat)[-1]['content'].startswith("I can't"))
+   self.assertFalse(h.engine.runs[chat].get('verification_retry'))
+  finally:h.close()
+
  async def test_model_recovery_retries_generation_before_executing_tools(self):
   h=Harness([httpx.Response(503),httpx.Response(503),text('Recovered.')])
   try:

@@ -713,12 +713,17 @@ class Engine:
         run['phase']='Thinking' if run.get('reasoning') else 'Generating'; self.emit('changed',chat=chat)
         turn=run['round']=state['steps']; node='gen'+str(turn)
         self.work(run,'generation.started',turn,node=node,label='Model response' if turn==0 else 'Model response after tools',status='running',region='generation',reasoning_requested=bool(run.get('reasoning')),parent=run.get('last_tool_node'))
-        msg=hide_run_code(await self.recoverable_completion(messages,defs,run),last_user_text([m for m in self.store.messages(chat) if not m.get('plan_step')]))
+        request=last_user_text([m for m in self.store.messages(chat) if not m.get('plan_step')])
+        msg=hide_run_code(await self.recoverable_completion(messages,defs,run),request)
         verification=None
+        needs_reply=False
         if not msg.get('tool_calls') and not (run.get('plan_run') or run.get('plan_only') or run.get('denied')) and run.get('lane') in (None,'do'):
-            verification=self.direct_work_check(run)
+            from .triage import action_intent
+            intent=run.get('action_intent') or action_intent(request)
+            verification=self.direct_work_check(run,intent,self.announces(msg.get('content')))
+            needs_reply=bool(re.match(r"\s*(?:I (?:can['’]t|cannot|won['’]t)\b|(?:which|what|where|could you|can you)\b[^\n]*\?\s*$)",str(msg.get('content') or ''),re.I))
             if verification and verification[0]!='passed':
-                msg['content']='Work is not verified. '+verification[1]
+                if not needs_reply: msg['content']='Work is not verified. '+verification[1]
         source_issue=None
         if not msg.get('tool_calls') and run.get('lane')=='research' and not run.get('denied'):
             source_issue=await self.check_research_claims(run,msg.get('content'))
@@ -733,7 +738,7 @@ class Engine:
         run.pop('nudge_pending',None); run.pop('nudge_text',None)
         run['announced']=bool(not msg.get('tool_calls') and defs and self.announces(msg.get('content')))
         run['nudge_kind']='announced'
-        if verification and verification[0]!='passed' and not run.get('verification_retry'):
+        if verification and verification[0]!='passed' and not (needs_reply or run.get('verification_retry')):
             if any(d['function']['name']=='set_work_check' for d in defs):
                 run['verification_retry']=True
                 run['announced']=True
@@ -761,7 +766,7 @@ class Engine:
         self.work(run,'generation.completed',turn,node=node,status='done',region='generation',tool_calls=len(msg.get('tool_calls',[])),evidence={'message':message_id},metrics={k:run.get('metrics',{}).get(k) for k in ('completion_tokens','tokens_per_second','elapsed')})
         return {'run':run,'calls':msg.get('tool_calls',[]),'steps':state['steps']+1}
 
-    def direct_work_check(self,run):
+    def direct_work_check(self,run,intent=None,promised=False):
         from .config import workspace_path
         from .plan_runner import run_check
 
@@ -769,10 +774,19 @@ class Engine:
                  [a for a in self.store.actions(run['chat']) if a['created']>=run['continuing']])
         declared=next((result_data(a).get('check') for a in actions
                        if a['name']=='set_work_check' and a['status']=='done'),None)
-        if not declared and not any(may_change(a) and a['status'] in ('done','error','interrupted') for a in actions):
+        effects=[a for a in actions if may_change(a) and a['status'] in ('done','error','interrupted')]
+        observed=any(a['status']=='done' and a['name'] in ('inspect_file','read_file','list_files','search_files') for a in actions)
+        if intent=='change' and not any(a['status']=='done' for a in effects):
+            outcome,detail='not_run','No successful work action was recorded for this request.'
+        elif declared:
+            outcome,detail=run_check(declared,actions,lambda path:workspace_path(path,roam=True))
+        elif effects:
+            outcome,detail='not_run','No completion check was declared.'
+        elif intent=='inspect' or promised:
+            outcome,detail=('passed','The journal records a successful inspection.') if observed and not promised else (
+                'not_run','The requested or announced work has no completed tool result.')
+        else:
             return None
-        outcome,detail=(run_check(declared,actions,lambda path:workspace_path(path,roam=True))
-                        if declared else ('not_run','No completion check was declared.'))
         run['verification']={'outcome':outcome,'detail':detail}
         self.work(run,'work.verification',run.get('round',0),label='Completion check',
                   status='done' if outcome=='passed' else 'error',evidence=run['verification'])
@@ -814,7 +828,7 @@ class Engine:
     # A promise to act right now: "I'll create…", "Let me check…", "Next, I will run…". Offers ("I can…",
     # "if you want, I'll…"), "let me know" and replies that end with a question are not promises.
     INTENT=re.compile(r"(?:\bi(?:'ll| will|'m going to| am going to)(?: now)?|\blet me|\blet's|\blet us|\bnext,? i(?:'ll| will)|\bnow i(?:'ll| will))\s+(?:go ahead and\s+)?"
-                      r"(?:try to\s+)?(?:create|write|run|open|search|install|download|check|read|list|look|fetch|make|build|edit|save|delete|move|copy|update|generate|start|execute|scan|find|add|apply|draft|locate|load|use|prepare)\b",re.I)
+                      r"(?:(?:try to|proceed (?:by|to))\s+)?(?:create|write|run|open|search|install|download|check|read|list|look|fetch|make|build|edit|save|delete|move|copy|update|generate|start|execute|scan|find|add|apply|draft|locate|load|use|prepare)(?:ing)?\b",re.I)
     OFFER=re.compile(r"\b(?:if you(?:'d| would)? (?:like|want)|would you like|do you want|shall i|should i|let me know|feel free)\b",re.I)
     @classmethod
     def announces(cls,text):
@@ -1057,7 +1071,7 @@ class Engine:
         self.cancel_unload()
         if chat in self.runs and not self.runs[chat].get('finished'): raise ValueError('Finish, resume or stop the existing run first')
         if chat in self.tasks and not self.tasks[chat].done(): raise ValueError('This task is already running')
-        from .triage import classify
+        from .triage import action_intent,classify
         lane='do'
         if plan_only: lane='plan'
         elif not (compact_only or plan_run or continue_from):
@@ -1065,6 +1079,8 @@ class Engine:
             lane=classify(latest,spoken=voice)
         plan_only=lane=='plan'
         run={'id':uid(),'chat':chat,'phase':'Queued','live':'','reasoning_text':'','enabled':set(),'reasoning':reasoning,'started':now(),'context':self.store.setting('context:'+chat,{}),'compact_only':compact_only,'lane':lane,'voice_answer':bool(voice and lane=='answer'),'plan_only':bool(plan_only and not compact_only),'plan_run':bool(plan_run and not plan_only and not compact_only)}
+        if lane=='do' and not (compact_only or plan_run):
+            run['action_intent']=(continue_from or {}).get('action_intent') or action_intent(last_user_text(self.store.messages(chat)))
         if continue_from:
             run['continuing']=continue_from.get('continuing') or continue_from['started']
             run['continuations']=continue_from.get('continuations',0)+1
@@ -1214,6 +1230,8 @@ class Engine:
         text=summary(plan)
         if text: self.store.add(run['chat'],{'role':'assistant','content':text,'plan_report':True}); self.emit('changed',chat=run['chat'])
         run['plan_blocked']=any(s.get('status')=='blocked' for s in (plan or {}).get('steps',[]))
+        if any(s.get('status')=='done' and s.get('verdict')!='passed' for s in (plan or {}).get('steps',[])):
+            run['verification']={'outcome':'not_run','detail':'At least one completed plan step has no passing check.'}
         for key in ('denied','checkpoint','stalled'): run.pop(key,None)
     async def run_step(self,run,model,instruction,reasoning=False,continue_step=False):
         chat=run['chat']
