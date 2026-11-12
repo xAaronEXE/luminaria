@@ -98,6 +98,20 @@ class PlanRunner(unittest.TestCase):
         e.store.act(None,'edit_file',{'path':'todo.py'})
         self.assertEqual(e.direct_work_check(run)[0],'not_run')
 
+    def test_direct_work_can_verify_a_file_generated_by_a_script(self):
+        e=self.engine([],[])
+        run={'chat':'c','id':'r','started':0,'action_target':'report.json'}
+        e.run_actions=lambda _:e.store.actions
+        check={'type':'file_exists','path':'report.json'}
+        e.store.act(None,'set_work_check',{'check':check},result={'check':check,'before_file':None})
+        e.store.act(None,'run_code',{'language':'python'})
+        with patch.dict(CONFIG,workspace=str(self.dir)):
+            self.assertEqual(e.direct_work_check(run,'change')[0],'not_run')
+            (self.dir/'report.json').write_text('{"status":"ready"}')
+            self.assertEqual(e.direct_work_check(run,'change')[0],'passed')
+            (self.dir/'report.json').write_text('invalid JSON')
+            self.assertEqual(e.direct_work_check(run,'change')[0],'failed')
+
     def test_independent_drafts_overlap_and_leave_dependent_work_local(self):
         from contextvars import ContextVar
         from unittest.mock import AsyncMock
@@ -366,7 +380,7 @@ class Evidence(unittest.TestCase):
         wrote=[{'name':'write_file','status':'done','args':{'path':'tests/test_app.py'}}]
         check={'type':'command','command':'python -m pytest tests/test_app.py'}
         self.assertEqual(PR.evidence(check,wrote,resolve),'self_written')
-        self.assertEqual(PR.evidence(check,[{'name':'write_file','status':'done','args':{'path':'app.py'}}],resolve),'independent')
+        self.assertEqual(PR.evidence(check,[{'name':'write_file','status':'done','args':{'path':'app.py'}}],resolve),'command')
         self.assertEqual(PR.evidence({'type':'file_exists','path':'out.txt'},wrote,resolve),'file')
         self.assertIsNone(PR.evidence(None,wrote,resolve))
     def test_summary_mentions_self_written_tests(self):

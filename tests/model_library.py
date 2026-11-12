@@ -64,6 +64,24 @@ class ModelLibraryTests(unittest.TestCase):
         model_library.reset()
         for item in self.patches: item.stop()
         self.tmp.cleanup()
+    def test_cancelling_download_recovers_as_paused(self):
+        import json
+        state = model_library.state_path()
+        state.parent.mkdir(parents=True,exist_ok=True)
+        state.write_text(json.dumps({'jobs':[{'id':'fixture','status':'cancelling'}]}))
+        with patch.object(model_library,'quant_by_id',return_value=({}, {'id':'fixture'})):
+            model_library.load_state()
+        self.assertEqual(model_library._jobs['fixture']['status'],'paused')
+
+    def test_cancelling_worker_retains_ownership_of_partial(self):
+        partial = model_library.partial_file('fixture')
+        partial.parent.mkdir(parents=True,exist_ok=True)
+        partial.write_bytes(b'partial')
+        model_library._jobs['fixture']={'status':'cancelling'}
+        with self.assertRaisesRegex(ValueError,'Wait for the download to stop'):
+            model_library.discard('fixture')
+        self.assertEqual(partial.read_bytes(),b'partial')
+
     def test_catalog_keeps_standard_and_abliterated_separate(self):
         self.assertTrue(any(item['variant'] == 'standard' for item in CATALOG))
         self.assertTrue(any(item['variant'] == 'abliterated' and item['caveat'] for item in CATALOG))

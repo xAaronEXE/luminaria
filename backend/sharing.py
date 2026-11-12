@@ -1,7 +1,7 @@
 """Several PCs working together.
 
 Share my models: other PCs running Luminaria can use this PC's installed models, as a model service
-(http://<this PC>:8099/v1 plus a pairing key). Only chat requests are accepted; nothing else on this PC is reachable.
+(HTTPS with a pinned certificate and a per-peer key). Only chat requests are accepted; nothing else on this PC is reachable.
 
 Lend my graphics card: runs llama.cpp's rpc-server so another PC can split one large model across both GPUs.
 Use other PCs' graphics cards: adds those PCs to the model manager with llama.cpp's --rpc option.
@@ -37,10 +37,25 @@ def addresses():
     return sorted(a for a in found if not a.startswith('127.'))
 
 
-def share_key():
-    key = read_secrets('share').get('key')
-    if not key:
-        key = secrets.token_urlsafe(24); write_secrets('share', {'key': key})
+def peer_records():
+    return read_secrets('share').get('peers', {})
+
+
+def revoke_peer(peer_id):
+    peers = peer_records()
+    if peer_id not in peers:
+        raise ValueError('Unknown paired client.')
+    del peers[peer_id]
+    write_secrets('share', {'peers': peers})
+
+
+def issue_peer(name):
+    import hashlib
+    key = secrets.token_urlsafe(32)
+    peer_id = hashlib.sha256(key.encode()).hexdigest()
+    peers = peer_records()
+    peers[peer_id] = {'name': str(name or 'Paired PC')[:60]}
+    write_secrets('share', {'peers': peers})
     return key
 
 
@@ -52,7 +67,9 @@ def share_app():
     local = 'http://127.0.0.1:8098/v1'
 
     def allowed(request):
-        return secrets.compare_digest(request.headers.get('authorization', ''), 'Bearer ' + share_key())
+        import hashlib
+        scheme, _, key = request.headers.get('authorization', '').partition(' ')
+        return scheme == 'Bearer' and bool(key) and hashlib.sha256(key.encode()).hexdigest() in peer_records()
 
     async def ensure_manager():
         from . import runtime
@@ -75,7 +92,7 @@ def share_app():
             _pairing['failures'] += 1
             return JSONResponse({'error': 'That code is not right. Check the code shown on the other PC.'}, 401)
         _pairing['code'] = None   # one pairing per code
-        return {'key': share_key(), 'name': socket.gethostname(), 'port': SHARE_PORT}
+        return {'key': issue_peer(body.get('name')), 'name': socket.gethostname(), 'port': SHARE_PORT}
 
     @app.get('/v1/models')
     async def models(request: Request):
@@ -85,14 +102,10 @@ def share_app():
         # Extra details let the other PC's Auto mode and roles judge these models like its own.
         return {'object': 'list', 'data': [{'id': m['id'], 'object': 'model', 'luminaria': {k: m.get(k) for k in ('name', 'parameters', 'strengths', 'context', 'variant')}} for m in rows]}
 
-    @app.post('/luminaria/lend')
-    async def lend(request: Request):
+    @app.get('/luminaria/lend')
+    async def lend_status(request: Request):
         if not allowed(request): return JSONResponse({'error': 'Wrong pairing key'}, 401)
-        on = bool((await request.json()).get('on'))
-        try: start_rpc() if on else stop_rpc()
-        except ValueError as error: return JSONResponse({'error': str(error)}, 409)
-        save_config({'lend_gpu': on})
-        return {'on': on, 'port': RPC_PORT}
+        return {'on': bool(CONFIG.get('lend_gpu_local') and CONFIG.get('lend_gpu') and _rpc and _rpc.poll() is None), 'port': RPC_PORT}
 
     @app.post('/v1/chat/completions')
     async def chat(request: Request):
@@ -120,7 +133,10 @@ async def start_share():
         _discovery, _ = await asyncio.get_running_loop().create_datagram_endpoint(_Discovery, local_addr=('0.0.0.0', DISCOVERY_PORT), allow_broadcast=True)
     except OSError: _discovery = None   # discovery is a convenience; pairing by address still works
     import uvicorn
-    _server = uvicorn.Server(uvicorn.Config(share_app(), host='0.0.0.0', port=SHARE_PORT, log_level='warning', access_log=False, log_config=None))
+    from .peer_tls import identity
+    cert, key = await asyncio.to_thread(identity)
+    _server = uvicorn.Server(uvicorn.Config(share_app(), host='0.0.0.0', port=SHARE_PORT, log_level='warning',
+                                           access_log=False, log_config=None, ssl_certfile=str(cert), ssl_keyfile=str(key)))
     _server.install_signal_handlers = lambda: None
     _task = asyncio.create_task(_server.serve())
 
@@ -177,23 +193,29 @@ async def find_pcs(wait=1.5):
     return sorted(found.values(), key=lambda p: p['name'])
 
 
-async def pair(address, code, port=SHARE_PORT):
+async def pair(address, code, port=SHARE_PORT, fingerprint=None):
     """Pair with another PC using the code it shows. It becomes a model service whose models join Auto and the roles."""
     import re
     from . import services
     address = str(address or '').strip()
     if not re.fullmatch(r'[A-Za-z0-9.\-]{1,253}', address): raise ValueError('Enter the other PC\'s address, for example 192.168.1.20')
-    base = f'http://{address}:{int(port)}'
+    from .peer_tls import client_context, verify_peer
+    port = int(port)
+    pin = str(fingerprint or '').replace(':', '').strip().lower()
+    if not re.fullmatch(r'[a-f0-9]{64}', pin):
+        raise ValueError('Copy the certificate fingerprint shown on the other PC.')
+    base = f'https://{address}:{port}'
     try:
-        async with httpx.AsyncClient(timeout=10, trust_env=False) as client:
+        pem = await asyncio.to_thread(verify_peer,address,port,pin)
+        async with httpx.AsyncClient(timeout=10, trust_env=False, verify=client_context(pem)) as client:
             r = await client.post(base + '/luminaria/pair', json={'code': str(code or '').strip(), 'name': socket.gethostname()})
-    except httpx.HTTPError: raise ValueError(f"Couldn't reach {address}. Make sure Luminaria is open there with \"Let other PCs pair\" on, and that Windows allowed it on private networks.") from None
+    except (httpx.HTTPError,OSError): raise ValueError(f"Couldn't reach {address}. Make sure Luminaria is open there with \"Let other PCs pair\" on, and that Windows allowed it on private networks.") from None
     if r.status_code >= 400:
         try: message = r.json().get('error')
         except ValueError: message = None
         raise ValueError(message or f'Pairing failed ({r.status_code}).')
     info = r.json()
-    entry = await services.add({'name': info.get('name') or address, 'url': base + '/v1', 'key': info['key'], 'files': True, 'kind': 'pc', 'replace': True})
+    entry = await services.add({'name': info.get('name') or address, 'url': base + '/v1', 'key': info['key'], 'files': False, 'kind': 'pc', 'replace': True}, peer_certificate=pem)
     return entry
 
 
@@ -203,15 +225,20 @@ async def set_split(on):
     peers, problems = [], []
     if not on:
         await apply({'rpc_peers': '', 'split_models': False})
+        return {'peers': [], 'problems': []}
     for pc in [s for s in services.services() if s.get('kind') == 'pc']:
         base = pc['url'].removesuffix('/v1')
         key = services.read_secrets(services._secret(pc['id'])).get('key', '')
         try:
-            async with httpx.AsyncClient(timeout=15, trust_env=False) as client:
-                r = await client.post(base + '/luminaria/lend', json={'on': on}, headers={'Authorization': 'Bearer ' + key})
-            if r.status_code >= 400: problems.append(f"{pc['name']}: {r.json().get('error', r.status_code)}")
-            elif on: peers.append(f"{base.split('//')[1].rsplit(':', 1)[0]}:{r.json().get('port', RPC_PORT)}")
-        except (httpx.HTTPError, ValueError): problems.append(f"{pc['name']}: not reachable")
+            async with httpx.AsyncClient(timeout=15, trust_env=False, verify=services.tls_context(pc)) as client:
+                r = await client.get(base + '/luminaria/lend', headers={'Authorization': 'Bearer ' + key})
+            r.raise_for_status()
+            if r.json().get('on'):
+                peers.append(f"{base.split('//')[1].rsplit(':', 1)[0]}:{r.json().get('port', RPC_PORT)}")
+            else:
+                problems.append(f"{pc['name']}: enable GPU lending on that PC")
+        except (httpx.HTTPError, ValueError):
+            problems.append(f"{pc['name']}: not reachable or needs re-pairing")
     if on:
         await apply({'rpc_peers': ','.join(peers), 'split_models': bool(peers)})
     return {'peers': peers, 'problems': problems}
@@ -258,12 +285,15 @@ def rpc_peers(value=None):
 
 def status():
     from . import services
+    from .peer_tls import fingerprint, identity
+    pin = fingerprint(identity()[0].read_text()) if pairing_open() else None
     return {'name': socket.gethostname(),
+            'clients': [{'id': peer_id, 'name': info['name']} for peer_id,info in peer_records().items()],
             'share': {'on': bool(CONFIG.get('share_models')), 'running': bool(_task and not _task.done()), 'port': SHARE_PORT,
-                      'addresses': addresses(), 'code': _pairing['code'] if pairing_open() else None},
-            'paired': [{'id': s['id'], 'name': s['name'], 'url': s['url'], 'models': len(s.get('models', []))} for s in services.services() if s.get('kind') == 'pc'],
+                      'addresses': addresses(), 'code': _pairing['code'] if pairing_open() else None, 'fingerprint': pin},
+            'paired': [{'id': s['id'], 'name': s['name'], 'url': s['url'], 'models': len(s.get('models', [])), 'files': bool(s.get('files')), 'integration_data': bool(s.get('integration_data')), 'secure': bool(s.get('peer_certificate'))} for s in services.services() if s.get('kind') == 'pc'],
             'split': bool(CONFIG.get('split_models')),
-            'lend': {'on': bool(CONFIG.get('lend_gpu')), 'running': bool(_rpc and _rpc.poll() is None), 'port': RPC_PORT,
+            'lend': {'on': bool(CONFIG.get('lend_gpu_local') and CONFIG.get('lend_gpu')), 'running': bool(_rpc and _rpc.poll() is None), 'port': RPC_PORT,
                      'available': rpc_executable() is not None, 'addresses': addresses()},
             'peers': CONFIG.get('rpc_peers') or ''}
 
@@ -277,7 +307,7 @@ async def apply(changes):
     if 'lend_gpu' in changes:
         if changes['lend_gpu']: start_rpc()
         else: stop_rpc()
-        save_config({'lend_gpu': bool(changes['lend_gpu'])})
+        save_config({'lend_gpu': bool(changes['lend_gpu']), 'lend_gpu_local': bool(changes['lend_gpu'])})
     if 'rpc_peers' in changes:
         value = str(changes['rpc_peers'] or '')[:600]
         rpc_peers(value)
@@ -292,7 +322,7 @@ async def resume():
     if CONFIG.get('share_models'):
         try: await start_share()
         except Exception: pass
-    if CONFIG.get('lend_gpu'):
+    if CONFIG.get('lend_gpu_local') and CONFIG.get('lend_gpu'):
         try: start_rpc()
         except Exception: pass
 

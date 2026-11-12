@@ -5,13 +5,63 @@ from backend import sharing
 from backend.config import CONFIG
 
 class Sharing(unittest.TestCase):
-    def test_pairing_key_is_required(self):
-        with patch.object(sharing,'share_key',lambda:'k123'):
+    def test_pairing_keys_are_independent_and_revocable(self):
+        import hashlib
+        saved={}
+        def write(_name, value):
+            saved.clear()
+            saved.update(value)
+        with patch.object(sharing,'read_secrets',lambda _:saved.copy()), patch.object(sharing,'write_secrets',write):
+            first=sharing.issue_peer('First PC')
+            second=sharing.issue_peer('Second PC')
             c=TestClient(sharing.share_app())
             self.assertEqual(c.get('/v1/models').status_code,401)
             self.assertEqual(c.get('/v1/models',headers={'Authorization':'Bearer wrong'}).status_code,401)
-            self.assertEqual(c.get('/v1/models',headers={'Authorization':'Bearer k123'}).status_code,200)
-            self.assertEqual(c.get('/api/state').status_code,404)   # nothing else on this PC is reachable
+            for token in (first,second):
+                self.assertEqual(c.get('/v1/models',headers={'Authorization':'Bearer '+token}).status_code,200)
+            sharing.revoke_peer(hashlib.sha256(first.encode()).hexdigest())
+            self.assertEqual(c.get('/v1/models',headers={'Authorization':'Bearer '+first}).status_code,401)
+            self.assertEqual(c.get('/v1/models',headers={'Authorization':'Bearer '+second}).status_code,200)
+            self.assertEqual(c.post('/luminaria/lend',headers={'Authorization':'Bearer '+second},json={'on':True}).status_code,405)
+            self.assertEqual(c.get('/api/state').status_code,404)
+
+    def test_pin_mismatch_stops_pairing_before_the_code_is_sent(self):
+        with patch('backend.peer_tls.verify_peer',side_effect=ValueError('fingerprint mismatch')), \
+                patch('backend.sharing.httpx.AsyncClient') as client:
+            with self.assertRaisesRegex(ValueError,'fingerprint mismatch'):
+                asyncio.run(sharing.pair('pc.local','123456',fingerprint='a'*64))
+            client.assert_not_called()
+
+    def test_pinned_certificate_completes_a_real_tls_handshake(self):
+        import socket
+        import ssl
+        from concurrent.futures import ThreadPoolExecutor
+        from pathlib import Path
+        from tempfile import TemporaryDirectory
+        from backend import peer_tls
+
+        with TemporaryDirectory() as folder, patch.object(peer_tls,'BASE_DATA',Path(folder)):
+            cert,key=peer_tls.identity()
+            server=ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+            server.load_cert_chain(cert,key)
+            pem=cert.read_text()
+            with socket.create_server(('127.0.0.1',0)) as listener, ThreadPoolExecutor(1) as executor:
+                listener.settimeout(3)
+                address=listener.getsockname()
+
+                def receive():
+                    for _ in range(2):
+                        raw,_=listener.accept()
+                        with raw, server.wrap_socket(raw,server_side=True):
+                            pass
+
+                accepted=executor.submit(receive)
+                self.assertEqual(peer_tls.verify_peer(*address,peer_tls.fingerprint(pem)),pem)
+                with socket.create_connection(address,timeout=3) as raw:
+                    with peer_tls.client_context(pem).wrap_socket(raw,server_hostname=address[0]) as client:
+                        self.assertIsNotNone(client.cipher())
+                accepted.result(timeout=3)
+
     def test_rpc_peers_are_validated(self):
         with patch.dict(CONFIG,rpc_peers='192.168.1.20, gaming-pc:50060'):
             self.assertEqual(sharing.rpc_peers(),['192.168.1.20:50052','gaming-pc:50060'])

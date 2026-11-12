@@ -28,8 +28,10 @@ def _public(kind,item):
     row={k:item.get(k) for k in ('id','name','description','repo','license','stars') if item.get(k) is not None}
     row['kind']='skill' if kind=='skills' else 'connector'
     if kind=='connectors':
-        ready=[p for p in item.get('packages',[]) if not p.get('needs')]
+        ready=[p for p in item.get('packages',[]) if not p.get('needs') and p.get('version')]
         row['installable']=bool(ready)
+        if ready:
+            row['package']={k:ready[0][k] for k in ('identifier','version')}
         row['needs']=sorted({n for p in item.get('packages',[]) for n in p.get('needs',[])})
         row['hosted']=bool(item.get('remotes'))
     else:
@@ -107,9 +109,11 @@ def install_skill(item):
 
 def connector_plan(item):
     from .marketplace import connector_for
-    package=next((p for p in item.get('packages',[]) if not p.get('needs')),None)
+    package=next((p for p in item.get('packages',[]) if not p.get('needs') and p.get('version')),None)
     if not package:
         needs=sorted({n for p in item.get('packages',[]) for n in p.get('needs',[])})
         if needs: raise ValueError('This connector needs '+', '.join(needs)+' first. Add it in Settings › Integrations.')
+        if item.get('packages'):
+            raise ValueError('This connector has no exact package version to install.')
         raise ValueError('This connector is hosted online only. Add its address in Settings › Integrations.')
     return connector_for(item['id'],package)

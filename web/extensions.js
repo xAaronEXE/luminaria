@@ -114,8 +114,9 @@
       status: on.length ? 'Connected' : 'Choose models', tone: on.length ? 'good' : 'warn', action: on.length ? null : { id: 'open', label: 'Choose', primary: true },
       search: s.name + ' ' + s.url + ' ' + s.models.join(' '), installed: true,
       body: () => `<p class="small-note">Its models appear in the model picker under Model services, and you can give them roles in Settings › Model roles. Planning and final checks can stay on this PC.</p>
-        <label class="switch"><input type="checkbox" data-svc-files="${esc(s.id)}" ${s.files ? 'checked' : ''}> May see my files and tool results</label>
+        <label class="switch"><input type="checkbox" data-svc-files="${esc(s.id)}" ${s.files ? 'checked' : ''}> May see my workspace files</label>
         <p class="small-note">When this is off, the service only receives the conversation text: no file contents, no command output and no file tools.</p>
+        <label class="switch"><input type="checkbox" data-integration-data="${esc(s.id)}" ${s.integration_data ? 'checked' : ''} ${s.files ? '' : 'disabled'}> May receive connected account and signed-in browser data</label>
         <h4>Models to use</h4><p class="small-note">Ticked models appear in the model picker and can be given roles. Free ones often end in <code>:free</code>.</p>
         <input type="search" class="filter-input" data-svc-filter placeholder="Find a model…" aria-label="Find a model">
         <div class="svc-models" data-svc-models="${esc(s.id)}">${s.models.map((m) => `<label class="switch svc-model"><input type="checkbox" value="${esc(m)}" ${on.includes(m) ? 'checked' : ''}> ${esc(m)}</label>`).join('')}</div>`
@@ -124,7 +125,7 @@
       status: '', action: { id: 'open', label: 'Add', primary: true }, search: 'model service openrouter groq gemini omniroute ollama lm studio relay api key',
       body: () => steps([['Pick a service', 'Or enter any address that works like OpenAI\'s API.', `<div class="ext-actions">${PRESETS.map(([n, u]) => `<button type="button" class="btn" data-preset="${esc(u)}" data-preset-name="${esc(n)}">${esc(n)}</button>`).join('')}</div>`],
         ['Enter its details', 'Keys are encrypted on this PC.', `<form class="ext-form" id="svc-form">${field('Name', 'name', '', 'text', true)}${field('Address', 'url', '', 'text', true)}${field('API key (if it needs one)', 'key', '', 'password', false)}
-          <label class="switch"><input type="checkbox" name="files"> May see my files and tool results</label><div class="ext-actions"><button class="btn primary">Connect</button></div></form>`],
+          <label class="switch"><input type="checkbox" name="files"> May see my workspace files</label><div class="ext-actions"><button class="btn primary">Connect</button></div></form>`],
         ['Use it', 'Its models appear in the model picker. Give them a role in Settings › Model roles, for example to do coding steps while your local model plans and checks.']]) });
     return rows;
   }
@@ -134,21 +135,29 @@
       { kind: 'connector', label: 'This PC', key: 'pc-allow', glyph: 'models', name: 'Let other PCs pair with this one', about: `Lets your other PCs use this PC (${sh.name}) and its models.`, meta: ['Your local network'],
         status: sh.share.on ? 'On' : 'Off', tone: sh.share.on ? 'good' : '', search: 'pair share models other pc network', installed: sh.share.on,
         body: () => steps([['Turn it on', 'Windows may ask to allow Luminaria on private networks: choose Allow. Only paired PCs can use this PC, and only for running models.', `<label class="switch"><input type="checkbox" data-share ${sh.share.on ? 'checked' : ''}> Let other PCs pair</label>`],
-          ['On the other PC', sh.share.on ? (sh.share.code ? `Open Settings › Paired PCs › <strong>Pair with another PC</strong>, choose <strong>${esc(sh.name)}</strong> and enter this code:<div class="pair-code">${esc(sh.share.code)}</div>The code works once, for 10 minutes.` : 'The code was used or expired.')
+          ['On the other PC', sh.share.on ? (sh.share.code ? `Open Settings › Paired PCs › <strong>Pair with another PC</strong>, choose <strong>${esc(sh.name)}</strong> and enter this code:<div class="pair-code">${esc(sh.share.code)}</div>Copy the certificate fingerprint from this PC:<p class="small-note"><code>${esc(sh.share.fingerprint)}</code></p>The code works once, for 10 minutes.` : 'The code was used or expired.')
             : 'Turn it on to get a pairing code.', sh.share.on ? `<button type="button" class="btn" data-new-code>New code</button>${sh.share.addresses.length ? `<p class="small-note">This PC's address: ${sh.share.addresses.map(esc).join(', ')}</p>` : ''}` : '']]) },
       { kind: 'connector', label: '', key: 'pc-pair', glyph: 'plus', name: 'Pair with another PC', about: 'Use another PC running Luminaria: its models join yours, and Luminaria picks the best one for each job.', meta: [],
         status: '', action: { id: 'open', label: 'Pair', primary: true }, search: 'pair another pc computer',
         body: () => steps([['On the other PC', 'Turn on "Let other PCs pair with this one". It shows a 6-digit code.'],
           ['Find it', '', `<div class="ext-actions"><button type="button" class="btn" data-find-pcs>Look for PCs</button></div><div data-found-pcs></div>`],
-          ['Enter the code', 'If it was not found, type its address instead.', `<form class="ext-form" id="pair-form"><div class="form-grid">${field('PC address', 'address', '', 'text', false)}${field('Pairing code', 'code', '', 'text', false)}</div><div class="ext-actions"><button class="btn primary">Pair</button></div></form>`]]) },
+          ['Verify the other PC', 'Copy the certificate fingerprint from the other PC. If it was not found, type its address instead.', `<form class="ext-form" id="pair-form"><div class="form-grid">${field('PC address', 'address', '', 'text', false)}${field('Pairing code', 'code', '', 'text', true)}${field('Certificate fingerprint', 'fingerprint', '', 'text', true)}</div><div class="ext-actions"><button class="btn primary">Pair</button></div></form>`]]) },
       ...sh.paired.map((pc) => ({ kind: 'connector', label: 'Paired PC', key: 'pc:' + pc.id, glyph: 'models', name: pc.name, about: 'Paired PC. Its models are used like your own: by Auto, by the roles and by plans.', meta: [pc.models + ' models', pc.url.replace(/\/v1$/, '')],
-        status: 'Paired', tone: 'good', search: 'paired pc ' + pc.name, installed: true,
-        body: () => `<p class="small-note">Luminaria can plan on one PC while the other codes, passing the work back and forth step by step. Your files stay on this PC; the paired PC only runs the model.</p>`
-          + actions(`<button type="button" class="btn" data-refresh-svc="${esc(pc.id)}">Refresh its models</button><button type="button" class="btn danger" data-remove-svc="${esc(pc.id)}">Unpair</button>`) })),
+        status: pc.secure ? 'Paired' : 'Re-pair required', tone: pc.secure ? 'good' : 'warn', search: 'paired pc ' + pc.name, installed: true,
+        body: () => `<p class="small-note">A verified HTTPS connection protects model requests. Workspace files and connected accounts each require separate access.</p>
+          <label class="switch"><input type="checkbox" data-svc-files="${esc(pc.id)}" ${pc.files ? 'checked' : ''} ${pc.secure ? '' : 'disabled'}> May see my workspace files</label>
+          <label class="switch"><input type="checkbox" data-integration-data="${esc(pc.id)}" ${pc.integration_data ? 'checked' : ''} ${pc.files && pc.secure ? '' : 'disabled'}> May receive connected account and signed-in browser data</label>`
+          + actions(`<button type="button" class="btn" data-refresh-svc="${esc(pc.id)}" ${pc.secure ? '' : 'disabled'}>Refresh its models</button><button type="button" class="btn danger" data-remove-svc="${esc(pc.id)}">Unpair</button>`) })),
+      ...(sh.clients || []).map((pc) => ({ kind: 'connector', label: 'Incoming peer', key: 'client:' + pc.id, glyph: 'models', name: pc.name,
+        about: 'Can use this PC for model inference.', meta: [], status: 'Authorized', installed: true,
+        body: () => actions(`<button type="button" class="btn danger" data-revoke-peer="${esc(pc.id)}">Revoke access</button>`) })),
+      { kind: 'connector', label: 'This PC', key: 'pc-lend', glyph: 'models', name: 'Lend this PC’s GPU', about: 'Enable locally on each PC that will lend a GPU.', meta: ['Trusted private network only'],
+        status: sh.lend.on ? 'On' : 'Off', installed: sh.lend.on,
+        body: () => `<label class="switch"><input type="checkbox" data-lend ${sh.lend.on ? 'checked' : ''} ${sh.lend.available ? '' : 'disabled'}> Lend this GPU</label><p class="small-note">GPU lending uses llama.cpp RPC, which has no authentication.</p>` },
     ];
     if (sh.paired.length) rows.push({ kind: 'connector', label: 'All paired PCs', key: 'pc-split', glyph: 'models', name: 'Split big models across paired PCs', about: 'Runs one model on this PC\'s and your paired PCs\' graphics cards together, for models too big for one PC.', meta: ['Uses llama.cpp RPC · home or office network only'],
       status: sh.split ? 'On' : 'Off', tone: sh.split ? 'good' : '', search: 'split model gpu rpc combine', installed: sh.split,
-      body: () => steps([['Turn it on', 'The paired PCs lend their graphics cards automatically. llama.cpp\'s RPC has no password, so only use this on a network you trust.', `<label class="switch"><input type="checkbox" data-split ${sh.split ? 'checked' : ''}> Split big models</label>`],
+      body: () => steps([['Turn it on', 'Enable GPU lending separately on each PC that should participate. llama.cpp\'s RPC has no password, so only use this on a network you trust.', `<label class="switch"><input type="checkbox" data-split ${sh.split ? 'checked' : ''}> Split big models</label>`],
         ['It reloads the model', 'The next message loads the model across all the PCs. Turning it off goes back to this PC only.']]) });
     return rows;
   }
@@ -296,6 +305,9 @@
       el.querySelector('[data-save-models]')?.addEventListener('click', safe(async (e) => { const sid = e.currentTarget.dataset.saveModels; const ids = [...el.querySelectorAll(`[data-svc-models="${CSS.escape(sid)}"] input:checked`)].map((i) => i.value); const r = await api('/services/' + sid + '/models', 'POST', { enabled: ids }); toast(`${r.enabled.length} models in use`); await refresh(); await reload(); }));
       el.querySelector('[data-refresh-svc]')?.addEventListener('click', safe(async (e) => { const r = await api('/services/' + e.currentTarget.dataset.refreshSvc + '/refresh', 'POST', {}); toast(`${r.models.length} models listed`); await reload(); }));
       el.querySelector('[data-remove-svc]')?.addEventListener('click', safe(async (e) => { if (!confirm('Remove this model service and its saved key?')) return; await api('/services/' + e.currentTarget.dataset.removeSvc, 'DELETE'); openKey = ''; await refresh(); await reload(); }));
+      el.querySelector('[data-integration-data]')?.addEventListener('change', safe(async (e) => { await api('/services/' + e.target.dataset.integrationData + '/integration-data', 'POST', { allowed: e.target.checked }); await reload(); }));
+      el.querySelector('[data-lend]')?.addEventListener('change', safe(async (e) => { await api('/sharing', 'POST', { lend_gpu: e.target.checked }); await reload(); }));
+      el.querySelector('[data-revoke-peer]')?.addEventListener('click', safe(async (e) => { await api('/sharing/clients/' + e.currentTarget.dataset.revokePeer, 'DELETE'); await reload(); }));
       el.querySelector('[data-share]')?.addEventListener('change', safe(async (e) => { await api('/sharing', 'POST', { share_models: e.target.checked }); await reload(); }));
       el.querySelector('[data-new-code]')?.addEventListener('click', safe(async () => { await api('/sharing/code', 'POST', {}); await reload(); }));
       el.querySelector('[data-split]')?.addEventListener('change', safe(async (e) => {
@@ -318,7 +330,7 @@
           out.querySelectorAll('[data-pick-pc]').forEach((b) => b.onclick = () => { const f = el.querySelector('#pair-form'); f.elements.address.value = b.dataset.pickPc; f.elements.code.focus(); }); } finally { e.currentTarget.disabled = false; } }));
       const pairForm = el.querySelector('#pair-form');
       if (pairForm) pairForm.onsubmit = safe(async (e) => { e.preventDefault(); const btn = pairForm.querySelector('.btn.primary'); btn.disabled = true; btn.textContent = 'Pairing…';
-        try { const r = await api('/sharing/pair', 'POST', { address: pairForm.elements.address.value, code: pairForm.elements.code.value }); toast(`Paired with ${r.name}: ${r.models.length} models`); openKey = ''; await refresh(); await reload(); } finally { btn.disabled = false; btn.textContent = 'Pair'; } });
+        try { const r = await api('/sharing/pair', 'POST', { address: pairForm.elements.address.value, code: pairForm.elements.code.value, fingerprint: pairForm.elements.fingerprint.value }); toast(`Paired with ${r.name}: ${r.models.length} models`); openKey = ''; await refresh(); await reload(); } finally { btn.disabled = false; btn.textContent = 'Pair'; } });
       const mcp = el.querySelector('#mcp-form');
       if (mcp) mcp.onsubmit = safe(async (e) => { e.preventDefault(); const b = Object.fromEntries(new FormData(mcp)); try { b.args = JSON.parse(b.args); } catch { throw Error('Arguments must be a JSON list, for example ["serve"]'); } await api('/connectors', 'POST', b); toast('Connector saved and starting'); openKey = ''; await refresh(); await reload(); });
     });
@@ -338,7 +350,7 @@
     if (act === 'toggle-auto') { await api('/schedules/' + item.raw.id, 'PATCH', { enabled: !item.raw.enabled }); await refresh(); await reload(); return; }
     if (act === 'install') {
       const s = item.raw, isSkill = s.kind === 'skill';
-      if (!confirm(isSkill ? 'Install ' + item.name + '?\n\nSkills are instructions Luminaria follows. A skill from a stranger can steer it, so read what you install.' : 'Install ' + item.name + '?\n\nThis downloads and runs code from its maker on your PC (' + s.id + '). Only install connectors you trust.')) return;
+      if (!confirm(isSkill ? 'Install ' + item.name + '?\n\nSkills are instructions Luminaria follows. A skill from a stranger can steer it, so read what you install.' : 'Install ' + item.name + '?\n\nThis downloads and runs code from its maker on your PC (' + s.id + '). Package: ' + (s.package ? s.package.identifier + ' ' + s.package.version : 'unavailable') + '. Only install connectors you trust.')) return;
       button.disabled = true; button.textContent = 'Installing…';
       try {
         if (item.repoSkill) await api('/marketplace/skills/install', 'POST', { repo: item.repoSkill.repo, path: item.repoSkill.path });
