@@ -1,0 +1,60 @@
+name: Build Luminaria 0.4.4
+on:
+  push:
+    branches: [codex/build-0.4.4]
+permissions:
+  contents: read
+jobs:
+  installer:
+    runs-on: windows-2025
+    timeout-minutes: 60
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GITHUB_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.14'
+      - name: Prepare Windows build dependencies
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          python -m pip install -r requirements-build.txt
+          if ($LASTEXITCODE) { throw 'Python dependencies failed to install' }
+          ./scripts/fetch-model-runtime.ps1
+          $asset = (Invoke-RestMethod 'https://api.github.com/repos/mostlygeek/llama-swap/releases/tags/v263').assets |
+            Where-Object { $_.name -match 'windows.*(amd64|x86_64|x64).*\.zip$' } | Select-Object -First 1
+          if (!$asset -or $asset.digest -notmatch '^sha256:[a-f0-9]{64}$') { throw 'Pinned Windows llama-swap release asset or digest is missing' }
+          $zip = Join-Path $env:RUNNER_TEMP 'llama-swap.zip'
+          Invoke-WebRequest $asset.browser_download_url -OutFile $zip
+          if ((Get-FileHash $zip -Algorithm SHA256).Hash.ToLower() -ne $asset.digest.Substring(7)) { throw 'llama-swap checksum mismatch' }
+          $expanded = Join-Path $env:RUNNER_TEMP 'llama-swap'
+          Expand-Archive $zip -DestinationPath $expanded
+          $swap = Get-ChildItem $expanded -Recurse -Filter 'llama-swap.exe' | Select-Object -First 1
+          if (!$swap) { throw 'llama-swap.exe is missing from the archive' }
+          Copy-Item $swap.FullName runtime/llama-swap.exe
+          $compiler = Join-Path ${env:ProgramFiles(x86)} 'Inno Setup 6'
+          if (!(Test-Path (Join-Path $compiler 'ISCC.exe'))) {
+            choco install innosetup --yes --no-progress
+            if ($LASTEXITCODE -notin @(0,1641,3010)) { throw 'Inno Setup installation failed' }
+          }
+          if (!(Test-Path (Join-Path $compiler 'ISCC.exe'))) { throw 'Inno Setup compiler is missing' }
+          Copy-Item -Recurse $compiler runtime/inno
+      - name: Build installer
+        shell: pwsh
+        run: ./build.ps1
+      - name: Verify installer version and checksum
+        shell: pwsh
+        run: |
+          $installer = Get-Item release/Luminaria-0.4.4-Setup.exe
+          if ($installer.VersionInfo.ProductVersion.Trim() -ne '0.4.4') { throw 'Installer version mismatch' }
+          $hash = (Get-FileHash $installer.FullName -Algorithm SHA256).Hash.ToLower()
+          if ((Get-Content release/SHA256SUMS.txt -Raw).Trim() -ne "$hash  $($installer.Name)") { throw 'Installer checksum mismatch' }
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Luminaria-0.4.4-Windows
+          path: |
+            release/Luminaria-0.4.4-Setup.exe
+            release/SHA256SUMS.txt
+          if-no-files-found: error
