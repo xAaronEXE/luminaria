@@ -1,5 +1,7 @@
 name: Build Luminaria 0.4.4
 on:
+  pull_request:
+    branches: [main]
   push:
     branches: [codex/build-0.4.4]
 permissions:
