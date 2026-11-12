@@ -55,6 +55,19 @@ def listening(port):
         with socket.create_connection(('127.0.0.1',port),timeout=1): return True
     except OSError: return False
 
+
+def reachable_rpc_peers(peers):
+    """Check the configured lenders once before building model commands."""
+    available, unavailable = [], []
+    for peer in peers:
+        host, port = peer.rsplit(':', 1)
+        try:
+            with socket.create_connection((host, int(port)), timeout=0.5):
+                available.append(peer)
+        except (OSError, OverflowError):
+            unavailable.append(peer)
+    return available, unavailable
+
 def host_settings():
     """Generation threads and the system-memory prompt cache size for this PC (not the build PC)."""
     try:
@@ -96,6 +109,9 @@ def start_swap():
     if not CONFIG.get('model_api_key'): save_config({'model_api_key':secrets.token_urlsafe(32)})
     entries=registry() or [{'id':CONFIG['model'],'name':CONFIG['model'],'model_file':model,'context':CONFIG['context'],'projector_file':CONFIG.get('projector_file')}]
     configs={}
+    from .sharing import rpc_peers
+    try: peers, unavailable_peers = reachable_rpc_peers(rpc_peers() if CONFIG.get('split_models') is not False else [])
+    except ValueError: peers, unavailable_peers = [], []
     tuning_hardware=None
     if any(entry.get('tuning') for entry in entries):
         from .hardware import information
@@ -126,10 +142,6 @@ def start_swap():
                 if tuning.get('cpu_moe'):args+=['--n-cpu-moe',str(tuning['cpu_moe'])]
                 if tuning.get('ubatch'):args[args.index('-ub')+1]=str(tuning['ubatch']);args[args.index('-b')+1]=str(max(2048,tuning['ubatch']))
                 if tuning['gpu_layers']==0:args+=['--no-kv-offload']
-        try:
-            from .sharing import rpc_peers
-            peers=rpc_peers()
-        except ValueError: peers=[]
         if peers: args+=['--rpc',','.join(peers)]   # split the model across these PCs' graphics cards
         if entry.get('projector_file') and Path(entry['projector_file']).is_file(): args+=['--mmproj',entry['projector_file'],'--no-mmproj-offload','--image-max-tokens','1024']
         command=' '.join('"'+str(a).replace('\\','/').replace('"','\\"')+'"' for a in args)
@@ -142,6 +154,9 @@ def start_swap():
     runtime=ROOT/'runtime'/'llama-swap.exe'
     with open(DATA/'llama-swap.log','ab') as log:
         log.write(START_MARKER.encode()+b'\n');log.flush()
+        if unavailable_peers:
+            log.write(('Paired GPU endpoints unreachable and omitted: '+', '.join(unavailable_peers)+'\n').encode('utf-8'))
+            log.flush()
         swap_process=subprocess.Popen([str(runtime),'-config',str(path),'-listen','127.0.0.1:8098'],stdout=log,stderr=log,creationflags=subprocess.CREATE_NO_WINDOW if os.name=='nt' else 0)
     (DATA/'llama-swap.pid').write_text(str(swap_process.pid))
     return {'started':True,'pid':swap_process.pid,'message':'Model loads on first request; unloads after 30 idle minutes'}

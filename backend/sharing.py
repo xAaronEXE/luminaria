@@ -201,6 +201,8 @@ async def set_split(on):
     """Split big models across this PC and every paired PC that can lend its graphics card."""
     from . import services
     peers, problems = [], []
+    if not on:
+        await apply({'rpc_peers': '', 'split_models': False})
     for pc in [s for s in services.services() if s.get('kind') == 'pc']:
         base = pc['url'].removesuffix('/v1')
         key = services.read_secrets(services._secret(pc['id'])).get('key', '')
@@ -210,8 +212,8 @@ async def set_split(on):
             if r.status_code >= 400: problems.append(f"{pc['name']}: {r.json().get('error', r.status_code)}")
             elif on: peers.append(f"{base.split('//')[1].rsplit(':', 1)[0]}:{r.json().get('port', RPC_PORT)}")
         except (httpx.HTTPError, ValueError): problems.append(f"{pc['name']}: not reachable")
-    await apply({'rpc_peers': ','.join(peers)})
-    save_config({'split_models': bool(on and peers)})
+    if on:
+        await apply({'rpc_peers': ','.join(peers), 'split_models': bool(peers)})
     return {'peers': peers, 'problems': problems}
 
 
@@ -241,11 +243,11 @@ def stop_rpc():
     _rpc = None
 
 
-def rpc_peers():
+def rpc_peers(value=None):
     """Validated 'host:port' list for llama.cpp's --rpc option."""
     import re
     peers = []
-    for item in str(CONFIG.get('rpc_peers') or '').replace(';', ',').split(','):
+    for item in str((CONFIG.get('rpc_peers') if value is None else value) or '').replace(';', ',').split(','):
         item = item.strip()
         if not item: continue
         if ':' not in item: item += f':{RPC_PORT}'
@@ -277,10 +279,9 @@ async def apply(changes):
         else: stop_rpc()
         save_config({'lend_gpu': bool(changes['lend_gpu'])})
     if 'rpc_peers' in changes:
-        old = CONFIG.get('rpc_peers') or ''
-        save_config({'rpc_peers': str(changes['rpc_peers'] or '')[:600]})
-        try: rpc_peers()
-        except ValueError: save_config({'rpc_peers': old}); raise
+        value = str(changes['rpc_peers'] or '')[:600]
+        rpc_peers(value)
+        save_config({'rpc_peers': value, 'split_models': bool(changes.get('split_models', value))})
         from . import runtime
         if runtime.manager_state().get('owned'):  # the model manager reads --rpc when it starts
             await asyncio.to_thread(runtime.stop_owned); await asyncio.to_thread(runtime.start_swap)

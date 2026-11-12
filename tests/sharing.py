@@ -18,6 +18,27 @@ class Sharing(unittest.TestCase):
         with patch.dict(CONFIG,rpc_peers='1.2.3.4; rm -rf /'):
             with self.assertRaises(ValueError): sharing.rpc_peers()
 
+    def test_unreachable_gpu_lender_is_omitted(self):
+        from backend.runtime import reachable_rpc_peers
+        from unittest.mock import MagicMock
+
+        with patch('backend.runtime.socket.create_connection', side_effect=[OSError('offline'), MagicMock()]) as connect:
+            self.assertEqual(reachable_rpc_peers(['offline:50052', 'online:50052']),
+                             (['online:50052'], ['offline:50052']))
+        self.assertEqual(connect.call_count, 2)
+
+    def test_disabling_split_clears_local_settings_before_contacting_peers(self):
+        from unittest.mock import AsyncMock
+        from backend import services
+
+        apply = AsyncMock()
+        def paired():
+            apply.assert_awaited_once_with({'rpc_peers': '', 'split_models': False})
+            return []
+        with patch.object(sharing, 'apply', apply), patch.object(services, 'services', paired):
+            result = asyncio.run(sharing.set_split(False))
+        self.assertEqual(result, {'peers': [], 'problems': []})
+
 class RpcServerName(unittest.TestCase):
     def test_finds_new_and_old_names(self):
         import os,tempfile

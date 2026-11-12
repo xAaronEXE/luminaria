@@ -298,7 +298,21 @@
       el.querySelector('[data-remove-svc]')?.addEventListener('click', safe(async (e) => { if (!confirm('Remove this model service and its saved key?')) return; await api('/services/' + e.currentTarget.dataset.removeSvc, 'DELETE'); openKey = ''; await refresh(); await reload(); }));
       el.querySelector('[data-share]')?.addEventListener('change', safe(async (e) => { await api('/sharing', 'POST', { share_models: e.target.checked }); await reload(); }));
       el.querySelector('[data-new-code]')?.addEventListener('click', safe(async () => { await api('/sharing/code', 'POST', {}); await reload(); }));
-      el.querySelector('[data-split]')?.addEventListener('change', safe(async (e) => { const r = await api('/sharing/split', 'POST', { on: e.target.checked }); if (r.problems.length) toast(r.problems.join(' · '), true); else toast(e.target.checked ? `Big models now split across ${r.peers.length + 1} PCs` : 'Back to this PC only'); await reload(); }));
+      el.querySelector('[data-split]')?.addEventListener('change', safe(async (e) => {
+        const toggle = e.target, on = toggle.checked;
+        toggle.disabled = true;
+        try {
+          const r = await api('/sharing/split', 'POST', { on });
+          if (r.problems.length) toast(r.problems.join(' · '), true);
+          else toast(on ? `Big models now split across ${r.peers.length + 1} PCs` : 'Back to this PC only');
+          await reload();
+        } catch (error) {
+          toggle.checked = !on;
+          throw error;
+        } finally {
+          toggle.disabled = false;
+        }
+      }));
       el.querySelector('[data-find-pcs]')?.addEventListener('click', safe(async (e) => { const out = el.querySelector('[data-found-pcs]'); e.currentTarget.disabled = true; out.innerHTML = '<p class="small-note" role="status">Looking…</p>';
         try { const r = await api('/sharing/find', 'POST', {}); out.innerHTML = r.pcs.length ? r.pcs.map((pc) => `<button type="button" class="btn" data-pick-pc="${esc(pc.address)}">${esc(pc.name)} · ${esc(pc.address)}${pc.pairing ? '' : ' (pairing off)'}</button>`).join(' ') : '<p class="small-note">No PCs found. Check that Luminaria is open there with pairing on, or type its address below.</p>';
           out.querySelectorAll('[data-pick-pc]').forEach((b) => b.onclick = () => { const f = el.querySelector('#pair-form'); f.elements.address.value = b.dataset.pickPc; f.elements.code.focus(); }); } finally { e.currentTarget.disabled = false; } }));
