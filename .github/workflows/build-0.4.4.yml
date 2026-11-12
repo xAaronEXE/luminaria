@@ -43,9 +43,29 @@ jobs:
           }
           if (!(Test-Path (Join-Path $compiler 'ISCC.exe'))) { throw 'Inno Setup compiler is missing' }
           Copy-Item -Recurse $compiler runtime/inno
+      - name: Stage verified catalog from 0.4.3
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $base = 'https://github.com/xAaronEXE/luminaria/releases/download/v0.4.3'
+          $installer = Join-Path $env:RUNNER_TEMP 'Luminaria-0.4.3-Setup.exe'
+          $sums = Join-Path $env:RUNNER_TEMP 'baseline-sha256.txt'
+          Invoke-WebRequest "$base/Luminaria-0.4.3-Setup.exe" -OutFile $installer
+          Invoke-WebRequest "$base/SHA256SUMS.txt" -OutFile $sums
+          $hash = (Get-FileHash $installer -Algorithm SHA256).Hash.ToLower()
+          if ((Get-Content $sums -Raw).Trim() -ne "$hash  Luminaria-0.4.3-Setup.exe") { throw 'Baseline installer checksum mismatch' }
+          $prior = Join-Path $env:RUNNER_TEMP 'luminaria-baseline'
+          $setup = Start-Process -FilePath $installer -ArgumentList @('/VERYSILENT','/SUPPRESSMSGBOXES','/NORESTART','/SP-', ('/DIR="' + $prior + '"')) -PassThru -Wait
+          if ($setup.ExitCode -ne 0) { throw 'Baseline installer failed' }
+          $snapshot = Join-Path $prior '_internal'
+          if (!(Test-Path "$snapshot/catalog/skills.json.gz")) { throw 'Previous installer did not include a skill catalog' }
+          Copy-Item "$snapshot/catalog/*.json.gz" catalog/
+          New-Item -ItemType Directory -Force .build/community-skills | Out-Null
+          Get-ChildItem "$snapshot/skills" -Directory | Where-Object { !(Test-Path "skills/$($_.Name)") } |
+            Copy-Item -Destination .build/community-skills -Recurse
       - name: Build installer
         shell: pwsh
-        run: ./build.ps1
+        run: ./build.ps1 -OfflineCatalog
       - name: Verify installer version and checksum
         shell: pwsh
         run: |
