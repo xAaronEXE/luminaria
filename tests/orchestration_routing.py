@@ -115,6 +115,21 @@ class EligibilityTests(unittest.TestCase):
   self.assertIn('Model library',o.explain_none([],None))
 
 class EngineTests(unittest.IsolatedAsyncioTestCase):
+ async def test_failed_specialist_warmup_reaches_generation(self):
+  import httpx
+  from backend import models
+  from backend.config import CONFIG
+  h=Harness([httpx.Response(500),stream([{'choices':[{'delta':{'content':'Recovered.'}}]}])])
+  chooser=AsyncMock(return_value={'model_id':'coder-7b','reason':'Coding','router_called':True})
+  try:
+   with patch.dict(CONFIG,{'orchestrator_model':'qwen3-4b','orchestration_enabled':True}),patch.object(models,'registry',return_value=MODELS),patch('backend.orchestration.choose',new=chooser):
+    chat=h.store.create_chat();h.store.add(chat,{'role':'user','content':'What is a prime number?'})
+    h.engine.start(chat);await h.engine.tasks[chat]
+   self.assertEqual(h.engine.runs[chat]['phase'],'Complete')
+   self.assertEqual(h.store.messages(chat)[-1]['content'],'Recovered.')
+   self.assertIn('model.recovery',[e['type'] for e in h.work()])
+  finally:h.close()
+
  async def run_with(self,config):
   from backend import models
   from backend.config import CONFIG

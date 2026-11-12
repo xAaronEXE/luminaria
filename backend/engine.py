@@ -1142,11 +1142,15 @@ class Engine:
                     run['last_tool_node']='router'
                 if selected:
                     self.inference.set(selected);run['model_id']=selected['id']
-                if routed and run['routing'].get('router_called') and run['model_id']!=router:
+                from .services import is_remote
+                if routed and run['routing'].get('router_called') and run['model_id']!=router and not is_remote(run['model_id']):
                     # The single llama-swap slot evicts the router before the
                     # specialist loads. Warm it before using its tokenizer.
-                    warm=await self.client.post(CONFIG['endpoint']+'/chat/completions',json={'model':self.model_id(),'messages':[{'role':'user','content':'Ready'}],'max_tokens':1,'stream':False,'chat_template_kwargs':{'enable_thinking':False}},timeout=240)
-                    warm.raise_for_status()
+                    try:
+                        warm=await self.client.post(CONFIG['endpoint']+'/chat/completions',json={'model':self.model_id(),'messages':[{'role':'user','content':'Ready'}],'max_tokens':1,'stream':False,'chat_template_kwargs':{'enable_thinking':False}},timeout=240)
+                        warm.raise_for_status()
+                    except httpx.HTTPError:
+                        self.work(run,'model.recovery','warmup',label='Model warm-up failed. Trying normal generation and recovery.',status='running')
                 if compact_only: run['compact_result']=await self.compact(chat,force=True,run=run)
                 elif run.get('plan_run'):
                     judge_first=False
