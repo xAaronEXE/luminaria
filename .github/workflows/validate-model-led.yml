@@ -1,0 +1,109 @@
+name: Validate model-led installer
+on:
+  pull_request:
+    branches: [main]
+    paths: [.github/workflows/validate-model-led.yml]
+permissions:
+  actions: read
+  contents: read
+jobs:
+  upgrade:
+    runs-on: windows-2025
+    timeout-minutes: 40
+    steps:
+      - name: Wait for candidate installer
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh run watch 43359049405 --repo $env:GITHUB_REPOSITORY --interval 20 --exit-status
+          if ($LASTEXITCODE) { throw 'Candidate installer build did not succeed' }
+      - uses: actions/download-artifact@v4
+        with:
+          name: Luminaria-0.4.5-Windows
+          run-id: 43359049405
+          github-token: ${{ github.token }}
+          path: candidate
+      - name: Install baseline and exercise local model
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $env:STUDIO_DATA = Join-Path $env:RUNNER_TEMP 'luminaria-test-data'
+          $env:STUDIO_PORT = '3210'
+          $app = Join-Path $env:RUNNER_TEMP 'luminaria-upgrade'
+          $workspace = Join-Path $env:RUNNER_TEMP 'luminaria-workspace'
+          New-Item -ItemType Directory -Force $env:STUDIO_DATA,$workspace | Out-Null
+          '{"selected":"local","require_sign_in":false,"profiles":[{"id":"local","name":"Upgrade fixture","provider":"local"}]}' | Set-Content "$env:STUDIO_DATA/profiles.json" -Encoding utf8NoBOM
+          $model = Join-Path $env:RUNNER_TEMP 'qwen2.5-0.5b-instruct-q4_k_m.gguf'
+          Invoke-WebRequest 'https://huggingface.co/Qwen/Qwen2.5-0.5B-Instruct-GGUF/resolve/main/qwen2.5-0.5b-instruct-q4_k_m.gguf' -OutFile $model
+          @(@{id='fixture';name='Qwen 2.5 0.5B Q4_K_M';model_file=$model;context=4096}) | ConvertTo-Json -AsArray | Set-Content "$env:STUDIO_DATA/models.json" -Encoding utf8NoBOM
+          @{workspace=$workspace;model='fixture';model_file=$model;context=4096;output_tokens=128} | ConvertTo-Json | Set-Content "$env:STUDIO_DATA/config.json" -Encoding utf8NoBOM
+          'preserve this file' | Set-Content "$workspace/fixture.txt"
+          $base = 'https://github.com/xAaronEXE/luminaria/releases/download/v0.4.4'
+          Invoke-WebRequest "$base/Luminaria-0.4.4-Setup.exe" -OutFile baseline.exe
+          Invoke-WebRequest "$base/SHA256SUMS.txt" -OutFile baseline.sha256
+          $baselineHash = (Get-FileHash baseline.exe -Algorithm SHA256).Hash.ToLower()
+          if ((Get-Content baseline.sha256 -Raw).Trim() -ne "$baselineHash  Luminaria-0.4.4-Setup.exe") { throw 'Baseline checksum mismatch' }
+          $candidateHash = (Get-FileHash candidate/Luminaria-0.4.5-Setup.exe -Algorithm SHA256).Hash.ToLower()
+          if ((Get-Content candidate/SHA256SUMS.txt -Raw).Trim() -ne "$candidateHash  Luminaria-0.4.5-Setup.exe") { throw 'Candidate checksum mismatch' }
+          function Install-Local($path) {
+            $p = Start-Process $path -ArgumentList @('/VERYSILENT','/SUPPRESSMSGBOXES','/NORESTART','/SP-',('/DIR="' + $app + '"')) -Wait -PassThru
+            if ($p.ExitCode -ne 0) { throw "Installer exit code $($p.ExitCode)" }
+          }
+          function Start-Local($version) {
+            $script:desktop = Start-Process "$app/LocalAIStudio.exe" -ArgumentList '--server' -PassThru
+            for ($i=0; $i -lt 90; $i++) {
+              try { $boot = Invoke-RestMethod 'http://127.0.0.1:3210/api/bootstrap' -TimeoutSec 2 } catch { Start-Sleep 1; continue }
+              if ($boot.version -ne $version) { throw "Expected $version, got $($boot.version)" }
+              $script:headers = @{'X-Studio-Token'=$boot.token}
+              return
+            }
+            throw 'Installed desktop failed to start'
+          }
+          function Api($route,$body) {
+            $args = @{Uri="http://127.0.0.1:3210/api/$route";Headers=$headers;TimeoutSec=15}
+            if ($null -ne $body) {
+              $args.Method='POST';$args.ContentType='application/json';$args.Body=$body | ConvertTo-Json -Depth 8
+            }
+            Invoke-RestMethod @args
+          }
+          function Test-Chat($chat,$mode) {
+            $body = @{text='Reply with the single word READY.'}
+            if ($mode) { $body.execution_mode=$mode }
+            $start=Get-Date
+            Api "chats/$chat/run" $body | Out-Null
+            for ($i=0; $i -lt 120; $i++) {
+              $state = Api "state?chat=$chat"
+              if ($state.run.finished) {
+                $reply = @($state.messages | Where-Object role -eq assistant)[-1].content
+                if ($state.run.phase -ne 'Complete' -or $reply -notmatch '\bREADY\b') { throw "Chat failed ($mode): $($state.run.phase) $reply" }
+                Write-Host "PASS $mode ($([int]((Get-Date)-$start).TotalMilliseconds) ms)"
+                return
+              }
+              Start-Sleep 1
+            }
+            throw 'Chat timed out'
+          }
+          Install-Local (Resolve-Path baseline.exe).Path
+          Start-Local '0.4.4'
+          $chat = (Api 'sessions' @{}).id
+          Test-Chat $chat ''
+          taskkill /PID $desktop.Id /T /F | Out-Null
+          Start-Sleep 3
+          Install-Local (Resolve-Path candidate/Luminaria-0.4.5-Setup.exe).Path
+          Start-Local '0.4.5'
+          $state = Api "state?chat=$chat"
+          if ($state.messages.Count -lt 2 -or $state.workspace -ne $workspace) { throw 'History or settings did not survive upgrade' }
+          if ((Get-Content "$workspace/fixture.txt" -Raw).Trim() -ne 'preserve this file') { throw 'Workspace fixture changed' }
+          $models = Api 'models'
+          if ('fixture' -notin $models.models.id) { throw 'Model registration missing after upgrade' }
+          foreach ($mode in @('legacy','agent','direct')) { Test-Chat ((Api 'sessions' @{}).id) $mode }
+          Write-Host "Candidate SHA-256: $candidateHash"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: Windows-upgrade-diagnostics
+          path: |
+            ${{ runner.temp }}/luminaria-test-data/desktop.log
+            ${{ runner.temp }}/luminaria-test-data/startup-error.log
+            ${{ runner.temp }}/luminaria-test-data/llama-swap.log
