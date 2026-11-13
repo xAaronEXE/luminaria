@@ -14,18 +14,15 @@ jobs:
       - uses: actions/setup-python@v6
         with:
           python-version: '3.12'
-      - name: Locate and wait for the installer built from this revision
+      - name: Wait for the pinned candidate build
         id: build
         shell: pwsh
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          $run = ''
-          for ($i=0; $i -lt 24 -and !$run; $i++) {
-            $run = gh run list --repo $env:GITHUB_REPOSITORY --workflow build-0.4.5.yml --commit $env:GITHUB_SHA --event pull_request --json databaseId --jq '.[0].databaseId'
-            if (!$run) { Start-Sleep 5 }
-          }
-          if (!$run) { throw 'No installer build for the validation revision' }
+          $run = 43361961704
+          $commit = gh run view $run --repo $env:GITHUB_REPOSITORY --json headSha --jq '.headSha'
+          if ($LASTEXITCODE -or $commit -ne 'a097b4cdfd2aafc013c5125e3c1f74017dd9eedf') { throw 'Unexpected candidate build revision' }
           gh run watch $run --repo $env:GITHUB_REPOSITORY --interval 20 --exit-status
           "run=$run" >> $env:GITHUB_OUTPUT
           if ($LASTEXITCODE) { throw 'Candidate installer build did not succeed' }
