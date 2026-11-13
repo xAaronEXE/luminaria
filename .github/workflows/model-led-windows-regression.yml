@@ -7,10 +7,16 @@ permissions:
   contents: read
 jobs:
   tests:
+    strategy:
+      fail-fast: false
+      matrix:
+        revision: [v0.4.4, candidate]
     runs-on: windows-2025
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v5
+        with:
+          ref: ${{ matrix.revision == 'candidate' && github.sha || matrix.revision }}
       - uses: actions/setup-python@v6
         with:
           python-version: '3.14'
@@ -22,5 +28,5 @@ jobs:
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: windows-test-report
+          name: windows-test-report-${{ matrix.revision }}
           path: windows-test-report.txt
