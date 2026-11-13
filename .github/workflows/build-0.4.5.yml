@@ -3,7 +3,7 @@ on:
   pull_request:
     branches: [main]
   push:
-    branches: [codex/build-0.4.5]
+    branches: [codex/model-led-0.4.5]
 permissions:
   contents: read
 jobs:
