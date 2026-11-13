@@ -24,15 +24,20 @@ if ($cases.Count -ne 10) { throw 'The comparison must contain ten acceptance cas
 $baselinePassed = 0
 $candidatePassed = 0
 $seen = @{}
+$criticalCases = @('06','07','08','09','10')
 foreach ($case in $cases) {
     if ($case.Name -notmatch '^(0[1-9]|10)\s+' -or $seen.ContainsKey($Matches[1])) {
         throw "Unexpected or duplicate acceptance case $($case.Name)."
     }
-    $seen[$Matches[1]] = $true
+    $caseId = $Matches[1]
+    $seen[$caseId] = $true
     $before = $case.Value.PSObject.Properties[$baseline].Value.status
     $after = $case.Value.PSObject.Properties[$candidate].Value.status
     if ($before -notin @('PASS','FAIL') -or $after -notin @('PASS','FAIL')) {
         throw "Acceptance case $($case.Name) needs a verdict for both installers."
+    }
+    if ($caseId -in $criticalCases -and $after -ne 'PASS') {
+        throw "Critical acceptance case $($case.Name) must pass on the candidate."
     }
     if ($before -eq 'PASS') { $baselinePassed++ }
     if ($after -eq 'PASS') { $candidatePassed++ }

@@ -1,3 +1,4 @@
+from .run_state import MAX_CONTINUATIONS, lifecycle
 import asyncio, base64, contextlib, json, logging, os, re, secrets, time
 from pathlib import Path
 from contextlib import asynccontextmanager
@@ -49,7 +50,7 @@ async def scheduler():
             if not (await gate())['unlocked']: continue
         for row in due:
             chat=store.create_chat('Scheduled: '+row['title'])
-            store.add(chat,{'role':'user','content':row['prompt']})
+            store.add(chat,{'role':'user','content':row['prompt'],'scheduled':True})
             store.execute('UPDATE schedules SET next_run=? WHERE id=?',(now()+row['interval'],row['id']))
             engine.start(chat)
 
@@ -239,14 +240,12 @@ async def run_chat(id:str,request:Request):
         if not p.is_file(): raise ValueError('Image no longer exists')
         content.append({'type':'image_ref','id':ref['id'],'mime':{'png':'image/png','jpg':'image/jpeg','webp':'image/webp'}[p.suffix[1:]]})
     if not store.messages(id): store.execute('UPDATE chats SET title=? WHERE id=?',(text[:70] or 'Image analysis',id))
-    store.add(id,{'role':'user','content':content if attachments else text})
+    store.add(id,{'role':'user','content':content if attachments else text,'attachments':bool(attachments)})
     # Every way of saying "go ahead" carries the saved plan out step by step, never as one long ordinary run.
     from .plan_runner import wants_plan_run
     plan_only=bool(b.get('plan_only',False))
     plan_run=not plan_only and (bool(b.get('plan_run',False)) or (not attachments and wants_plan_run(text,store.setting('plan:'+id,None))))
     return {'run_id':engine.start(id,bool(b.get('reasoning',False)),plan_only=plan_only,plan_run=plan_run,voice=b.get('voice') is True)}
-
-MAX_CONTINUATIONS=5
 
 @app.post('/api/chats/{id}/continue')
 async def continue_chat(id:str):
@@ -254,6 +253,8 @@ async def continue_chat(id:str):
     previous=engine.public_run(id)
     if not previous or not previous.get('finished') or not previous.get('checkpoint'): raise ValueError('There is no checkpoint to continue from')
     if previous.get('continuations',0)>=MAX_CONTINUATIONS: raise ValueError(f'This task has already been continued {MAX_CONTINUATIONS} times. Review the results above, then give a new instruction.')
+    if 'continue' not in previous['lifecycle']['actions']:
+        raise ValueError('There is no checkpoint to continue from')
     store.add(id,{'role':'user','content':'Continue the task from the checkpoint above. Steps that already succeeded are listed there; do not repeat them. If the same approach keeps failing, try a different one or explain what is blocking.'})
     return {'run_id':engine.start(id,bool(previous.get('reasoning')),continue_from=previous)}
 
@@ -276,16 +277,23 @@ async def chat_trace(id:str):
 @app.post('/api/chats/{id}/stop')
 async def stop_chat(id:str):
     require_chat(id)
-    if id in engine.tasks and not engine.tasks[id].done():
-        task=engine.tasks[id]; task.cancel()
+    run=engine.runs.get(id)
+    if not run or not lifecycle(run)['active']:
+        return {'ok':True}
+    task=engine.tasks.get(id)
+    if task and not task.done():
+        task.cancel()
         with contextlib.suppress(asyncio.CancelledError): await task
-    elif id in engine.runs:
-        run=engine.runs[id]; run['phase']='Stopped';run['finished']=now();store.save_run(run)
+    run=engine.runs[id]
+    if lifecycle(run)['active']:
+        run.update(phase='Stopped',finished=now())
+        store.save_run(run)
         engine.finish_event(run)
-        store.execute("UPDATE actions SET status='denied' WHERE chat=? AND status='pending'",(id,));store.recover_tool_pairs(id)
-        for aid,cid in list(engine.approvals.items()):
-            if cid==id: engine.approvals.pop(aid,None)
-        broadcast({'type':'changed','chat':id})
+    store.execute("UPDATE actions SET status='denied' WHERE chat=? AND status='pending'",(id,))
+    store.recover_tool_pairs(id)
+    for aid,cid in list(engine.approvals.items()):
+        if cid==id: engine.approvals.pop(aid,None)
+    broadcast({'type':'changed','chat':id})
     return {'ok':True}
 
 @app.post('/api/chats/{id}/compact')
@@ -306,7 +314,13 @@ async def decision(id:str,request:Request):
     if body.get('scope')=='always' and approved:
         a=store.rows('SELECT name,tier FROM actions WHERE id=?',(id,))[0]
         if a['tier']!='approve': raise ValueError('This tool always requires approval for each action')
-        store.set_setting('permission:'+a['name'],True)
+        if '__' in a['name']:
+            approval=store.setting('approval-tool:'+id)
+            if not approval or approval!=engine.tools.connector_identity(a['name']):
+                raise ValueError('The connector changed. Request a new approval.')
+            store.set_setting('permission:'+a['name'],approval)
+        else:
+            store.set_setting('permission:'+a['name'],True)
     engine.resume(chat,{'approved':approved}); return {'ok':True}
 
 @app.post('/api/attachments')
@@ -758,7 +772,7 @@ async def catalog_search(q:str='',kind:str='skills',offset:int=0):
     for row in data['items']:
         if row['kind']=='skill': row['installed']=row['name'] in skills
         else:
-            try: row['installed']=connector_for(row['id'],{'kind':'npm','identifier':'x'})[0] in mcp
+            try: row['installed']=connector_for(row['id'],{'kind':'npm','identifier':'x','version':'0.0.0'})[0] in mcp
             except ValueError: row['installed']=False
     return data
 
@@ -848,8 +862,15 @@ async def sharing_code():
 @app.post('/api/sharing/pair')
 async def sharing_pair(request:Request):
     from .sharing import pair
-    b=await request.json(); entry=await pair(b.get('address'),b.get('code'),b.get('port') or 8099)
+    b=await request.json(); entry=await pair(b.get('address'),b.get('code'),b.get('port') or 8099,b.get('fingerprint'))
     broadcast({'type':'changed'}); return entry
+
+@app.delete('/api/sharing/clients/{peer_id}')
+async def sharing_revoke(peer_id:str):
+    from .sharing import revoke_peer
+    revoke_peer(peer_id)
+    return {'ok':True}
+
 
 @app.post('/api/sharing/split')
 async def sharing_split(request:Request):
@@ -870,6 +891,13 @@ async def add_service(request:Request):
 async def service_files(sid:str,request:Request):
     from .services import set_files
     set_files(sid,bool((await request.json()).get('files'))); return {'ok':True}
+
+@app.post('/api/services/{sid}/integration-data')
+async def service_integration_data(sid:str,request:Request):
+    from .services import set_integration_data
+    set_integration_data(sid,(await request.json()).get('allowed') is True)
+    return {'ok':True}
+
 
 @app.post('/api/services/{sid}/models')
 async def service_models(sid:str,request:Request):
@@ -920,7 +948,7 @@ async def connector_save(request:Request):
     if not re.fullmatch('[a-z][a-z0-9_]{0,30}',name): raise ValueError('Invalid connector name')
     if not isinstance(b.get('args'),list) or not all(isinstance(a,str) for a in b['args']): raise ValueError('Arguments must be a JSON array of strings')
     from .integrations import PRESETS
-    if name in PRESETS: raise ValueError('That name is used by a built-in integration')
+    if name in PRESETS or name in ('browser','windows'): raise ValueError('That name is used by a built-in integration')
     configs=CONFIG.get('mcp',{}).copy(); configs[name]={'command':str(b['command']),'args':b['args'],'cwd':CONFIG['workspace']}
     save_config({'mcp':configs}); await restart_connector(name,configs[name]); return {'ok':True}
 
@@ -937,6 +965,8 @@ async def integrations_list():
     return catalog(CONFIG.get('mcp',{}),connectors)
 
 async def restart_connector(name,config):
+    prefix='permission:'+name+'__'
+    store.execute("DELETE FROM settings WHERE substr(key,1,?)=?", (len(prefix),prefix))
     if name in connectors:
         await connectors.pop(name).close()
     if config:

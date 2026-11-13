@@ -205,7 +205,8 @@ def _persist_locked():
     for job in _jobs.values():
         visible.append({k: job[k] for k in ('id', 'status', 'received', 'total', 'error', 'filename', 'url', 'sha256') if k in job})
     path = state_path(); path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps({'jobs': visible}, indent=2), encoding='utf-8')
+    from .changes import atomic_write
+    atomic_write(path,json.dumps({'jobs':visible},indent=2))
 
 def load_state():
     global _loaded
@@ -218,7 +219,7 @@ def load_state():
         except (OSError, json.JSONDecodeError): return
         for job in saved:
             if job.get('id') in _jobs or not quant_by_id(job.get('id', ''))[1]: continue
-            if job.get('status') in ('downloading', 'queued'):
+            if job.get('status') in ('downloading', 'queued', 'cancelling'):
                 job['status'] = 'paused'
                 job['error'] = 'Download stopped when the app closed. The partial file can resume.'
             _jobs[job['id']] = job
@@ -409,12 +410,16 @@ def enqueue(quant_id):
         raise ValueError('This quantization is already downloaded.')
     with _lock:
         job = _jobs.get(quant_id)
-        if job and job.get('status') in ('queued', 'downloading'): return _public_job(job)
+        if job and job.get('status') in ('queued', 'downloading', 'cancelling'): return _public_job(job)
     meta = resolve(entry, quant)
     partial = partial_file(quant_id)
     already = partial.stat().st_size if partial.exists() else 0
     free = shutil.disk_usage(models_folder() if models_folder().exists() else models.BASE_DATA).free
     with _lock:
+        job=_jobs.get(quant_id)
+        if job and job.get('status') in ('queued','downloading','cancelling'): return _public_job(job)
+        if final.is_file() and final.stat().st_size==quant['bytes']:
+            raise ValueError('This quantization is already downloaded.')
         reserved_full, reserved_additional = _reservations(quant_id)
         check_room(quant['bytes'], already, free, _catalog_spent(), reserved_additional, reserved_full, download_budget())
         _jobs[quant_id] = {'id': quant_id, 'status': 'queued', 'received': already, 'total': quant['bytes'], 'error': '',
@@ -446,10 +451,10 @@ def discard(quant_id):
     load_state()
     with _lock:
         job = _jobs.get(quant_id)
-        if job and job.get('status') in ('queued', 'downloading'):
-            raise ValueError('Cancel the download before discarding its partial file.')
+        if job and job.get('status') in ('queued', 'downloading', 'cancelling'):
+            raise ValueError('Wait for the download to stop before discarding its partial file.')
+        partial_file(quant_id).unlink(missing_ok=True)
         _jobs.pop(quant_id, None); _persist_locked()
-    partial_file(quant_id).unlink(missing_ok=True)
     return {'discarded': True}
 
 def _progress(quant_id, received):

@@ -7,13 +7,14 @@ const fillIcons=(el=document)=>el.querySelectorAll('[data-icon]').forEach(n=>n.i
 let token='',chat=localStorage.getItem('mint-chat')||'',state={},files=[],filePath='.',tab='files',attachments=[],panel='',tools=[],modelInfo={},refreshTimer,lastFocus;
 const parseArgs=s=>{try{return JSON.parse(s||'{}')}catch{return {invalid_arguments:s}}};
 const busy=()=>!!state.run&&!state.run.finished&&!['Waiting for approval','Interrupted — resume available'].includes(state.run.phase);
-const active=()=>!!state.run&&!state.run.finished;
+const active=()=>state.run?.lifecycle?.active??Boolean(state.run&&!state.run.finished);
 async function api(path,method='GET',data){const r=await fetch('/api'+path,{method,headers:{'X-Studio-Token':token,...(data!==undefined?{'Content-Type':'application/json'}:{})},body:data!==undefined?JSON.stringify(data):undefined});if(!r.ok){let b;try{b=await r.json()}catch{};if(r.status===423&&b?.locked)showGate();throw Error(b?.error||b?.detail||`Request failed (${r.status})`)}return r.json()}
 function toast(text,error=false){const t=$('#toast');t.textContent=text;t.classList.toggle('error',error);t.hidden=false;clearTimeout(t.timer);t.timer=setTimeout(()=>t.hidden=true,error?10000:5000)}
 function safe(fn){return async(...a)=>{try{return await fn(...a)}catch(e){toast(e.message,true)}}}
 function markdown(text){return DOMPurify.sanitize(marked.parse(text||'',{breaks:false}),{FORBID_TAGS:['img','iframe','style','form','input','button'],FORBID_ATTR:['style']})}
 function decorateMarkdown(root){root.querySelectorAll('pre code').forEach(c=>{hljs.highlightElement(c);const b=document.createElement('button');b.className='code-copy';b.title='Copy code';b.innerHTML=icon('copy');b.onclick=safe(async()=>{await navigator.clipboard.writeText(c.textContent);toast('Code copied')});c.parentElement.append(b)});root.querySelectorAll('a').forEach(a=>{a.target='_blank';a.rel='noopener noreferrer'})}
-async function refresh(){const chosen=chat;let next;try{next=await api('/state?chat='+encodeURIComponent(chat));if(next.update_notice)toast(next.update_notice,true)}catch(e){if(chat&&e.message==='Task not found'){chat='';localStorage.removeItem('mint-chat');return refresh()}throw e}if(chosen!==chat)return;state=next;render();window.dispatchEvent(new Event('studio-state'));}
+let refreshSequence=0;
+async function refresh(){const chosen=chat,sequence=++refreshSequence;let next;try{next=await api('/state?chat='+encodeURIComponent(chat));if(next.update_notice)toast(next.update_notice,true)}catch(e){if(sequence!==refreshSequence||chosen!==chat)return;if(chat&&e.message==='Task not found'){chat='';localStorage.removeItem('mint-chat');return refresh()}throw e}if(chosen!==chat||sequence!==refreshSequence)return;state=next;render();window.dispatchEvent(new Event('studio-state'));}
 function scheduleRefresh(){if(!refreshTimer)refreshTimer=setTimeout(()=>{refreshTimer=null;safe(refresh)()},160)}
 const planReady=run=>Boolean(run?.plan_only&&run.finished&&run.phase==='Complete');
 function render(){
@@ -23,6 +24,18 @@ function render(){
  const scroller=$('#messages-scroll'),bottom=scroller.scrollHeight-scroller.scrollTop-scroller.clientHeight<130;
  const messages=state.messages||[];$('#welcome').hidden=!!messages.length;$('#messages').innerHTML='';
  const summaries=new Map((state.summaries||[]).map(s=>[s.through_id,s]));
+ const actions=state.actions||[],actionsById=new Map(actions.map(a=>[a.id,a]));
+ const actionForCall=new Map(),pendingCalls=new Map(),assignedActions=new Set();
+ for(const message of messages){
+  for(const call of message.tool_calls||[])pendingCalls.set(call.id,call);
+  if(message.role!=='tool')continue;
+  const call=pendingCalls.get(message.tool_call_id);
+  const id=message.action_id||/^Action ([a-f0-9]{32}):/.exec(message.content||'')?.[1];
+  if(call&&actionsById.has(id)){
+   actionForCall.set(call,actionsById.get(id));assignedActions.add(id);
+  }
+  pendingCalls.delete(message.tool_call_id);
+ }
  // One Luminaria message per reply: its tool steps (grouped, plain English) and its text share one heading.
  let turn=null,group=null;
  for(const m of messages){
@@ -39,7 +52,8 @@ function render(){
   if(text.trim()){const body=document.createElement('div');body.className='markdown';body.innerHTML=markdown(text);el.append(body);group=null;decorateMarkdown(body)}
   if(m.hidden_code?.length){const d=document.createElement('details');d.className='hidden-code';const lines=m.hidden_code.join('\n').split('\n').length;d.innerHTML=`<summary>Code it used (${lines} line${lines===1?'':'s'})</summary>`+m.hidden_code.map(c=>`<pre>${esc(c)}</pre>`).join('');el.append(d)}
   for(const c of m.tool_calls||[]){
-   const action=(state.actions||[]).find(a=>a.call_id===c.id)||(state.actions||[]).find(a=>a.name===c.function.name&&JSON.stringify(a.args)===JSON.stringify(parseArgs(c.function.arguments)));
+   const action=actionForCall.get(c)||actions.find(a=>!assignedActions.has(a.id)&&a.call_id===c.id)||actions.find(a=>!assignedActions.has(a.id)&&a.name===c.function.name&&JSON.stringify(a.args)===JSON.stringify(parseArgs(c.function.arguments)));
+   if(action)assignedActions.add(action.id);
    if(!group){group=stepGroup();el.append(group.el)}
    group.add(c,action);
   }
@@ -48,7 +62,7 @@ function render(){
  }
  const run=state.run;$('#live-message').hidden=!active();$('#live-phase').textContent=run?.phase||'';$('#working-label').textContent=run?.phase||'';$('#live-content').innerHTML=markdown(run?.live||'');$('#live-reasoning').hidden=!run?.reasoning_text;$('#live-reasoning pre').textContent=run?.reasoning_text||'';
  $('#send').hidden=false;$('#send').title=active()?'Queue message':'Send message';$('#stop').hidden=!active();$('#prompt').disabled=false;$('#attach-button').disabled=active();$('#reasoning').disabled=active();$('#plan-only').disabled=active();
- const undoable=!active()&&state.changes?.undoable?state.changes:null;$('#run-status').hidden=!run&&!state.plan?.steps?.length&&!undoable;$('#run-status').innerHTML=(run?`${esc(run.phase)}${run.metrics?.tokens_per_second?' · '+run.metrics.tokens_per_second+' tok/s (end-to-end)':''}${run.resume_available?' <button class="text-button" id="resume-run">Resume task</button>':''}${run.checkpoint&&run.finished?` · <button class="text-button" id="continue-run">Continue task</button>`:''}${planReady(run)?` · Plan ready${run.plan_version?'':' (no plan was recorded)'} <button class="text-button" id="carry-out-plan">Carry out plan</button><button class="text-button" id="revise-plan">Revise plan</button>`:''}${run.compact_result?.reason?' · '+esc(run.compact_result.reason):''}`:'')+(state.plan?.steps?.length?`${run?' · ':''}<button class="text-button" id="view-plan">View plan (${state.plan.steps.filter(x=>x.status==='done').length}/${state.plan.steps.length})</button>${!active()&&state.plan.steps.some(x=>x.status==='blocked'||x.status==='done')&&state.plan.steps.some(x=>!['done','skipped'].includes(x.status))?' <button class="text-button" id="continue-plan">Continue plan</button>':''}`:'')+(undoable?`${run||state.plan?.steps?.length?' · ':''}<button class="text-button" id="undo-changes" title="Put back the files the last task changed">Undo file changes (${undoable.undoable})</button>`:'');
+ const undoable=!active()&&state.changes?.undoable?state.changes:null;$('#run-status').hidden=!run&&!state.plan?.steps?.length&&!undoable;$('#run-status').innerHTML=(run?`${esc(run.phase)}${run.metrics?.tokens_per_second?' · '+run.metrics.tokens_per_second+' tok/s (end-to-end)':''}${(run.lifecycle?.actions.includes('resume')??run.resume_available)?' <button class="text-button" id="resume-run">Resume task</button>':''}${(run.lifecycle?.actions.includes('continue')??(run.checkpoint&&run.finished))?` · <button class="text-button" id="continue-run">Continue task</button>`:''}${planReady(run)?` · Plan ready${run.plan_version?'':' (no plan was recorded)'} <button class="text-button" id="carry-out-plan">Carry out plan</button><button class="text-button" id="revise-plan">Revise plan</button>`:''}${run.compact_result?.reason?' · '+esc(run.compact_result.reason):''}`:'')+(state.plan?.steps?.length?`${run?' · ':''}<button class="text-button" id="view-plan">View plan (${state.plan.steps.filter(x=>x.status==='done').length}/${state.plan.steps.length})</button>${!active()&&state.plan.steps.some(x=>x.status==='blocked'||x.status==='done')&&state.plan.steps.some(x=>!['done','skipped'].includes(x.status))?' <button class="text-button" id="continue-plan">Continue plan</button>':''}`:'')+(undoable?`${run||state.plan?.steps?.length?' · ':''}<button class="text-button" id="undo-changes" title="Put back the files the last task changed">Undo file changes (${undoable.undoable})</button>`:'');
  if($('#continue-run'))$('#continue-run').onclick=safe(async()=>{$('#continue-run').disabled=true;await api('/chats/'+chat+'/continue','POST');await refresh()});
  if($('#resume-run'))$('#resume-run').onclick=safe(async()=>{await api('/chats/'+chat+'/resume','POST');await refresh()});
  if($('#carry-out-plan'))$('#carry-out-plan').onclick=safe(async()=>{$('#plan-only').checked=false;window.luminariaQueue.enqueue(chat,{text:'Carry out the saved plan, one step at a time.',attachments:[],reasoning:$('#reasoning').checked,plan_only:false,plan_run:true})});

@@ -32,6 +32,8 @@ def excluded(name):
     p=PurePosixPath(name)
     return any(part.lower() in EXCLUDED or part.lower().startswith('.env.') for part in p.parts) or p.suffix.lower() in {'.pem','.key','.pfx','.p12','.gguf','.safetensors','.sqlite','.sqlite3','.bin'} or p.name.lower() in {'credentials.json','token.json','secrets.json','config.json','profiles.json'}
 
+_UNOBSERVED = object()
+
 class SyncConflict(Exception):pass
 class BudgetPause(ValueError):pass
 class CloudSync:
@@ -199,7 +201,7 @@ class CloudSync:
         records,blobs,excluded_count=self.export()
         return {'records':len(records),'files':sum(k.startswith('file:') for k in records),'chats':sum(k.startswith('chat:') for k in records),'memories':sum(k.startswith('memory:') for k in records),'bytes':sum(p.stat().st_size for p in blobs.values()),'excluded':excluded_count}
 
-    def apply(self,key,data,deleted,content=None):
+    def apply(self,key,data,deleted,content=None,*,local_blob=_UNOBSERVED):
         kind,id=key.split(':',1)
         if kind=='memory':
             if deleted:self.store.execute('DELETE FROM memories WHERE id=?',(id,))
@@ -214,14 +216,33 @@ class CloudSync:
             expected=hashlib.sha256((data['scope']+':'+data['path'].casefold()).encode()).hexdigest()
             if expected!=id:raise ValueError('Cloud file identity does not match its path')
             path=safe_path(roots[data['scope']],data['path'])
-            if path.is_dir():raise ValueError('Cloud file cannot replace a folder')
+            if local_blob is _UNOBSERVED and path.is_dir():raise ValueError('Cloud file cannot replace a folder')
+            def verify_local():
+                if local_blob is _UNOBSERVED: return
+                try:
+                    if not path.is_file():
+                        if local_blob is None and not path.exists(): return
+                    elif local_blob is not None and path.stat().st_size<=MAX_BLOB:
+                        with path.open('rb') as stream:
+                            if hashlib.file_digest(stream,'sha256').hexdigest()==local_blob: return
+                except OSError:
+                    pass
+                raise SyncConflict('The local file changed during sync. Both versions were preserved.')
+
             if deleted:
                 if path.exists():
-                    trash=config.DATA/'cloud-sync-trash';trash.mkdir(exist_ok=True);os.replace(path,trash/(uuid.uuid4().hex+'-'+path.name))
+                    trash=config.DATA/'cloud-sync-trash';trash.mkdir(exist_ok=True)
+                    verify_local()
+                    os.replace(path,trash/(uuid.uuid4().hex+'-'+path.name))
+                else:
+                    verify_local()
             else:
                 if len(content)!=data.get('size'):raise ValueError('Cloud file size mismatch')
                 path.parent.mkdir(parents=True,exist_ok=True);temp=path.with_name('.'+path.name+'.sync-'+uuid.uuid4().hex)
-                try:temp.write_bytes(content);os.replace(temp,path)
+                try:
+                    temp.write_bytes(content)
+                    verify_local()
+                    os.replace(temp,path)
                 finally:temp.unlink(missing_ok=True)
         elif kind=='settings' and not deleted:
             prefs=data.get('preferences',{});cfg=data.get('config',{})
@@ -262,8 +283,8 @@ class CloudSync:
                 for summary in value.get('summaries',[]):self.store.db.execute('INSERT INTO summaries(chat,through_id,content,created) VALUES(?,?,?,?)',(id,mapping[summary['through']],summary['content'],summary['created']))
                 for action in value.get('actions',[]):
                     if action['chat']!=id:raise ValueError('Invalid cloud action scope')
-                    status=action['status'] if action['status'] in ('done','error','denied','interrupted','cancelled','skipped') else 'interrupted'
-                    self.store.db.execute('INSERT INTO actions(id,chat,name,args,tier,status,result,created) VALUES(?,?,?,?,?,?,?,?)',(action['id'],id,action['name'],action['args'],action['tier'],status,action['result'],action['created']))
+                    status=action['status'] if action['status'] in ('done','error','denied','interrupted','cancelled','skipped','retryable') else 'interrupted'
+                    self.store.db.execute('INSERT INTO actions(id,chat,name,args,tier,status,result,created,step) VALUES(?,?,?,?,?,?,?,?,?)',(action['id'],id,action['name'],action['args'],action['tier'],status,action['result'],action['created'],action.get('step')))
             self.store.set_setting('cloud_deleted_chat:'+id,False)
         else:
             if deleted:raise ValueError('Cloud settings/profile deletion requires an explicit local reset')
@@ -306,10 +327,11 @@ class CloudSync:
                             prior_changes=self.store.db.total_changes
                             content=await store.get_blob(row) if cloud_data.get('blob') and not row['deleted'] else None
                             if self.busy() or self.pause_requested or prior_changes!=self.store.db.total_changes:raise ValueError('Local data changed during download; sync will retry safely')
-                            if name.startswith('file:'):
-                                target=safe_path(self.roots()[cloud_data['scope']],cloud_data['path'])
-                                if not present and target.exists():raise ValueError('A local file was created during download; sync will preserve it')
-                            try:self.apply(name,cloud_data,row['deleted'],content)
+                            try:
+                                if name.startswith('file:'):
+                                    self.apply(name,cloud_data,row['deleted'],content,local_blob=data.get('blob') if present else None)
+                                else:
+                                    self.apply(name,cloud_data,row['deleted'],content)
                             except SyncConflict:
                                 state['conflicts'][name]={'version':row['version'],'local_hash':local_hash,'title':name};self.save(account,state);continue
                             state['records'][name]={'version':row['version'],'hash':cloud_hash,'data':cloud_data};changed+=1;self.save(account,state)
@@ -333,7 +355,9 @@ class CloudSync:
             account,_=await self.account();state=self.state(account);conflict=state['conflicts'].get(name);key=self.key()
             if not conflict:raise ValueError('Conflict no longer exists')
             local,blobs,_=self.export();value=local.get(name);current=fingerprint(value) if value is not None else None
-            if current!=conflict['local_hash']:raise ValueError('The local copy changed again. Review it before resolving.')
+            if current!=conflict['local_hash']:
+                conflict['local_hash']=current;self.save(account,state)
+                raise ValueError('The local copy changed again. Review it before resolving.')
             async with self.open() as store:
                 row=await store.get(sync_secure.remote_name(key,name))
                 if not row or row['version']!=conflict['version']:
@@ -348,6 +372,13 @@ class CloudSync:
                     data=value if value is not None else row['data'];version=await store.put(name,row['version'],data,value is None,blobs.get(data.get('blob')) if value else None);hash_value=current
                 else:
                     content=await store.get_blob(row) if row['data'].get('blob') and not row['deleted'] else None
-                    self.apply(name,row['data'],row['deleted'],content);data=row['data'];version=row['version'];hash_value=None if row['deleted'] else fingerprint(data)
+                    try:
+                        if name.startswith('file:'):
+                            self.apply(name,row['data'],row['deleted'],content,local_blob=value.get('blob') if value else None)
+                        else:
+                            self.apply(name,row['data'],row['deleted'],content)
+                    except SyncConflict as error:
+                        raise ValueError(str(error)) from error
+                    data=row['data'];version=row['version'];hash_value=None if row['deleted'] else fingerprint(data)
                 state['records'][name]={'version':version,'hash':hash_value,'data':data};del state['conflicts'][name];self.save(account,state);self.changed()
             return {'message':'Conflict resolved; a recovery copy was saved on this PC'}

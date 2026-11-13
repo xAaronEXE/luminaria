@@ -2,7 +2,7 @@ import asyncio,unittest
 from contextlib import asynccontextmanager
 from unittest.mock import patch
 from types import SimpleNamespace
-from backend.connectors import Connector
+from backend.connectors import Connector, OutcomeUnknown
 
 class ConnectorCancellationTests(unittest.IsolatedAsyncioTestCase):
  async def test_capability_changes_refresh_and_failed_access_clears_readiness(self):
@@ -28,7 +28,7 @@ class ConnectorCancellationTests(unittest.IsolatedAsyncioTestCase):
    await holder['notify'](SimpleNamespace(root=SimpleNamespace(method='notifications/tools/list_changed')))
    self.assertEqual(connector.tools,[]);await asyncio.wait_for(refreshed.wait(),2)
    self.assertEqual(connector.tools[0]['name'],'new')
-   with self.assertRaises(RuntimeError):await connector.call('new',{})
+   with self.assertRaises(OutcomeUnknown):await connector.call('new',{})
    await connector.task;self.assertNotEqual(connector.status,'connected');self.assertEqual(connector.tools,[])
  async def test_cancel_reaches_inflight_call_and_connector_remains_usable(self):
   started=asyncio.Event();cancelled=asyncio.Event()

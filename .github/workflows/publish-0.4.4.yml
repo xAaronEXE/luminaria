@@ -1,0 +1,41 @@
+name: Publish Luminaria 0.4.4
+on:
+  push:
+    branches: [codex/build-0.4.4]
+    paths: [.github/workflows/publish-0.4.4.yml]
+permissions:
+  actions: read
+  contents: write
+concurrency:
+  group: publish-luminaria-0.4.4
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ github.token }}
+      RELEASE_COMMIT: ebdf1adee9a109b3fd9f212342012fc3197bd24e
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: ebdf1adee9a109b3fd9f212342012fc3197bd24e
+          persist-credentials: false
+      - name: Download the successful Windows build
+        uses: actions/download-artifact@v4
+        with:
+          name: Luminaria-0.4.4-Windows
+          run-id: 43295996401
+          github-token: ${{ github.token }}
+          path: release
+      - name: Verify and publish
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$RELEASE_COMMIT"
+          test "$(tr -d '\r\n' < VERSION)" = '0.4.4'
+          cd release
+          test -f Luminaria-0.4.4-Setup.exe
+          sha256sum Luminaria-0.4.4-Setup.exe | diff - <(tr -d '\r' < SHA256SUMS.txt)
+          gh release create v0.4.4 Luminaria-0.4.4-Setup.exe SHA256SUMS.txt \
+            --repo "$GITHUB_REPOSITORY" --target "$RELEASE_COMMIT" \
+            --title 'Luminaria 0.4.4' --notes-file ../docs/release-notes/0.4.4.md --latest
+          gh release view v0.4.4 --repo "$GITHUB_REPOSITORY" --json url,isDraft,assets
