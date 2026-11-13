@@ -1,6 +1,7 @@
 """Run paired live benchmarks against an installed desktop in a disposable workspace."""
 import argparse
 import json
+import subprocess
 from pathlib import Path
 import time
 from urllib.request import Request, urlopen
@@ -53,7 +54,6 @@ def fixture(workspace):
 
 
 def verify(case, state, workspace, approvals, interrupted):
-    import subprocess
     text = '\n'.join(str(m.get('content') or '') for m in state['messages'] if m['role'] == 'assistant')
     actions = state['actions']
     done = [a for a in actions if a['status'] == 'done']
@@ -91,6 +91,8 @@ def main():
     parser.add_argument('--model', required=True)
     parser.add_argument('--revision', required=True)
     parser.add_argument('--sha256', required=True)
+    parser.add_argument('--desktop-pid', type=int, required=True)
+    parser.add_argument('--desktop-exe', type=Path, required=True)
     args = parser.parse_args()
     boot = request(args.base, 'bootstrap')
 
@@ -133,13 +135,24 @@ def main():
                             if case == 'multi_file':
                                 allow = action['name'] in ('write_file', 'edit_file') and path in ('add.py', 'multiply.py')
                             if allow and case == 'interrupted' and not interrupted:
-                                api(f'chats/{chat}/stop', {})
+                                subprocess.run(['taskkill', '/PID', str(args.desktop_pid), '/T', '/F'],
+                                               check=True, capture_output=True, timeout=20)
+                                desktop = subprocess.Popen([str(args.desktop_exe), '--server'])
+                                args.desktop_pid = desktop.pid
+                                for _ in range(45):
+                                    try:
+                                        boot = request(args.base, 'bootstrap')
+                                        restored = api(f'state?chat={chat}')
+                                        if restored['run'] and restored['run']['phase'] == 'Waiting for approval':
+                                            break
+                                    except OSError:
+                                        pass
+                                    time.sleep(1)
+                                else:
+                                    raise RuntimeError('Desktop restart did not restore the pending approval')
+                                if (args.workspace / 'resume.txt').exists():
+                                    raise RuntimeError('Interrupted write executed without approval')
                                 interrupted = True
-                                stopped = api(f'state?chat={chat}')['run']
-                                if 'continue' not in stopped['lifecycle']['actions']:
-                                    raise RuntimeError('Stopped action did not expose checkpoint continuation')
-                                api(f'chats/{chat}/continue', {})
-                                break
                             approvals += int(allow)
                             api(f'approvals/{action["id"]}', {'approved': allow})
                         else:
