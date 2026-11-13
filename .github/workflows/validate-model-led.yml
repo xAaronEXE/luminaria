@@ -36,8 +36,8 @@ jobs:
           '{"selected":"local","require_sign_in":false,"profiles":[{"id":"local","name":"Upgrade fixture","provider":"local"}]}' | Set-Content "$env:STUDIO_DATA/profiles.json" -Encoding utf8NoBOM
           $model = Join-Path $env:RUNNER_TEMP 'qwen2.5-0.5b-instruct-q4_k_m.gguf'
           Invoke-WebRequest 'https://huggingface.co/Qwen/Qwen2.5-0.5B-Instruct-GGUF/resolve/main/qwen2.5-0.5b-instruct-q4_k_m.gguf' -OutFile $model
-          @(@{id='fixture';name='Qwen 2.5 0.5B Q4_K_M';model_file=$model;context=4096}) | ConvertTo-Json -AsArray | Set-Content "$env:STUDIO_DATA/models.json" -Encoding utf8NoBOM
-          @{workspace=$workspace;model='fixture';model_file=$model;context=4096;output_tokens=128} | ConvertTo-Json | Set-Content "$env:STUDIO_DATA/config.json" -Encoding utf8NoBOM
+          @(@{id='fixture';name='Qwen 2.5 0.5B Q4_K_M';model_file=$model;context=32768}) | ConvertTo-Json -AsArray | Set-Content "$env:STUDIO_DATA/models.json" -Encoding utf8NoBOM
+          @{workspace=$workspace;model='fixture';model_file=$model;context=32768;output_tokens=128} | ConvertTo-Json | Set-Content "$env:STUDIO_DATA/config.json" -Encoding utf8NoBOM
           'preserve this file' | Set-Content "$workspace/fixture.txt"
           $base = 'https://github.com/xAaronEXE/luminaria/releases/download/v0.4.4'
           Invoke-WebRequest "$base/Luminaria-0.4.4-Setup.exe" -OutFile baseline.exe
@@ -56,6 +56,10 @@ jobs:
               try { $boot = Invoke-RestMethod 'http://127.0.0.1:3210/api/bootstrap' -TimeoutSec 2 } catch { Start-Sleep 1; continue }
               if ($boot.version -ne $version) { throw "Expected $version, got $($boot.version)" }
               $script:headers = @{'X-Studio-Token'=$boot.token}
+              $config = Get-Content "$env:STUDIO_DATA/config.json" -Raw | ConvertFrom-Json
+              $modelHeaders = @{Authorization="Bearer $($config.model_api_key)"}
+              $warm = '{"model":"fixture","messages":[{"role":"user","content":"Hello"}],"max_tokens":1}'
+              Invoke-RestMethod 'http://127.0.0.1:8098/v1/chat/completions' -Headers $modelHeaders -Method POST -ContentType 'application/json' -Body $warm -TimeoutSec 210 | Out-Null
               return
             }
             throw 'Installed desktop failed to start'
