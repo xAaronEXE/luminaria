@@ -11,17 +11,28 @@ jobs:
     runs-on: windows-2025
     timeout-minutes: 40
     steps:
-      - name: Wait for candidate installer
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+      - name: Locate and wait for the installer built from this revision
+        id: build
         shell: pwsh
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh run watch 43359049405 --repo $env:GITHUB_REPOSITORY --interval 20 --exit-status
+          $run = ''
+          for ($i=0; $i -lt 24 -and !$run; $i++) {
+            $run = gh run list --repo $env:GITHUB_REPOSITORY --workflow build-0.4.5.yml --commit $env:GITHUB_SHA --event pull_request --json databaseId --jq '.[0].databaseId'
+            if (!$run) { Start-Sleep 5 }
+          }
+          if (!$run) { throw 'No installer build for the validation revision' }
+          gh run watch $run --repo $env:GITHUB_REPOSITORY --interval 20 --exit-status
+          "run=$run" >> $env:GITHUB_OUTPUT
           if ($LASTEXITCODE) { throw 'Candidate installer build did not succeed' }
       - uses: actions/download-artifact@v4
         with:
           name: Luminaria-0.4.5-Windows
-          run-id: 43359049405
+          run-id: ${{ steps.build.outputs.run }}
           github-token: ${{ github.token }}
           path: candidate
       - name: Install baseline and exercise local model
@@ -94,11 +105,27 @@ jobs:
           Test-Chat $chat ''
           taskkill /PID $desktop.Id /T /F | Out-Null
           Start-Sleep 3
+          $env:LUMINARIA_FIXTURE_CHAT = $chat
+          @'
+          import json, os, sqlite3
+          from pathlib import Path
+
+          plan = {"goal": "Verify saved plan survives upgrade", "version": 1,
+                  "planning_only": True, "updated": 1,
+                  "steps": [{"id": "inspect", "title": "Inspect fixture.txt", "status": "pending"}]}
+          database = Path(os.environ["STUDIO_DATA"]) / "studio.sqlite3"
+          with sqlite3.connect(database) as db:
+              db.execute("INSERT INTO settings VALUES (?, ?)",
+                         ("plan:" + os.environ["LUMINARIA_FIXTURE_CHAT"], json.dumps(plan)))
+          '@ | python -
+          if ($LASTEXITCODE) { throw 'Could not seed the saved plan fixture' }
           Install-Local (Resolve-Path candidate/Luminaria-0.4.5-Setup.exe).Path
           Start-Local '0.4.5'
           $state = Api "state?chat=$chat"
           if ($state.messages.Count -lt 2 -or $state.workspace -ne $workspace) { throw 'History or settings did not survive upgrade' }
           if ((Get-Content "$workspace/fixture.txt" -Raw).Trim() -ne 'preserve this file') { throw 'Workspace fixture changed' }
+          $saved = (Api "chats/$chat/plan").plan
+          if ($saved.goal -ne 'Verify saved plan survives upgrade' -or $saved.steps[0].id -ne 'inspect') { throw 'Saved plan did not survive upgrade' }
           $models = Api 'models'
           if ('fixture' -notin $models.models.id) { throw 'Model registration missing after upgrade' }
           foreach ($mode in @('legacy','agent','direct')) { Test-Chat ((Api 'sessions' @{}).id) $mode }
