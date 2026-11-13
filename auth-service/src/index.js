@@ -186,7 +186,8 @@ async function route(request,env){
   const handle=providerName==='github'?user.login:providerName==='discord'?user.username:null;
   const safeHandle=typeof handle==='string'&&/^[A-Za-z0-9_.-]{1,80}$/.test(handle)?handle:null;
   const identity=await env.DB.prepare('INSERT INTO identities(id,provider,subject,name,created,handle) VALUES(?,?,?,?,?,?) ON CONFLICT(provider,subject) DO UPDATE SET name=excluded.name,handle=excluded.handle RETURNING id').bind(crypto.randomUUID(),providerName,String(subject),name,time,safeHandle).first();
-  await env.DB.prepare('UPDATE devices SET identity_id=? WHERE id=? AND expires>? AND identity_id IS NULL').bind(identity.id,entry.device_id,time).run();
+  const accepted=await env.DB.prepare('UPDATE devices SET identity_id=? WHERE id=? AND expires>? AND identity_id IS NULL').bind(identity.id,entry.device_id,Date.now()/1000|0).run();
+  if(accepted.meta.changes!==1)return page('Sign-in request expired or already completed','Return to Luminaria to check the sign-in status.',400,clearCookie);
   return page('Signed in to Luminaria','You can close this tab and return to the desktop app.',200,clearCookie);
  }
  if(path==='/device/poll'&&request.method==='POST'){

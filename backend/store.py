@@ -60,7 +60,7 @@ class Store:
         with self.db:
             for table in ('messages','summaries','actions','runs'): self.db.execute(f'DELETE FROM {table} WHERE chat=?',(chat,))
             if self.db.execute("SELECT 1 FROM sqlite_master WHERE name='run_events'").fetchone(): self.db.execute('DELETE FROM run_events WHERE chat=?',(chat,))
-            self.db.execute('DELETE FROM settings WHERE key IN (?,?,?)',('context:'+chat,'plan:'+chat,'brief:'+chat))
+            self.db.execute('DELETE FROM settings WHERE key IN (?,?,?,?,?)',('context:'+chat,'plan:'+chat,'brief:'+chat,'integration-context:'+chat,'execution-mode:'+chat))
             self.db.execute('DELETE FROM chats WHERE id=?',(chat,))
         root=(self.data_directory/'runs').resolve()
         for run in runs:

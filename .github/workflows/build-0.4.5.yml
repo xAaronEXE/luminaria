@@ -1,0 +1,82 @@
+name: Build Luminaria 0.4.5
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [codex/model-led-0.4.5]
+permissions:
+  contents: read
+jobs:
+  installer:
+    runs-on: windows-2025
+    timeout-minutes: 60
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GITHUB_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.14'
+      - name: Prepare Windows build dependencies
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          python -m pip install -r requirements-build.txt
+          if ($LASTEXITCODE) { throw 'Python dependencies failed to install' }
+          ./scripts/fetch-model-runtime.ps1
+          $asset = (Invoke-RestMethod 'https://api.github.com/repos/mostlygeek/llama-swap/releases/tags/v263').assets |
+            Where-Object { $_.name -match 'windows.*(amd64|x86_64|x64).*\.zip$' } | Select-Object -First 1
+          if (!$asset -or $asset.digest -notmatch '^sha256:[a-f0-9]{64}$') { throw 'Pinned Windows llama-swap release asset or digest is missing' }
+          $zip = Join-Path $env:RUNNER_TEMP 'llama-swap.zip'
+          Invoke-WebRequest $asset.browser_download_url -OutFile $zip
+          if ((Get-FileHash $zip -Algorithm SHA256).Hash.ToLower() -ne $asset.digest.Substring(7)) { throw 'llama-swap checksum mismatch' }
+          $expanded = Join-Path $env:RUNNER_TEMP 'llama-swap'
+          Expand-Archive $zip -DestinationPath $expanded
+          $swap = Get-ChildItem $expanded -Recurse -Filter 'llama-swap.exe' | Select-Object -First 1
+          if (!$swap) { throw 'llama-swap.exe is missing from the archive' }
+          Copy-Item $swap.FullName runtime/llama-swap.exe
+          $compiler = Join-Path ${env:ProgramFiles(x86)} 'Inno Setup 6'
+          if (!(Test-Path (Join-Path $compiler 'ISCC.exe'))) {
+            choco install innosetup --yes --no-progress
+            if ($LASTEXITCODE -notin @(0,1641,3010)) { throw 'Inno Setup installation failed' }
+          }
+          if (!(Test-Path (Join-Path $compiler 'ISCC.exe'))) { throw 'Inno Setup compiler is missing' }
+          Copy-Item -Recurse $compiler runtime/inno
+      - name: Stage verified catalog from 0.4.4
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $base = 'https://github.com/xAaronEXE/luminaria/releases/download/v0.4.4'
+          $installer = Join-Path $env:RUNNER_TEMP 'Luminaria-0.4.4-Setup.exe'
+          $sums = Join-Path $env:RUNNER_TEMP 'baseline-sha256.txt'
+          Invoke-WebRequest "$base/Luminaria-0.4.4-Setup.exe" -OutFile $installer
+          Invoke-WebRequest "$base/SHA256SUMS.txt" -OutFile $sums
+          $hash = (Get-FileHash $installer -Algorithm SHA256).Hash.ToLower()
+          if ((Get-Content $sums -Raw).Trim() -ne "$hash  Luminaria-0.4.4-Setup.exe") { throw 'Baseline installer checksum mismatch' }
+          $prior = Join-Path $env:RUNNER_TEMP 'luminaria-baseline'
+          $setup = Start-Process -FilePath $installer -ArgumentList @('/VERYSILENT','/SUPPRESSMSGBOXES','/NORESTART','/SP-', ('/DIR="' + $prior + '"')) -PassThru -Wait
+          if ($setup.ExitCode -ne 0) { throw 'Baseline installer failed' }
+          $snapshot = Join-Path $prior '_internal'
+          if (!(Test-Path "$snapshot/catalog/skills.json.gz")) { throw 'Previous installer did not include a skill catalog' }
+          Copy-Item "$snapshot/catalog/*.json.gz" catalog/
+          New-Item -ItemType Directory -Force .build/community-skills | Out-Null
+          Get-ChildItem "$snapshot/skills" -Directory | Where-Object { !(Test-Path "skills/$($_.Name)") } |
+            Copy-Item -Destination .build/community-skills -Recurse
+      - name: Build installer
+        shell: pwsh
+        run: ./build.ps1 -OfflineCatalog
+      - name: Verify installer version and checksum
+        shell: pwsh
+        run: |
+          $installer = Get-Item release/Luminaria-0.4.5-Setup.exe
+          if ($installer.VersionInfo.ProductVersion.Trim() -ne '0.4.5') { throw 'Installer version mismatch' }
+          $hash = (Get-FileHash $installer.FullName -Algorithm SHA256).Hash.ToLower()
+          if ((Get-Content release/SHA256SUMS.txt -Raw).Trim() -ne "$hash  $($installer.Name)") { throw 'Installer checksum mismatch' }
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Luminaria-0.4.5-Windows
+          path: |
+            release/Luminaria-0.4.5-Setup.exe
+            release/SHA256SUMS.txt
+          if-no-files-found: error

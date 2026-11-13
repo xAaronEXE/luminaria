@@ -25,7 +25,9 @@ The acceptance runs above also exercise the UI, Windows process behavior, and a 
 For a new release, keep the comparison JSON with the build. Its `installer_sha256`
 map must identify the exact baseline and candidate installers by version. Its
 `cases` map must contain cases 01–10 and record a `PASS` or `FAIL` for both versions
-in each case. Verify the candidate before publishing:
+in each case. Cases 06–10 must pass on the candidate individually. Keep the
+run trace and independently checked outcome for each case, including failed trials.
+Verify the candidate before publishing:
 
 ```powershell
 ./scripts/verify-release-comparison.ps1 -Report comparison.json -BaselineInstaller baseline.exe -CandidateInstaller release/Luminaria-0.4.0-Setup.exe

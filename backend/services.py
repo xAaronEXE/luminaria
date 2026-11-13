@@ -2,7 +2,7 @@
 
 OpenRouter, Groq, Gemini, OmniRoute, Ollama, LM Studio, or another PC running Luminaria with "Share my models" on.
 Their models appear as ids like "svc:<service>/<model>" and can be used for chat or for any role (planning, coding, work).
-A service that may not see files only ever receives the conversation text: no file contents, no tool results, no file tools.
+Services without file access receive typed chat and public web research context only.
 """
 import re
 import httpx
@@ -11,6 +11,46 @@ from .integrations import read_secrets, write_secrets, forget
 
 PREFIX = 'svc:'
 LLAMA_ONLY = ('dry_multiplier', 'dry_base', 'dry_allowed_length', 'repeat_penalty', 'chat_template_kwargs', 'cache_prompt')
+PRIVATE_TOOLS = frozenset({'research', 'web_search', 'web_fetch', 'update_plan'})
+
+
+class IntegrationMessages(list):
+    """Context that includes connected-account or signed-in browser data."""
+
+
+class PrivateMessages(list):
+    """A request assembled without local file, workspace, or unrestricted tool context."""
+
+
+def private_chat(history, model_id, system):
+    """Build a separate conversation from source messages before workspace context is added."""
+    messages = PrivateMessages([{'role': 'system', 'content': system}])
+    results = {m.get('tool_call_id'): m for m in history
+               if m['role'] == 'tool' and m.get('private_model') == model_id}
+    for message in history:
+        role, content = message['role'], message.get('content')
+        if role == 'user' and not (message.get('plan_step') or message.get('screenshot') or message.get('scheduled')):
+            if isinstance(content, list):
+                # The first item is the composer text. All subsequent items are attachment material.
+                if not message.get('attachments'):
+                    continue
+                typed = content[0].get('text', '') if content else ''
+                content = typed + '\n[Local attachments are unavailable to this model.]'
+            if content:
+                messages.append({'role': role, 'content': content})
+        elif role == 'assistant' and message.get('private_model') == model_id:
+            calls = [call for call in message.get('tool_calls', [])
+                     if call['id'] in results and call['function']['name'] in PRIVATE_TOOLS]
+            if content or calls:
+                reply = {'role': role, 'content': content}
+                if calls:
+                    reply['tool_calls'] = calls
+                    if message.get('continuation_scope'):
+                        reply.update(reasoning=message.get('reasoning',''),continuation_scope=message['continuation_scope'])
+                messages.append(reply)
+                messages.extend({'role': 'tool', 'tool_call_id': call['id'],
+                                 'content': results[call['id']]['content']} for call in calls)
+    return messages
 
 
 def _secret(sid):
@@ -31,9 +71,26 @@ def _url(url):
     return url.removesuffix('/chat/completions').removesuffix('/models')
 
 
-async def list_models(url, key):
+def tls_context(service):
+    if service.get('kind') != 'pc':
+        return True
+    certificate = service.get('peer_certificate')
+    if not certificate or not service['url'].startswith('https://'):
+        raise ValueError('Re-pair this PC to use its verified HTTPS connection.')
+    from .peer_tls import client_context
+    return client_context(certificate)
+
+
+def may_see_integrations(model_id):
+    if not is_remote(model_id):
+        return True
+    service, _ = resolve(model_id)
+    return bool(service and service.get('files') and service.get('integration_data'))
+
+
+async def list_models(url, key, verify=True):
     headers = {'Authorization': 'Bearer ' + key} if key else {}
-    async with httpx.AsyncClient(timeout=15, trust_env=False) as client:
+    async with httpx.AsyncClient(timeout=15, trust_env=False, verify=verify) as client:
         r = await client.get(url + '/models', headers=headers)
     if r.status_code in (401, 403): raise ValueError('The service refused the key. Check it and try again.')
     r.raise_for_status()
@@ -49,21 +106,30 @@ async def list_models(url, key):
     return ids[:300]
 
 
-async def add(body):
+async def add(body, *, peer_certificate=None):
     name = str(body.get('name') or '').strip()[:60]
     if not name: raise ValueError('Give the service a name')
     url, key = _url(body.get('url')), str(body.get('key') or '').strip()
-    sid = _slug(name)
+    if peer_certificate:
+        from .peer_tls import fingerprint
+        sid = 'pc-' + fingerprint(peer_certificate)[:20]
+    else:
+        sid = _slug(name)
     current = services()
     if any(s['id'] == sid for s in current) and not body.get('replace'): raise ValueError('A service with that name already exists')
-    try: models = await list_models(url, key)
+    kind = 'pc' if peer_certificate else 'cloud'
+    if body.get('kind') == 'pc' and not peer_certificate:
+        raise ValueError('Use Pair with another PC to verify its certificate.')
+    verify = tls_context({'url':url,'kind':kind,'peer_certificate':peer_certificate})
+    try: models = await list_models(url, key, verify)
     except httpx.HTTPError as error: raise ValueError(f'Could not reach {url}: {type(error).__name__}') from None
     # Small catalogs are used as they are; for big ones (OpenRouter lists hundreds) the user picks the models to use.
-    kind = 'pc' if body.get('kind') == 'pc' else 'cloud'
     entry = {'id': sid, 'name': name, 'url': url, 'kind': kind, 'meta': getattr(list_models, 'meta', {}) if kind == 'pc' else {},
              'files': bool(body.get('files')), 'models': models, 'enabled': models if kind == 'pc' or len(models) <= 12 else [],
              'context': int(body.get('context') or 32768)}
+    if peer_certificate: entry['peer_certificate'] = peer_certificate
     if key: write_secrets(_secret(sid), {'key': key})
+    else: forget(_secret(sid))
     save_config({'services': [s for s in current if s['id'] != sid] + [entry]})
     return entry
 
@@ -89,7 +155,7 @@ def set_enabled(sid, ids):
 async def refresh(sid):
     service = next((s for s in services() if s['id'] == sid), None)
     if not service: raise ValueError('That model service is not set up')
-    try: models = await list_models(service['url'], read_secrets(_secret(sid)).get('key', ''))
+    try: models = await list_models(service['url'], read_secrets(_secret(sid)).get('key', ''), tls_context(service))
     except httpx.HTTPError as error: raise ValueError(f'Could not reach {service["url"]}: {type(error).__name__}') from None
     enabled = [m for m in service.get('enabled', models) if m in models]
     meta = getattr(list_models, 'meta', {}) if service.get('kind') == 'pc' else {}
@@ -99,7 +165,14 @@ async def refresh(sid):
 
 
 def set_files(sid, allowed):
-    save_config({'services': [{**s, 'files': bool(allowed)} if s['id'] == sid else s for s in services()]})
+    save_config({'services': [{**s, 'files': bool(allowed), 'integration_data': bool(allowed and s.get('integration_data'))} if s['id'] == sid else s for s in services()]})
+
+
+def set_integration_data(sid, allowed):
+    service = next((s for s in services() if s['id'] == sid), None)
+    if not service or (allowed and not service.get('files')):
+        raise ValueError('Enable file access for this model service first.')
+    save_config({'services': [{**s, 'integration_data': bool(allowed)} if s['id'] == sid else s for s in services()]})
 
 
 def is_remote(model_id):
@@ -125,6 +198,8 @@ def remote_models():
     rows = []
     for s in services():
         pc = s.get('kind') == 'pc'
+        if pc and not s.get('peer_certificate'):
+            continue
         for m in s.get('enabled', s.get('models', [])):
             info = (s.get('meta') or {}).get(m) or {}
             hit = re.search(r'(\d+(?:\.\d+)?)b\b', m.lower())
@@ -141,6 +216,13 @@ def request(model_id, body):
     service, model = resolve(model_id)
     if not service: raise ValueError('That model service was removed. Choose another model.')
     key = read_secrets(_secret(service['id'])).get('key', '')
+    if isinstance(body.get('messages'), IntegrationMessages) and not may_see_integrations(model_id):
+        raise ValueError('Connected-account data is disabled for this model service.')
+    if not service.get('files'):
+        if not isinstance(body.get('messages'), PrivateMessages):
+            raise ValueError('This model service requires a file-free request.')
+        if any(t['function']['name'] not in PRIVATE_TOOLS for t in body.get('tools', [])):
+            raise ValueError('This model service cannot use local tools.')
     clean = {k: v for k, v in body.items() if k not in LLAMA_ONLY}
     clean['model'] = model
     return service['url'] + '/chat/completions', ({'Authorization': 'Bearer ' + key} if key else {}), clean

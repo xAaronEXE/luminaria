@@ -11,6 +11,23 @@ _EXECUTE = re.compile(r'\b(?:then|and)\s+(?:apply|build|create|delete|deploy|edi
 _CHANGE = re.compile(r'^(?:please\s+)?(?:(?:can|could|would) you\s+)?(?:fix|patch|implement|apply|edit|modify|delete|rename|move|copy|install|run|execute|deploy|publish)\s+\S|^(?:please\s+)?(?:create|write|save|build)\s+[^\n]*(?:\b(?:file|folder|installer|release|project)\b|\.[a-z0-9]{1,8}\b)', re.I)
 _INSPECT = re.compile(r'^(?:please\s+)?(?:(?:can|could|would) you\s+)?(?:inspect|read|open|list|search|scan|look through|look at)\s+(?:[^\n]*\b(?:file|files|folder|directory|workspace|repository)\b|[^\s]+\.[a-z0-9]{1,8}\b)', re.I)
 
+_FILE_TARGET = re.compile(
+    r'^(?:please\s+)?(?:(?:can|could|would) you\s+)?'
+    r'(?:create|write|save|edit|modify|patch|inspect|read|open)\s+(?:(?:the|a)\s+)?(?:file\s+)?'
+    r'(?:`([^`]+)`|"([^"]+)"|([^\s,]+))',
+    re.I,
+)
+
+
+def action_target(text):
+    """Recognize a filename immediately following a direct file action."""
+    match = _FILE_TARGET.match(text)
+    if match:
+        path = next(group for group in match.groups() if group).rstrip('.!?')
+        if re.search(r'\.[a-z0-9]{1,12}$', path, re.I):
+            return path
+    return None
+
 
 def action_intent(text):
     """Recognize clear requests for tool work without treating every chat as a task."""

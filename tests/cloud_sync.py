@@ -52,6 +52,42 @@ class CloudTests(unittest.IsolatedAsyncioTestCase):
   with self.device('a') as (_,store,sync):store.save_memory('Shared','from A',id=id);await sync.run()
   with self.device('b') as (folder,store,sync):
    store.save_memory('Shared','from B',id=id);r=await sync.run();self.assertEqual(r['conflicts'],1);self.assertEqual(store.memory()[0]['content'],'from B');await sync.resolve('memory:'+id,'cloud');self.assertEqual(store.memory()[0]['content'],'from A');self.assertTrue(list((folder/'cloud-sync-conflicts').glob('*.json')))
+ async def test_local_file_edit_during_download_becomes_conflict(self):
+  with self.device('a') as (folder,_,sync):
+   file=folder/'Files'/'note.txt';file.write_text('original');await sync.enable(True);await sync.run()
+  with self.device('b') as (_,_,sync):await sync.enable(True);await sync.run()
+  with self.device('a') as (folder,_,sync):
+   (folder/'Files'/'note.txt').write_text('remote version');await sync.run()
+  with self.device('b') as (folder,_,sync):
+   file=folder/'Files'/'note.txt'
+   def edit_during_download(request):
+    response=self.server(request)
+    if request.method=='GET' and '/blobs/' in request.url.path:file.write_text('external edit')
+    return response
+   sync.client_factory=lambda **kwargs:httpx.AsyncClient(transport=httpx.MockTransport(edit_during_download),**kwargs)
+   outcome=await sync.run()
+   self.assertEqual(outcome['conflicts'],1)
+   self.assertEqual(file.read_text(),'external edit')
+
+ def test_cloud_delete_preserves_changed_file(self):
+  with self.device('a') as (folder,_,sync):
+   path=folder/'Files'/'note.txt';path.write_text('new local content')
+   key='file:'+hashlib.sha256(b'workspace:note.txt').hexdigest()
+   with self.assertRaises(cloud_sync.SyncConflict):
+    sync.apply(key,{'scope':'workspace','path':'note.txt'},True,local_blob=hashlib.sha256(b'older').hexdigest())
+   self.assertEqual(path.read_text(),'new local content')
+
+ async def test_reconciled_action_round_trips_with_step(self):
+  with self.device('a') as (_,store,sync):
+   chat=store.create_chat()
+   store.execute('INSERT INTO actions(id,chat,name,args,tier,status,result,created,step) VALUES(?,?,?,?,?,?,?,?,?)',
+                 ('action',chat,'mail__send','{}','always','retryable','{"reconciled":"no_effect"}',1,'step-1'))
+   await sync.enable(True);await sync.run()
+  with self.device('b') as (_,store,sync):
+   await sync.enable(True);await sync.run()
+   action,=store.actions(chat)
+   self.assertEqual((action['status'],action['step'],action['result']['reconciled']),('retryable','step-1','no_effect'))
+
  async def test_credentials_permissions_and_model_weights_are_not_exported(self):
   with self.device('a') as (folder,store,sync):
    for name in ['.env','token.json','model.gguf','config.json']:(folder/'Files'/name).write_text('secret')

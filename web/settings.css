@@ -188,3 +188,8 @@
 .drive-list{display:flex;flex-wrap:wrap;gap:8px;margin-top:10px}.drive-chip{display:inline-flex;align-items:center;gap:6px;padding:6px 10px;border:1px solid var(--line);border-radius:8px}.drive-chip small{color:var(--muted)}
 .admin-grants{display:grid;gap:8px;margin-top:10px}
 .sync-key{display:block;padding:14px;margin:12px 0;border:1px dashed var(--line);border-radius:8px;font-size:15px;letter-spacing:.04em;word-break:break-all;user-select:all}
+
+.model-toolbar .model-search{flex:1 0 100%;box-sizing:border-box}
+.model-view-controls,.model-result-bar{display:flex;flex-wrap:wrap;align-items:center;gap:8px 16px}
+.model-view-controls label{display:flex;align-items:center;gap:6px;color:var(--muted);font-size:12px}
+.model-result-bar{justify-content:space-between;min-height:30px;color:var(--muted);font-size:12px;margin:6px 0}

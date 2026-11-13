@@ -1,0 +1,157 @@
+name: Validate model-led installer
+on:
+  pull_request:
+    branches: [main]
+    paths: [.github/workflows/validate-model-led.yml]
+permissions:
+  actions: read
+  contents: read
+jobs:
+  upgrade:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - {model: Qwen2.5-0.5B-Instruct, file: qwen2.5-0.5b-instruct-q4_k_m.gguf}
+          - {model: Qwen2.5-1.5B-Instruct, file: qwen2.5-1.5b-instruct-q4_k_m.gguf}
+    runs-on: windows-2025
+    timeout-minutes: 80
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+      - name: Wait for the pinned candidate build
+        id: build
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $run = 43373393809
+          $commit = gh run view $run --repo $env:GITHUB_REPOSITORY --json headSha --jq '.headSha'
+          if ($LASTEXITCODE -or $commit -ne '43cb48d577282e971f1f68dec7ec0b785371573e') { throw 'Unexpected candidate build revision' }
+          gh run watch $run --repo $env:GITHUB_REPOSITORY --interval 20 --exit-status
+          "run=$run" >> $env:GITHUB_OUTPUT
+          if ($LASTEXITCODE) { throw 'Candidate installer build did not succeed' }
+      - uses: actions/download-artifact@v4
+        with:
+          name: Luminaria-0.4.5-Windows
+          run-id: ${{ steps.build.outputs.run }}
+          github-token: ${{ github.token }}
+          path: candidate
+      - name: Install baseline and run corrected paired workload comparison
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $env:STUDIO_DATA = Join-Path $env:RUNNER_TEMP 'luminaria-test-data'
+          $env:STUDIO_PORT = '3210'
+          $app = Join-Path $env:RUNNER_TEMP 'luminaria-upgrade'
+          $workspace = Join-Path $env:RUNNER_TEMP 'luminaria-workspace'
+          New-Item -ItemType Directory -Force $env:STUDIO_DATA,$workspace | Out-Null
+          '{"selected":"local","require_sign_in":false,"profiles":[{"id":"local","name":"Upgrade fixture","provider":"local"}]}' | Set-Content "$env:STUDIO_DATA/profiles.json" -Encoding utf8NoBOM
+          $model = Join-Path $env:RUNNER_TEMP '${{ matrix.file }}'
+          Invoke-WebRequest 'https://huggingface.co/Qwen/${{ matrix.model }}-GGUF/resolve/main/${{ matrix.file }}' -OutFile $model
+          @(@{id='fixture';name='${{ matrix.model }} Q4_K_M';model_file=$model;context=32768}) | ConvertTo-Json -AsArray | Set-Content "$env:STUDIO_DATA/models.json" -Encoding utf8NoBOM
+          @{workspace=$workspace;model='fixture';model_file=$model;context=32768;output_tokens=128;keep_model_loaded=3600;access_mode='review'} | ConvertTo-Json | Set-Content "$env:STUDIO_DATA/config.json" -Encoding utf8NoBOM
+          'preserve this file' | Set-Content "$workspace/fixture.txt"
+          $base = 'https://github.com/xAaronEXE/luminaria/releases/download/v0.4.4'
+          Invoke-WebRequest "$base/Luminaria-0.4.4-Setup.exe" -OutFile baseline.exe
+          Invoke-WebRequest "$base/SHA256SUMS.txt" -OutFile baseline.sha256
+          $baselineHash = (Get-FileHash baseline.exe -Algorithm SHA256).Hash.ToLower()
+          if ((Get-Content baseline.sha256 -Raw).Trim() -ne "$baselineHash  Luminaria-0.4.4-Setup.exe") { throw 'Baseline checksum mismatch' }
+          $candidateHash = (Get-FileHash candidate/Luminaria-0.4.5-Setup.exe -Algorithm SHA256).Hash.ToLower()
+          if ((Get-Content candidate/SHA256SUMS.txt -Raw).Trim() -ne "$candidateHash  Luminaria-0.4.5-Setup.exe") { throw 'Candidate checksum mismatch' }
+          function Install-Local($path) {
+            $p = Start-Process $path -ArgumentList @('/VERYSILENT','/SUPPRESSMSGBOXES','/NORESTART','/SP-',('/DIR="' + $app + '"')) -Wait -PassThru
+            if ($p.ExitCode -ne 0) { throw "Installer exit code $($p.ExitCode)" }
+          }
+          function Start-Local($version) {
+            $script:desktop = Start-Process "$app/LocalAIStudio.exe" -ArgumentList '--server' -PassThru
+            for ($i=0; $i -lt 90; $i++) {
+              try { $boot = Invoke-RestMethod 'http://127.0.0.1:3210/api/bootstrap' -TimeoutSec 2 } catch { Start-Sleep 1; continue }
+              if ($boot.version -ne $version) { throw "Expected $version, got $($boot.version)" }
+              $script:headers = @{'X-Studio-Token'=$boot.token}
+              $config = Get-Content "$env:STUDIO_DATA/config.json" -Raw | ConvertFrom-Json
+              $modelHeaders = @{Authorization="Bearer $($config.model_api_key)"}
+              $warm = '{"model":"fixture","messages":[{"role":"user","content":"Hello"}],"max_tokens":1}'
+              Invoke-RestMethod 'http://127.0.0.1:8098/v1/chat/completions' -Headers $modelHeaders -Method POST -ContentType 'application/json' -Body $warm -TimeoutSec 210 | Out-Null
+              return
+            }
+            throw 'Installed desktop failed to start'
+          }
+          function Api($route,$body) {
+            $args = @{Uri="http://127.0.0.1:3210/api/$route";Headers=$headers;TimeoutSec=15}
+            if ($null -ne $body) {
+              $args.Method='POST';$args.ContentType='application/json';$args.Body=$body | ConvertTo-Json -Depth 8
+            }
+            Invoke-RestMethod @args
+          }
+          function Test-Chat($chat,$mode) {
+            $body = @{text='Reply with the single word READY.'}
+            if ($mode) { $body.execution_mode=$mode }
+            $start=Get-Date
+            Api "chats/$chat/run" $body | Out-Null
+            for ($i=0; $i -lt 120; $i++) {
+              $state = Api "state?chat=$chat"
+              if ($state.run.finished) {
+                $reply = @($state.messages | Where-Object role -eq assistant)[-1].content
+                if ($state.run.phase -ne 'Complete' -or $reply -notmatch '\bREADY\b') { throw "Chat failed ($mode): $($state.run.phase) $reply" }
+                Write-Host "PASS $mode ($([int]((Get-Date)-$start).TotalMilliseconds) ms)"
+                return
+              }
+              Start-Sleep 1
+            }
+            throw 'Chat timed out'
+          }
+          Install-Local (Resolve-Path baseline.exe).Path
+          Start-Local '0.4.4'
+          $chat = (Api 'sessions' @{}).id
+          taskkill /PID $desktop.Id /T /F | Out-Null
+          Start-Sleep 3
+          $env:LUMINARIA_FIXTURE_CHAT = $chat
+          @'
+          import json, os, sqlite3
+          from pathlib import Path
+
+          chat = os.environ["LUMINARIA_FIXTURE_CHAT"]
+          plan = {"goal": "Verify saved plan survives upgrade", "version": 1,
+                  "planning_only": True, "updated": 1,
+                  "steps": [{"id": "inspect", "title": "Inspect fixture.txt", "status": "pending"}]}
+          database = Path(os.environ["STUDIO_DATA"]) / "studio.sqlite3"
+          with sqlite3.connect(database) as db:
+              if not db.execute("SELECT 1 FROM messages WHERE chat=?", (chat,)).fetchone():
+                  for role, content in (("user", "Upgrade fixture"), ("assistant", "READY")):
+                      db.execute("INSERT INTO messages(chat,payload,created) VALUES (?,?,?)",
+                                 (chat, json.dumps({"role": role, "content": content}), 1))
+              db.execute("INSERT INTO settings VALUES (?, ?)",
+                         ("plan:" + os.environ["LUMINARIA_FIXTURE_CHAT"], json.dumps(plan)))
+          '@ | python -
+          if ($LASTEXITCODE) { throw 'Could not seed the saved plan fixture' }
+          Install-Local (Resolve-Path candidate/Luminaria-0.4.5-Setup.exe).Path
+          Start-Local '0.4.5'
+          $state = Api "state?chat=$chat"
+          if ($state.messages.Count -lt 2 -or $state.workspace -ne $workspace) { throw 'History or settings did not survive upgrade' }
+          if ((Get-Content "$workspace/fixture.txt" -Raw).Trim() -ne 'preserve this file') { throw 'Workspace fixture changed' }
+          $saved = (Api "chats/$chat/plan").plan
+          if ($saved.goal -ne 'Verify saved plan survives upgrade' -or $saved.steps[0].id -ne 'inspect') { throw 'Saved plan did not survive upgrade' }
+          $models = Api 'models'
+          if ('fixture' -notin $models.models.id) { throw 'Model registration missing after upgrade' }
+          if ('${{ matrix.model }}' -eq 'Qwen2.5-0.5B-Instruct') {
+            foreach ($mode in @('legacy','agent','direct')) { Test-Chat ((Api 'sessions' @{}).id) $mode }
+          }
+          Write-Host "Candidate SHA-256: $candidateHash"
+          python scripts/benchmark-model-led.py --workspace "$workspace" --output benchmark.json --model '${{ matrix.model }} Q4_K_M' --revision 43cb48d577282e971f1f68dec7ec0b785371573e --sha256 $candidateHash --desktop-pid $desktop.Id --desktop-exe "$app/LocalAIStudio.exe"
+          if ($LASTEXITCODE) { throw 'Benchmark runner failed' }
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: benchmark-${{ matrix.model }}
+          path: benchmark.json
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: Windows-upgrade-diagnostics-${{ matrix.model }}
+          path: |
+            ${{ runner.temp }}/luminaria-test-data/desktop.log
+            ${{ runner.temp }}/luminaria-test-data/startup-error.log
+            ${{ runner.temp }}/luminaria-test-data/llama-swap.log

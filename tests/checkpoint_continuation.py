@@ -4,12 +4,57 @@ from unittest.mock import patch
 import httpx
 from tests.work_events import Harness,stream,tool_call
 from backend import engine as engine_module
-from backend.checkpoint import report
+from backend.checkpoint import report, continuation_receipt
 from backend.config import CONFIG
 
 def text(content):return stream([{'choices':[{'delta':{'content':content}}]}])
 
 class CheckpointTests(unittest.IsolatedAsyncioTestCase):
+ async def test_restore_prefers_latest_run_and_requires_approval(self):
+  from types import SimpleNamespace
+  from unittest.mock import AsyncMock
+  h=Harness([])
+  try:
+   chat=h.store.create_chat()
+   for id,phase,updated in [('older','Waiting for approval',1),('newer','Complete',2)]:
+    run={'id':id,'chat':chat,'phase':phase}
+    h.store.execute('INSERT INTO runs VALUES(?,?,?,?,?)',(id,chat,json.dumps(run),phase,updated))
+   snapshot=SimpleNamespace(next=('tools',),tasks=[SimpleNamespace(interrupts=[
+    SimpleNamespace(value={'action_id':'approval'})])])
+   with patch.object(h.engine.graph,'aget_state',AsyncMock(return_value=snapshot)) as checkpoint:
+    await h.engine.restore()
+    checkpoint.assert_not_awaited()
+    self.assertIsNone(h.engine.runs.get(chat))
+    h.store.execute('DELETE FROM runs WHERE id=?',('newer',))
+    await h.engine.restore()
+   run=h.engine.public_run(chat)
+   self.assertEqual(run['lifecycle']['state'],'awaiting_approval')
+   self.assertFalse(run['resume_available'])
+   with self.assertRaisesRegex(ValueError,'approval decision'):
+    h.engine.resume(chat)
+  finally:h.close()
+
+ async def test_stop_finalizes_queued_task_once_without_rewriting_finished_state(self):
+  from backend import app
+  h=Harness([])
+  try:
+   chat=h.store.create_chat()
+   h.engine.start(chat)
+   with patch.object(app,'engine',h.engine),patch.object(app,'store',h.store),patch.object(app,'broadcast'):
+    await app.stop_chat(chat)
+    first=h.engine.public_run(chat)
+    await app.stop_chat(chat)
+   self.assertEqual(first['lifecycle'],{'state':'stopped','active':False,'actions':[]})
+   self.assertEqual(h.engine.public_run(chat),first)
+   self.assertEqual(sum(e['type']=='run.cancelled' for e in h.work()),1)
+  finally:h.close()
+
+ def test_continuation_limit_is_in_the_lifecycle_contract(self):
+  from backend.run_state import lifecycle, MAX_CONTINUATIONS
+  run={'phase':'Checkpoint','finished':1,'checkpoint':{'reason':'limit'}}
+  self.assertEqual(lifecycle(run)['actions'],['continue'])
+  self.assertEqual(lifecycle({**run,'continuations':MAX_CONTINUATIONS})['actions'],[])
+
  async def test_direct_request_cannot_finish_with_no_actions(self):
   h=Harness([text('Done. I fixed it.'),text('Done.')])
   try:
@@ -67,6 +112,81 @@ class CheckpointTests(unittest.IsolatedAsyncioTestCase):
    run=h.engine.runs[chat]
    self.assertEqual(run['phase'],'Complete')
    self.assertEqual(run['verification']['outcome'],'passed')
+  finally:h.close()
+
+ async def test_unoffered_tool_cannot_reach_dispatch(self):
+  h=Harness([stream([tool_call(0,'extra','create_schedule',{'title':'Check','prompt':'Say hello','interval_minutes':300})]),text('The tool was unavailable.')])
+  try:
+   h.store.set_setting('permission:create_schedule',True)
+   chat=h.store.create_chat();h.store.add(chat,{'role':'user','content':'Help me organize my work.'})
+   with patch.object(h.engine.tools,'dispatch',wraps=h.engine.tools.dispatch) as dispatch:
+    h.engine.start(chat);await h.engine.tasks[chat]
+    dispatch.assert_not_called()
+   self.assertEqual(h.store.actions(chat)[0]['status'],'error')
+  finally:h.close()
+
+ async def test_incomplete_stream_does_not_dispatch_partial_calls(self):
+  chunk=tool_call(0,'partial','list_files',{'path':'.'})
+  response=httpx.Response(200,text='data: '+json.dumps(chunk)+'\n\n')
+  h=Harness([response,text('Recovered after retry.')])
+  try:
+   chat=h.store.create_chat();h.store.add(chat,{'role':'user','content':'What can you help me with?'})
+   h.engine.start(chat);await h.engine.tasks[chat]
+   self.assertEqual(h.store.actions(chat),[])
+   self.assertEqual(h.store.messages(chat)[-1]['content'],'Recovered after retry.')
+  finally:h.close()
+
+ async def test_direct_file_check_requires_a_write_to_that_output(self):
+  check={'type':'file_exists','path':'wrong.txt'}
+  h=Harness([stream([tool_call(0,'check','set_work_check',{'check':check})]),
+   stream([tool_call(0,'write','write_file',{'path':'wrong.txt','content':'other'})]),
+   text('The file is ready.'),text('I cannot verify the requested file.')])
+  try:
+   h.store.set_setting('permission:write_file',True)
+   chat=h.store.create_chat();h.store.add(chat,{'role':'user','content':'Create expected.txt.'})
+   h.engine.start(chat);await h.engine.tasks[chat]
+   run=h.engine.runs[chat]
+   self.assertEqual(run['phase'],'Stopped')
+   self.assertIn('requested file',run['verification']['detail'])
+  finally:h.close()
+
+ async def test_unknown_connector_write_requires_reconciliation(self):
+  from types import SimpleNamespace
+  from unittest.mock import AsyncMock
+  from backend.connectors import OutcomeUnknown
+  name='mail__send'
+  h=Harness([stream([tool_call(0,'discover','discover_tools',{'category':'all'})]),
+             stream([tool_call(0,'send',name,{})])])
+  try:
+   send=AsyncMock(side_effect=OutcomeUnknown('No confirmation was received.'))
+   h.engine.tools.connectors['mail']=SimpleNamespace(tools=[{'name':'send','inputSchema':{'type':'object'}}],call=send)
+   chat=h.store.create_chat();h.store.add(chat,{'role':'user','content':'Send a test message.'})
+   # Explicitly enter the ordinary work lane so the fixture tests dispatch and approval.
+   h.store.add(chat,{'role':'user','content':'Please carry out the mail task.'})
+   with patch.dict(CONFIG,external_tools=True):
+    h.engine.start(chat);await h.engine.tasks[chat]
+    self.assertEqual(h.store.actions(chat)[-1]['status'],'pending')
+    h.engine.resume(chat,{'approved':True});await h.engine.tasks[chat]
+   action=h.store.actions(chat)[-1]
+   self.assertEqual(action['status'],'interrupted')
+   self.assertTrue(h.engine.runs[chat]['checkpoint'])
+   send.assert_awaited_once()
+   h.store.reconcile_action(chat,action['id'],'applied')
+   self.assertEqual(h.store.actions(chat)[-1]['status'],'done')
+   first=h.engine.public_run(chat)
+   h.store.add(chat,{'role':'user','content':'Continue.'})
+   h.responses.extend([
+    stream([tool_call(0,'discover-again','discover_tools',{'category':'all'})]),
+    stream([tool_call(0,'send-again',name,{})]),
+    text('Activity confirms that the action took effect.'),
+   ])
+   with patch.dict(CONFIG,external_tools=True), patch.object(h.engine,'completion',wraps=h.engine.completion) as completion:
+    h.engine.start(chat,continue_from=first);await h.engine.tasks[chat]
+   send.assert_awaited_once()
+   self.assertIn('user confirmed it took effect',str(completion.await_args_list[0].args[0]))
+   skipped=h.store.actions(chat)[-1]
+   self.assertEqual(skipped['result']['already_done'],action['id'])
+   self.assertEqual(h.engine.public_run(chat)['phase'],'Complete')
   finally:h.close()
 
  async def test_research_retries_when_retrieved_text_does_not_support_a_claim(self):
@@ -147,6 +267,14 @@ class CheckpointTests(unittest.IsolatedAsyncioTestCase):
   finally:h.close()
 
 class ReportTests(unittest.TestCase):
+ def test_confirmed_no_effect_supersedes_an_earlier_error(self):
+  earlier={'id':'1','status':'error'}
+  reconciled={'id':'2','status':'retryable','result':{'reconciled':'no_effect'}}
+  self.assertEqual(continuation_receipt([earlier,reconciled]),(None,None))
+  self.assertEqual(continuation_receipt([{'id':'0','status':'done'},earlier,reconciled]),('done','0'))
+  self.assertEqual(continuation_receipt([earlier,reconciled,{'id':'3','status':'interrupted'}]),
+                   ('uncertain','3'))
+
  def test_command_and_integration_effects_are_not_reported_as_no_changes(self):
   for name,args in [('run_command',{'command':'create an output'}),('run_code',{'language':'python'}),('github__create_issue',{'title':'Example'}),('remember',{'title':'Preference'})]:
    with self.subTest(name=name):

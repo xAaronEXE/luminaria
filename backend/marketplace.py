@@ -97,8 +97,9 @@ def connector_for(server_id,package):
     ident=str(package['identifier']);version=str(package.get('version') or '')
     # A package name must never be able to smuggle a command-line flag or a shell character.
     if not re.fullmatch(r'(@[a-z0-9][a-z0-9._~-]*/)?[a-z0-9][a-z0-9._~-]*',ident,re.I):raise ValueError('Unsafe package name')
-    if version and not re.fullmatch(r'[0-9A-Za-z][0-9A-Za-z.+_-]*',version):raise ValueError('Unsafe package version')
-    package={**package,'identifier':ident,'version':version or None}
+    if not re.fullmatch(r'[0-9]+(?:\.[0-9]+)+(?:[A-Za-z0-9.+_-]*)',version):
+        raise ValueError('The connector must publish an exact package version.')
+    package={**package,'identifier':ident,'version':version}
     from .config import launcher
     if package['kind']=='npm':command,args=launcher('npx'),['-y',ident+('@'+package['version'] if package.get('version') else '')]
     else:command,args=launcher('uvx'),[ident+('=='+package['version'] if package.get('version') else '')]

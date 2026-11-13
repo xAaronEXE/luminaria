@@ -182,6 +182,15 @@ def matching_check_actions(check, actions):
             and check_command_matches(check, action['args'])]
 
 
+def file_stamp(path):
+    """Capture the file state cheaply so a generated output can be checked after execution."""
+    try:
+        stat = path.stat()
+    except FileNotFoundError:
+        return None
+    return [stat.st_size, stat.st_mtime_ns, stat.st_ctime_ns]
+
+
 def run_check(check, actions, resolve):
     """(outcome, detail). outcome: passed, failed or not_run. File checks are read here; a command check is
     judged from the journal: the newest time that exact command ran in this step."""
@@ -192,7 +201,12 @@ def run_check(check, actions, resolve):
         except (PermissionError, ValueError, OSError) as error: return 'failed', str(error)[:200]
         if not path.exists(): return 'failed', f'{check["path"]} does not exist'
         if kind == 'file_exists':
-            if path.is_file() and path.stat().st_size == 0: return 'failed', f'{check["path"]} is empty'
+            if path.is_file():
+                from .file_check import inspect
+                inspected = inspect(path)
+                if not inspected['ok']:
+                    return 'failed', f'{check["path"]}: {inspected["problem"]}'
+                return 'passed', f'{check["path"]} passed file inspection'
             return 'passed', f'{check["path"]} exists'
         try: body = path.read_text(encoding='utf-8', errors='replace')
         except OSError as error: return 'failed', str(error)[:200]
@@ -213,9 +227,9 @@ def run_check(check, actions, resolve):
 
 def evidence(check, plan_actions, resolve):
     """How independent a passed check is.
-    independent: a command that only uses files that existed before this plan started (your own tests or tools).
-    self_written: the command runs a test or script the model wrote or changed during this plan, so a pass proves less.
-    file: a file check (the deliverable exists or contains the expected text)."""
+    self_written: the command names a test or script written or changed during this plan.
+    command: the journal does not establish the check's independence.
+    file: the harness inspected the deliverable directly."""
     if not check: return None
     if check['type'] != 'command': return 'file'
     touched = set()
@@ -225,7 +239,7 @@ def evidence(check, plan_actions, resolve):
             except (PermissionError, ValueError, OSError): pass
         if a['name'] == 'run_code' and a['status'] == 'done': touched.add('(script)')
     words = {Path(w.strip('"\'')).name.lower() for w in re.split(r'[\s;|&()]+', check['command']) if w}
-    return 'self_written' if touched & words else 'independent'
+    return 'self_written' if touched & words else 'command'
 
 
 def unknown_outcome(actions):

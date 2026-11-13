@@ -37,7 +37,7 @@ BUILTINS=[
  schema('set_work_check','Declare the evidence needed for a direct work request before changing anything. Use an existing test command where possible, or a file content check for a requested artifact. This tool records the check; it does not run commands.',{'check':WORK_CHECK},['check']),
  schema('list_skills','List installed reusable workflow skills.',{},[],'auto','skills'),
  schema('find_capability','Search the built-in catalog of thousands of skills (workflows) and connectors (tools for other apps) when nothing installed fits. Returns IDs for install_capability.',{'query':S,'kind':{'type':'string','enum':['any','skills','connectors']}},['query'],'auto','skills'),
- schema('install_capability','Install a skill or connector from find_capability by its ID so you can use it in this task. Skills are downloaded at a pinned commit; connectors run third-party code. Requires user approval.',{'id':S},['id'],'approve','skills'),
+ schema('install_capability','Install a skill or connector from find_capability by its ID so you can use it in this task. Skills are downloaded at a pinned commit; connectors run third-party code. Requires user approval.',{'id':S},['id'],'always','skills'),
  schema('load_skill','Read a named workflow skill before using it.',{'name':S},['name'],'auto','skills'),
  schema('finish_skill','Finish a loaded skill by checking its output files exist. Optionally list the action IDs of sources you used.',{'name':S,'outputs':{'type':'array','items':S,'minItems':1,'maxItems':10},'evidence_actions':{'type':'array','items':S,'maxItems':30}},['name','outputs'],'auto','skills'),
  schema('create_file_workflow','Only when the user explicitly asks for a reviewable plan of changes to many existing files: saves a plan for review in Tools → File workflows and does not execute it. Never use this to create documents; make those with run_code. Declare the user objective, allowed workspace locations, completion criteria, and read/create/edit/trash steps. No shell, permanent deletion, or application control.',{'objective':S,'completion_criteria':S,'allowed_locations':{'type':'array','items':S,'minItems':1,'maxItems':10},'steps':{'type':'array','minItems':1,'maxItems':50,'items':{'type':'object','properties':{'action':{'type':'string','enum':['read','create','edit','trash']},'path':S,'content':S,'old_text':S,'new_text':S},'required':['action','path'],'additionalProperties':False}}},['objective','completion_criteria','allowed_locations','steps'],'approve','planning'),
@@ -66,7 +66,7 @@ BUILTINS=[
 
 # Shown only after discover_tools(more), or unlocked by the step that needs them, so small local models see a short,
 # clear menu. They can still be called at any time; approvals apply as usual.
-EXTRA_TOOLS=frozenset({'delete_file','history_read','update_brief','create_schedule','create_file_workflow','finish_skill','install_capability'})
+EXTRA_TOOLS=frozenset({'delete_file','history_read','create_schedule','create_file_workflow','finish_skill','install_capability'})
 
 RETRIEVAL={'research':'web','web_search':'web search','web_fetch':'web','memory_search':'memory','search_files':'workspace files','read_file':'workspace file','history_read':'history'}
 
@@ -79,8 +79,12 @@ def mcp_tier(group,name):
     # Only an explicit read-only allowlist is automatic. Dynamic/unknown tools always ask.
     if group=='windows' and name in ['ControlStatus','DisplayInventory','Snapshot','Screenshot']: return 'auto'
     if group=='browser' and name in ['browser_snapshot','browser_tabs','browser_console_messages','browser_network_requests','browser_take_screenshot']: return 'auto' if name!='browser_tabs' else 'approve'
-    if re.search(r'delete|remove|install|send|powershell|filesystem|registry|process|evaluate|run_code',name,re.I): return 'always'
-    return 'approve'
+    trusted_reads={
+        'github': {'get_file_contents','get_me','list_issues','list_pull_requests','search_repositories'},
+        'linear': {'get_issue','list_issues','list_projects'},
+        'notion': {'search','fetch'},
+    }
+    return 'approve' if name in trusted_reads.get(group,()) else 'always'
 
 class Toolbox:
     def __init__(self,store,connectors): self.store=store; self.connectors=connectors; self.connector_installer=None
@@ -95,6 +99,8 @@ class Toolbox:
                 result.append({'name':group+'__'+t['name'],'description':t.get('description',''),'parameters':t['inputSchema'],'tier':mcp_tier(group,t['name']),'group':group})
         if full_access():
             for t in result:
+                if t['group'] in self.connectors or t['name']=='install_capability':
+                    continue
                 t['tier']='auto'
                 t['description']=t['description'].replace('Requires user approval.', 'Runs automatically in Full access mode.').replace('Always asks.', 'Runs automatically in Full access mode.').replace('Network request requires approval.', 'Network requests run automatically.').replace('Full PC access after approval;', 'Full PC access;').replace('Every side effect still needs its normal approval.', 'Actions run automatically in Full access mode.')
         return result
@@ -106,6 +112,21 @@ class Toolbox:
         return [{'type':'function','function':{k:t[k] for k in ['name','description','parameters']}} for t in self.catalog() if shown(t)]
     def get(self,name):
         return next((t for t in self.catalog() if t['name']==name),None)
+    def connector_identity(self,name,offered=None):
+        if '__' not in name:
+            return None
+        import hashlib
+        group, tool = name.split('__',1)
+        connector = self.connectors.get(group)
+        if not connector:
+            return None
+        definition = next((t for t in connector.tools if t['name']==tool),None)
+        if definition is None or (offered and (
+                offered['parameters']!=definition['inputSchema'] or offered['description']!=definition.get('description',''))):
+            return None
+        session = getattr(connector,'session_id',str(id(connector)))
+        return hashlib.sha256(json.dumps([session,definition],sort_keys=True).encode()).hexdigest()
+
     @staticmethod
     def skill_paths(run):
         out=[]
@@ -197,10 +218,13 @@ class Toolbox:
             except Exception: pass
     async def dispatch(self,name,a,run):
         if name=='set_work_check':
-            from .plan_runner import clean_check
+            from .plan_runner import clean_check, file_stamp
             check=clean_check(a['check'])
             if not check: raise ValueError('A completion check is required.')
-            return {'check':check}
+            result={'check':check}
+            if check['type']!='command':
+                result['before_file']=file_stamp(workspace_path(check['path']))
+            return result
         if (name in ('run_command','run_code') or '__' in name) and not external_tools_enabled():
             raise ValueError('Computer and command tools are disabled. Enable them in Settings first.')
         if name=='update_plan':

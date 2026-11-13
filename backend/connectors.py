@@ -1,12 +1,16 @@
 """Each MCP lifecycle (local stdio or hosted HTTP) stays in its owning asyncio task (AnyIO scope rule)."""
-import asyncio, os
+import asyncio, os, uuid
 from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
+
+class OutcomeUnknown(RuntimeError):
+    """A request was dispatched but the connector did not confirm its outcome."""
+
 
 class Connector:
     def __init__(self,name,config,on_change=None):
         self.name=name; self.config=config; self.status='connecting'; self.tools=[]
-        self.on_change=on_change
+        self.on_change=on_change; self.session_id=uuid.uuid4().hex
         self.queue=asyncio.Queue(); self.ready=asyncio.Event(); self.task=None
     def changed(self):
         if self.on_change:self.on_change({'type':'connectors_changed','connector':self.name})
@@ -17,7 +21,10 @@ class Connector:
         # uvx gets its own Python for each connector instead of borrowing the built-in one.
         from .config import BASE_DATA
         cache=BASE_DATA/'connector-cache'  # npx and uv downloads stay inside Luminaria's folder
-        return {**os.environ,'PATH':os.pathsep.join(runtime_path_dirs()+[os.environ.get('PATH','')]),'UV_PYTHON_PREFERENCE':'only-managed',
+        allowed = {'SYSTEMROOT','WINDIR','COMSPEC','PATHEXT','TEMP','TMP','TMPDIR','LANG','LC_ALL',
+                   'PROGRAMFILES','PROGRAMFILES(X86)','PROGRAMDATA','LOCALAPPDATA','APPDATA','USERPROFILE','HOME'}
+        inherited = {key:value for key,value in os.environ.items() if key.upper() in allowed}
+        return {**inherited,'PATH':os.pathsep.join(runtime_path_dirs()+[os.environ.get('PATH','')]),'UV_PYTHON_PREFERENCE':'only-managed',
                 'npm_config_cache':str(cache/'npm'),'UV_CACHE_DIR':str(cache/'uv'),'UV_PYTHON_INSTALL_DIR':str(cache/'uv-python'),'UV_TOOL_DIR':str(cache/'uv-tools'),
                 **self.config.get('env',{})}
     def transport(self):
@@ -54,7 +61,9 @@ class Connector:
                             future.add_done_callback(cancel_call)
                             try: result=await call
                             except asyncio.CancelledError:
-                                if not future.cancelled(): raise
+                                if not future.cancelled():
+                                    if not future.done(): future.set_exception(OutcomeUnknown('Connector stopped during the request.'))
+                                    raise
                                 continue
                             finally:
                                 future.remove_done_callback(cancel_call)
@@ -64,7 +73,7 @@ class Connector:
                                     except asyncio.CancelledError: pass
                             if not future.done(): future.set_result(result.model_dump(by_alias=True))
                         except Exception as e:
-                            if not future.done(): future.set_exception(RuntimeError(str(e)))
+                            if not future.done(): future.set_exception(OutcomeUnknown('The connector did not confirm whether the action completed.'))
                             self.status='unavailable: tool request failed; reconnect to verify access'
                             return
         except asyncio.CancelledError: raise
@@ -82,7 +91,11 @@ class Connector:
         await asyncio.wait_for(self.ready.wait(),25)
         if self.status!='connected': raise RuntimeError(self.status)
         future=asyncio.get_running_loop().create_future()
-        await self.queue.put((name,args,future)); return await asyncio.wait_for(future,130)
+        await self.queue.put((name,args,future))
+        try:
+            return await asyncio.wait_for(future,130)
+        except asyncio.TimeoutError as error:
+            raise OutcomeUnknown('The connector did not confirm completion before the deadline.') from error
     async def close(self):
         if self.task:
             self.task.cancel()

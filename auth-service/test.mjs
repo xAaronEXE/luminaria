@@ -186,5 +186,12 @@ try{
  assert.equal((await send('/session',undefined,{...rateHeaders,Authorization:'Bearer '+'0'.repeat(64)})).status,401);
  assert.equal(linked.connections.find(c=>c.provider==='discord').handle,'fixture_d');
 
+ const expiredCallback=await begin('github');
+ await db.prepare('UPDATE devices SET expires=0 WHERE id=?').bind(expiredCallback.started.device_id).run();
+ const expiredPage=await send('/callback/github?code=fixture&state='+expiredCallback.oauth.searchParams.get('state'),
+    undefined,{Cookie:expiredCallback.cookie});
+ assert.equal(expiredPage.status,400);
+ assert.doesNotMatch(await expiredPage.text(),/Signed in to Luminaria/);
+
  console.log('Identity flow passed: GitHub, Google and Discord pairing, cookie, PKCE, callback replay, one-time claim, server session, hashed storage, logout, expiry, remembered devices (sliding 30-day expiry, 90-day cap, listing, revocation scoped to one account), insights sync (idempotent daily totals, per-account sums, validation, delete), browser cancellation and forged refusal. Provider responses were mocked; no real provider login claimed.');
 }finally{await mf.dispose();}
