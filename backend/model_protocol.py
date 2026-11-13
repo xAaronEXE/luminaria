@@ -1,4 +1,5 @@
 """Provider-specific wire behavior for the shared execution loop."""
+import json
 from hashlib import sha256
 from urllib.parse import urlsplit
 
@@ -20,3 +21,21 @@ def prepare_messages(messages, scope):
             clean['content'] = clean.get('content') or ''
         result.append(clean)
     return result
+
+
+def complete_tool_batch(calls):
+    calls = list(calls)
+    if not calls:
+        return False
+    ids = set()
+    for call in calls:
+        function = call['function']
+        if not function['name'] or (call['id'] and call['id'] in ids):
+            return False
+        ids.add(call['id'])
+        try:
+            if not isinstance(json.loads(function['arguments']), dict):
+                return False
+        except (TypeError, ValueError):
+            return False
+    return True
