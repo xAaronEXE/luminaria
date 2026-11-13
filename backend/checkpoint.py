@@ -85,7 +85,7 @@ def continuation_receipt(actions):
     return None, None
 
 
-def report(actions, plan=None, reason='limit', stalled=None):
+def report(actions, plan=None, reason='limit', stalled=None, *, round_limit=None):
     """Markdown summary. `actions` are store rows (args and result decoded) from this run."""
     skipped = [a for a in actions if a['status'] == 'done' and result_data(a).get('already_done')]
     done = [a for a in actions if a['status'] == 'done' and a['name'] != 'update_plan' and not result_data(a).get('already_done')]
@@ -95,10 +95,14 @@ def report(actions, plan=None, reason='limit', stalled=None):
     if reason == 'repeated':
         lines = [f"**Paused: the same step failed {REPEAT_LIMIT} times.** Retrying it again would not help, so I stopped here instead of looping."]
         if stalled: lines.append(f"The failing step was `{stalled}`.")
+    elif reason == 'no_progress':
+        lines = ['**Paused after repeated identical tool results.** Recorded progress is saved below.']
+    elif reason == 'budget':
+        lines = ['**Paused at the time or generation budget.** Recorded progress is saved below.']
     elif reason == 'error':
         lines = ['**The task stopped before a final answer could be written.** Here is what had already happened.']
     else:
-        lines = [f"**Paused after {ROUND_LIMIT} tool rounds.** Recorded progress is saved below."]
+        lines = [f"**Paused after {round_limit or ROUND_LIMIT} model steps.** Recorded progress is saved below."]
     if done:
         lines.append(f"\n**Completed ({len(done)})**")
         for a in done[-12:]:

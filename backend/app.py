@@ -135,7 +135,7 @@ async def bootstrap(): return {'token':TOKEN,'version':CONFIG['version'],'name':
 @app.get('/api/state')
 async def state(chat:str=''):
     if chat: require_chat(chat)
-    return {'cloud_sync_updated':store.setting('cloud_sync_updated',0),'chats':store.chats(),'chat':chat,'messages':store.messages(chat) if chat else [],'update_notice':_update_notice(),'changes':_changes(chat),'actions':store.actions(chat) if chat else [],'summary':store.summary(chat) if chat else None,'summaries':store.rows('SELECT id,through_id,created FROM summaries WHERE chat=? ORDER BY id',(chat,)) if chat else [],'run':engine.public_run(chat),'context':store.setting('context:'+chat,{}),'plan':store.setting('plan:'+chat,None) if chat else None,'brief':brief_summary(chat) if chat else None,'orchestration':{'router':CONFIG.get('orchestrator_model',''),'enabled':bool(CONFIG.get('orchestrator_model')) and CONFIG.get('orchestration_enabled',True)},'memories':memory_entries(),'schedules':store.rows('SELECT * FROM schedules ORDER BY next_run'),'workspace':CONFIG['workspace'],'model':CONFIG['model'],'context_limit':CONFIG['context'],'connectors':{n:{'status':c.status,'tools':len(c.tools)} for n,c in connectors.items()},'tool_count':len(engine.tools.catalog()),'active_runs':[{'chat':k,'phase':v['phase']} for k,v in engine.runs.items() if not v.get('finished')]}
+    return {'cloud_sync_updated':store.setting('cloud_sync_updated',0),'chats':store.chats(),'chat':chat,'execution_mode':store.setting('execution-mode:'+chat,'legacy') if chat else 'legacy','messages':store.messages(chat) if chat else [],'update_notice':_update_notice(),'changes':_changes(chat),'actions':store.actions(chat) if chat else [],'summary':store.summary(chat) if chat else None,'summaries':store.rows('SELECT id,through_id,created FROM summaries WHERE chat=? ORDER BY id',(chat,)) if chat else [],'run':engine.public_run(chat),'context':store.setting('context:'+chat,{}),'plan':store.setting('plan:'+chat,None) if chat else None,'brief':brief_summary(chat) if chat else None,'orchestration':{'router':CONFIG.get('orchestrator_model',''),'enabled':bool(CONFIG.get('orchestrator_model')) and CONFIG.get('orchestration_enabled',True)},'memories':memory_entries(),'schedules':store.rows('SELECT * FROM schedules ORDER BY next_run'),'workspace':CONFIG['workspace'],'model':CONFIG['model'],'context_limit':CONFIG['context'],'connectors':{n:{'status':c.status,'tools':len(c.tools)} for n,c in connectors.items()},'tool_count':len(engine.tools.catalog()),'active_runs':[{'chat':k,'phase':v['phase']} for k,v in engine.runs.items() if not v.get('finished')]}
 
 @app.get('/api/chats/{id}/work')
 async def work_events(id:str,runs:int=12):
@@ -225,6 +225,8 @@ async def run_chat(id:str,request:Request):
     require_chat(id); b=await request.json()
     if id in engine.tasks and not engine.tasks[id].done(): raise ValueError('Task already running')
     if id in engine.runs and not engine.runs[id].get('finished'): raise ValueError('Resume or stop the existing task first')
+    mode=b.get('execution_mode',store.setting('execution-mode:'+id,'legacy'))
+    if mode not in ('legacy','agent','direct'): raise ValueError('Unknown execution mode')
     text=str(b.get('text','')).strip()
     if len(text)>100000: raise ValueError('Message exceeds 100,000 characters; put large material in a file')
     attachments=b.get('attachments',[])
@@ -243,9 +245,11 @@ async def run_chat(id:str,request:Request):
     store.add(id,{'role':'user','content':content if attachments else text,'attachments':bool(attachments)})
     # Every way of saying "go ahead" carries the saved plan out step by step, never as one long ordinary run.
     from .plan_runner import wants_plan_run
-    plan_only=bool(b.get('plan_only',False))
-    plan_run=not plan_only and (bool(b.get('plan_run',False)) or (not attachments and wants_plan_run(text,store.setting('plan:'+id,None))))
-    return {'run_id':engine.start(id,bool(b.get('reasoning',False)),plan_only=plan_only,plan_run=plan_run,voice=b.get('voice') is True)}
+    plan_only=mode!='direct' and bool(b.get('plan_only',False))
+    plan_run=mode!='direct' and not plan_only and (bool(b.get('plan_run',False)) or (not attachments and wants_plan_run(text,store.setting('plan:'+id,None))))
+    store.set_setting('execution-mode:'+id,mode)
+    return {'run_id':engine.start(id,bool(b.get('reasoning',False)),plan_only=plan_only,plan_run=plan_run,
+                                 voice=b.get('voice') is True,execution_mode=mode if mode!='legacy' else None)}
 
 @app.post('/api/chats/{id}/continue')
 async def continue_chat(id:str):
@@ -1010,9 +1014,13 @@ async def chat_stream(request:Request):
     b=await request.json(); id=b.get('session_id') or store.create_chat()
     require_chat(id)
     if id in engine.runs and not engine.runs[id].get('finished'): raise ValueError('Session already active')
+    mode=b.get('execution_mode',store.setting('execution-mode:'+id,'legacy'))
+    if mode not in ('legacy','agent','direct'): raise ValueError('Unknown execution mode')
     queue=asyncio.Queue(maxsize=500);subscribers.add(queue)
+    store.set_setting('execution-mode:'+id,mode)
     store.add(id,{'role':'user','content':str(b.get('message',b.get('text','')))})
-    engine.start(id,bool(b.get('reasoning',False)),plan_only=bool(b.get('plan_only',False)))
+    engine.start(id,bool(b.get('reasoning',False)),plan_only=mode!='direct' and bool(b.get('plan_only',False)),
+                 execution_mode=mode if mode!='legacy' else None)
     async def generate():
         yield 'event: session\ndata: '+json.dumps({'session_id':id})+'\n\n'
         try:

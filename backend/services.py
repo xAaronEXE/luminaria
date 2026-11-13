@@ -45,6 +45,8 @@ def private_chat(history, model_id, system):
                 reply = {'role': role, 'content': content}
                 if calls:
                     reply['tool_calls'] = calls
+                    if message.get('continuation_scope'):
+                        reply.update(reasoning=message.get('reasoning',''),continuation_scope=message['continuation_scope'])
                 messages.append(reply)
                 messages.extend({'role': 'tool', 'tool_call_id': call['id'],
                                  'content': results[call['id']]['content']} for call in calls)
