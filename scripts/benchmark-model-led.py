@@ -61,8 +61,11 @@ def verify(case, state, workspace, approvals, interrupted):
         return text.strip() == 'READY'
     if case == 'multi_file':
         import sys
-        return subprocess.run([sys.executable, '-B', '-m', 'unittest', 'test_math_ops'],
-                              cwd=workspace, capture_output=True, timeout=20).returncode == 0
+        check = ('from add import add; from multiply import multiply; '
+                 'assert add(3, 4) == 7 and add(-3, 4) == 1; '
+                 'assert multiply(3, 4) == 12 and multiply(-3, 4) == -12')
+        return subprocess.run([sys.executable, '-B', '-c', check], cwd=workspace,
+                              capture_output=True, timeout=20).returncode == 0
     if case in ('approval', 'interrupted'):
         name, value = ('approval.txt', 'APPROVED') if case == 'approval' else ('resume.txt', 'RESUMED')
         output = workspace / name
@@ -125,7 +128,10 @@ def main():
                                 continue
                             decisions.add(action['id'])
                             expected = {'approval': 'approval.txt', 'interrupted': 'resume.txt'}.get(case)
-                            allow = (action['name'] == 'write_file' and action['args'].get('path') == expected)
+                            path = action['args'].get('path')
+                            allow = action['name'] == 'write_file' and expected is not None and path == expected
+                            if case == 'multi_file':
+                                allow = action['name'] in ('write_file', 'edit_file') and path in ('add.py', 'multiply.py')
                             if allow and case == 'interrupted' and not interrupted:
                                 api(f'chats/{chat}/stop', {})
                                 interrupted = True
