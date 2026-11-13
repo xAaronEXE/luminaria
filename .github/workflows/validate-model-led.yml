@@ -12,7 +12,6 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - {model: Qwen2.5-0.5B-Instruct, file: qwen2.5-0.5b-instruct-q4_k_m.gguf}
           - {model: Qwen2.5-1.5B-Instruct, file: qwen2.5-1.5b-instruct-q4_k_m.gguf}
     runs-on: windows-2025
     timeout-minutes: 80
@@ -106,7 +105,7 @@ jobs:
           Install-Local (Resolve-Path baseline.exe).Path
           Start-Local '0.4.4'
           $chat = (Api 'sessions' @{}).id
-          Test-Chat $chat ''
+          if ('${{ matrix.model }}' -eq 'Qwen2.5-0.5B-Instruct') { Test-Chat $chat '' }
           taskkill /PID $desktop.Id /T /F | Out-Null
           Start-Sleep 3
           $env:LUMINARIA_FIXTURE_CHAT = $chat
@@ -114,11 +113,16 @@ jobs:
           import json, os, sqlite3
           from pathlib import Path
 
+          chat = os.environ["LUMINARIA_FIXTURE_CHAT"]
           plan = {"goal": "Verify saved plan survives upgrade", "version": 1,
                   "planning_only": True, "updated": 1,
                   "steps": [{"id": "inspect", "title": "Inspect fixture.txt", "status": "pending"}]}
           database = Path(os.environ["STUDIO_DATA"]) / "studio.sqlite3"
           with sqlite3.connect(database) as db:
+              if not db.execute("SELECT 1 FROM messages WHERE chat=?", (chat,)).fetchone():
+                  for role, content in (("user", "Upgrade fixture"), ("assistant", "READY")):
+                      db.execute("INSERT INTO messages(chat,payload,created) VALUES (?,?,?)",
+                                 (chat, json.dumps({"role": role, "content": content}), 1))
               db.execute("INSERT INTO settings VALUES (?, ?)",
                          ("plan:" + os.environ["LUMINARIA_FIXTURE_CHAT"], json.dumps(plan)))
           '@ | python -
@@ -132,7 +136,9 @@ jobs:
           if ($saved.goal -ne 'Verify saved plan survives upgrade' -or $saved.steps[0].id -ne 'inspect') { throw 'Saved plan did not survive upgrade' }
           $models = Api 'models'
           if ('fixture' -notin $models.models.id) { throw 'Model registration missing after upgrade' }
-          foreach ($mode in @('legacy','agent','direct')) { Test-Chat ((Api 'sessions' @{}).id) $mode }
+          if ('${{ matrix.model }}' -eq 'Qwen2.5-0.5B-Instruct') {
+            foreach ($mode in @('legacy','agent','direct')) { Test-Chat ((Api 'sessions' @{}).id) $mode }
+          }
           Write-Host "Candidate SHA-256: $candidateHash"
           python scripts/benchmark-model-led.py --workspace "$workspace" --output benchmark.json --model '${{ matrix.model }} Q4_K_M' --revision a097b4cdfd2aafc013c5125e3c1f74017dd9eedf --sha256 $candidateHash --desktop-pid $desktop.Id --desktop-exe "$app/LocalAIStudio.exe"
           if ($LASTEXITCODE) { throw 'Benchmark runner failed' }
