@@ -134,7 +134,7 @@ jobs:
           if ('fixture' -notin $models.models.id) { throw 'Model registration missing after upgrade' }
           foreach ($mode in @('legacy','agent','direct')) { Test-Chat ((Api 'sessions' @{}).id) $mode }
           Write-Host "Candidate SHA-256: $candidateHash"
-          python scripts/benchmark-model-led.py --workspace "$workspace" --output benchmark.json --model '${{ matrix.model }} Q4_K_M' --revision a097b4cdfd2aafc013c5125e3c1f74017dd9eedf --sha256 $candidateHash
+          python scripts/benchmark-model-led.py --workspace "$workspace" --output benchmark.json --model '${{ matrix.model }} Q4_K_M' --revision a097b4cdfd2aafc013c5125e3c1f74017dd9eedf --sha256 $candidateHash --desktop-pid $desktop.Id --desktop-exe "$app/LocalAIStudio.exe"
           if ($LASTEXITCODE) { throw 'Benchmark runner failed' }
       - uses: actions/upload-artifact@v4
         if: always()
