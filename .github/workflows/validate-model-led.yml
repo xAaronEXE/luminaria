@@ -39,7 +39,7 @@ jobs:
           run-id: ${{ steps.build.outputs.run }}
           github-token: ${{ github.token }}
           path: candidate
-      - name: Install baseline and exercise local model
+      - name: Install baseline and run corrected paired workload comparison
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
