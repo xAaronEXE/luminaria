@@ -12,6 +12,7 @@ jobs:
       fail-fast: false
       matrix:
         include:
+          - {model: Qwen2.5-0.5B-Instruct, file: qwen2.5-0.5b-instruct-q4_k_m.gguf}
           - {model: Qwen2.5-1.5B-Instruct, file: qwen2.5-1.5b-instruct-q4_k_m.gguf}
     runs-on: windows-2025
     timeout-minutes: 80
@@ -26,9 +27,9 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          $run = 43361961704
+          $run = 43373393809
           $commit = gh run view $run --repo $env:GITHUB_REPOSITORY --json headSha --jq '.headSha'
-          if ($LASTEXITCODE -or $commit -ne 'a097b4cdfd2aafc013c5125e3c1f74017dd9eedf') { throw 'Unexpected candidate build revision' }
+          if ($LASTEXITCODE -or $commit -ne '43cb48d577282e971f1f68dec7ec0b785371573e') { throw 'Unexpected candidate build revision' }
           gh run watch $run --repo $env:GITHUB_REPOSITORY --interval 20 --exit-status
           "run=$run" >> $env:GITHUB_OUTPUT
           if ($LASTEXITCODE) { throw 'Candidate installer build did not succeed' }
@@ -105,7 +106,6 @@ jobs:
           Install-Local (Resolve-Path baseline.exe).Path
           Start-Local '0.4.4'
           $chat = (Api 'sessions' @{}).id
-          if ('${{ matrix.model }}' -eq 'Qwen2.5-0.5B-Instruct') { Test-Chat $chat '' }
           taskkill /PID $desktop.Id /T /F | Out-Null
           Start-Sleep 3
           $env:LUMINARIA_FIXTURE_CHAT = $chat
@@ -140,7 +140,7 @@ jobs:
             foreach ($mode in @('legacy','agent','direct')) { Test-Chat ((Api 'sessions' @{}).id) $mode }
           }
           Write-Host "Candidate SHA-256: $candidateHash"
-          python scripts/benchmark-model-led.py --workspace "$workspace" --output benchmark.json --model '${{ matrix.model }} Q4_K_M' --revision a097b4cdfd2aafc013c5125e3c1f74017dd9eedf --sha256 $candidateHash --desktop-pid $desktop.Id --desktop-exe "$app/LocalAIStudio.exe"
+          python scripts/benchmark-model-led.py --workspace "$workspace" --output benchmark.json --model '${{ matrix.model }} Q4_K_M' --revision 43cb48d577282e971f1f68dec7ec0b785371573e --sha256 $candidateHash --desktop-pid $desktop.Id --desktop-exe "$app/LocalAIStudio.exe"
           if ($LASTEXITCODE) { throw 'Benchmark runner failed' }
       - uses: actions/upload-artifact@v4
         if: always()
