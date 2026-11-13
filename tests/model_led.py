@@ -42,6 +42,38 @@ class ModelLedTests(unittest.IsolatedAsyncioTestCase):
         finally:
             h.close()
 
+    async def test_multiple_streamed_calls_are_dispatched_after_complete_batch(self):
+        first = tool_call(0, 'read-a', 'read_file', {'path': 'a.txt'})
+        first['choices'][0]['delta']['tool_calls'][0]['function']['arguments'] = '{"path":'
+        second = tool_call(1, 'list', 'list_files', {'path': '.'})
+        remainder = {'choices': [{'delta': {'tool_calls': [
+            {'index': 0, 'function': {'arguments': '"a.txt"}'}}
+        ]}, 'finish_reason': 'tool_calls'}]}
+        h = Harness([stream([first, second, remainder]), answer('Done.')])
+        try:
+            chat = h.store.create_chat()
+            h.store.add(chat, {'role': 'user', 'content': 'Look around.'})
+            h.engine.start(chat, execution_mode='agent')
+            await h.engine.tasks[chat]
+            self.assertCountEqual([a['name'] for a in h.store.actions(chat)], ['read_file', 'list_files'])
+        finally:
+            h.close()
+
+    async def test_interrupted_batch_never_dispatches_its_complete_prefix(self):
+        first = tool_call(0, 'list', 'list_files', {'path': '.'})
+        second = tool_call(1, 'read', 'read_file', {'path': 'a.txt'})
+        second['choices'][0]['delta']['tool_calls'][0]['function']['arguments'] = '{"path":'
+        h = Harness([stream([first, second])])
+        try:
+            chat = h.store.create_chat()
+            h.store.add(chat, {'role': 'user', 'content': 'Look around.'})
+            h.engine.start(chat, execution_mode='agent')
+            await h.engine.tasks[chat]
+            self.assertEqual(h.store.actions(chat), [])
+            self.assertEqual(h.engine.public_run(chat)['phase'], 'Checkpoint')
+        finally:
+            h.close()
+
     async def test_direct_ignores_unsolicited_calls(self):
         h = Harness([stream([tool_call(0, 'ignored', 'list_files', {'path': '.'})])])
         try:
