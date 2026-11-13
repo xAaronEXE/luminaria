@@ -609,7 +609,7 @@ class Engine:
         if run and run.get('execution_mode'):
             for option in ('temperature','repeat_penalty','dry_multiplier','dry_base','dry_allowed_length'):
                 body.pop(option,None)
-        text=''; reasoning=''; calls={}; usage={}; timings=None; started=time.monotonic(); first=None; finish=None; checked=0; stream_done=False
+        text=''; reasoning=''; calls={}; usage={}; timings=None; started=time.monotonic(); first=None; finish=None; checked=0; stream_done=False; malformed=False
         async with self.model_stream(body) as response:
             if response.status_code>=400:
                 raw=(await response.aread()).decode('utf-8','replace')[:600]
@@ -632,7 +632,9 @@ class Engine:
                     stream_done=True
                     break
                 try: chunk=json.loads(line[6:])
-                except ValueError: continue  # one garbled line must not end the whole reply
+                except ValueError:
+                    malformed=True
+                    continue
                 usage=chunk.get('usage') or usage; timings=chunk.get('timings') or timings
                 for choice in chunk.get('choices',[]):
                     finish=choice.get('finish_reason') or finish; d=choice.get('delta',{})
@@ -659,6 +661,11 @@ class Engine:
         if not (stream_done or finish):
             raise ModelUnavailable('The model response ended before it finished.')
         complete=finish in (None,'stop','tool_calls','function_call')
+        if tools and (calls or finish in ('tool_calls','function_call')):
+            from .model_protocol import complete_tool_batch
+            if malformed or not complete_tool_batch(calls.values()):
+                complete=False
+                finish='invalid_tool_batch' if finish in (None,'stop','tool_calls','function_call') else finish
         if not complete or not tools:
             calls.clear()
         for c in calls.values(): c['id']=c['id'] or 'call_'+uid()
@@ -698,7 +705,10 @@ class Engine:
                 if run['private_turn_model']:
                     msg['private_model']=run['private_turn_model']
                 return msg
-            except (httpx.TransportError,ModelUnavailable):
+            except (httpx.TransportError,ModelUnavailable) as failure:
+                self.work(run,'model.transport_failed',f'{run.get("round",0)}-{attempt}',
+                          label='Model transport failed',status='error',model=self.model_id(),
+                          attempt=attempt+1,error_type=type(failure).__name__)
                 if attempt==3 or (attempt==2 and run.get('execution_mode')=='direct'): raise
                 run['live']=''; run['reasoning_text']=''
                 if attempt==0:
@@ -871,7 +881,7 @@ class Engine:
             if msg.get('content'):
                 self.store.add(chat,msg)
             run['live']=''; run['reasoning_text']=''
-            self.work(run,'generation.failed',turn,node=node,status='error',region='generation',label='Incomplete model response')
+            self.work(run,'generation.failed',turn,node=node,status='error',region='generation',label='Incomplete model response',stop_reason=msg.get('stop_reason'))
             self.checkpoint(run,'error')
             return {'run':run,'calls':[],'steps':state['steps']+1}
         verification=None
