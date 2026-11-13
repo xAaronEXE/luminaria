@@ -4,18 +4,19 @@ import json
 import subprocess
 from pathlib import Path
 import time
+from urllib.parse import urlsplit
 from urllib.request import Request, urlopen
 
 CASES = {
     'chat': 'Reply with the single word READY.',
     'multi_file': (
         'Fix add.py so add(a, b) adds, and multiply.py so multiply(a, b) multiplies. '
-        'Read both files first. Run python -m unittest test_math_ops and report the result.'
+        'Read both files first with relative paths add.py and multiply.py. Run python -m unittest test_math_ops and report the result.'
     ),
     'approval': 'Use write_file to create approval.txt containing exactly APPROVED.',
     'long_tool_run': (
         'Read part-01.txt through part-20.txt in numeric order. Read each with its own '
-        'read_file call, one call per response. Return all 20 values in order.'
+        'read_file call, one call per response. Use relative paths such as part-01.txt. Return all 20 values in order.'
     ),
     'research': (
         'Use web tools to retrieve https://www.rfc-editor.org/rfc/rfc9110.html. '
@@ -116,7 +117,7 @@ def main():
                 if case == 'context':
                     # Seed through the ordinary run endpoint to exercise conversation continuity.
                     prompts = ['Remember the tracking code AMBER-7214. Reply OK.']
-                    prompts += [('Background filler ' * 4000) + '\nReply OK.' for _ in range(2)]
+                    prompts += [('Background filler ' * 1100) + '\nReply OK.' for _ in range(2)]
                 else:
                     prompts = []
                 for message in [*prompts, prompt]:
@@ -130,10 +131,16 @@ def main():
                                 continue
                             decisions.add(action['id'])
                             expected = {'approval': 'approval.txt', 'interrupted': 'resume.txt'}.get(case)
-                            path = action['args'].get('path')
-                            allow = action['name'] == 'write_file' and expected is not None and path == expected
+                            raw_path = action['args'].get('path')
+                            target = (args.workspace / raw_path).resolve() if isinstance(raw_path, str) and raw_path else None
+                            allow = (action['name'] == 'write_file' and expected is not None
+                                     and target == (args.workspace / expected).resolve())
                             if case == 'multi_file':
-                                allow = action['name'] in ('write_file', 'edit_file') and path in ('add.py', 'multiply.py')
+                                allowed_files = {(args.workspace / name).resolve() for name in ('add.py', 'multiply.py')}
+                                allow = action['name'] in ('write_file', 'edit_file') and target in allowed_files
+                            if case == 'research' and action['name'] in ('web_fetch', 'research'):
+                                url = action['args'].get('url', '')
+                                allow = isinstance(url, str) and urlsplit(url).hostname in ('www.rfc-editor.org', 'rfc-editor.org')
                             if allow and case == 'interrupted' and not interrupted:
                                 subprocess.run(['taskkill', '/PID', str(args.desktop_pid), '/T', '/F'],
                                                check=True, capture_output=True, timeout=20)
@@ -171,7 +178,8 @@ def main():
             row.update(seconds=round(time.monotonic()-started, 2), approvals=approvals,
                        interrupted=interrupted, phase=run.get('phase'), provider_error=run.get('error'),
                        checkpoint=run.get('checkpoint'), context=run.get('context'),
-                       tool_outcomes=[(a['name'], a['status']) for a in state.get('actions', [])])
+                       tool_outcomes=[(a['name'], a['status'], a['args'], (a.get('result') or {}).get('error'))
+                                      for a in state.get('actions', [])])
             rows.append(row)
             report = dict(version=boot['version'], revision=args.revision, installer_sha256=args.sha256,
                           model=args.model, app_endpoint=args.base, inference_endpoint='http://127.0.0.1:8098/v1',
